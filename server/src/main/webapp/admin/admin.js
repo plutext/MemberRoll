@@ -36,6 +36,15 @@ function say(text, isError) {
     message.className = isError ? "error" : "";
 }
 
+// un-hide a fieldset/panel and bring it into view — the forms and the
+// household detail sit below their tables, so opening them silently off-screen
+// otherwise looks like nothing happened
+function reveal(id) {
+    const el = document.getElementById(id);
+    el.hidden = false;
+    el.scrollIntoView({behavior: "smooth", block: "start"});
+}
+
 async function showIdentity() {
     const response = await Auth.api("/whoami");
     if (!response) return false; // redirected to login, or mismatch shown
@@ -204,7 +213,7 @@ function openPersonForm(person) {
     document.getElementById("pfPhones").value =
         (person?.phones || []).map(ph => ph.number + (ph.type ? " " + ph.type : "")).join("\n");
     document.getElementById("pfNotes").value = person?.notes || "";
-    document.getElementById("personForm").hidden = false;
+    reveal("personForm");
 }
 
 function personPayload() {
@@ -301,7 +310,7 @@ async function openHousehold(id) {
             cell.appendChild(remove);
         }
     }
-    document.getElementById("householdDetail").hidden = false;
+    reveal("householdDetail");
 }
 
 async function saveHousehold() {
@@ -447,7 +456,7 @@ function wireRegister() {
     on("personSave", savePerson);
     on("personCancel", () => { document.getElementById("personForm").hidden = true; });
     on("householdSearchGo", renderHouseholds); enter("householdSearch", renderHouseholds);
-    on("householdNew", () => { document.getElementById("householdForm").hidden = false; });
+    on("householdNew", () => reveal("householdForm"));
     on("householdSave", saveHousehold);
     on("householdCancel", () => { document.getElementById("householdForm").hidden = true; });
     on("hdAdd", addHouseholdMember);
