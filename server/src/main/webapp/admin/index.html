@@ -48,6 +48,18 @@
 <section id="registerSection" hidden>
     <h2>Register</h2>
 
+    <h3>Import members (CSV)</h3>
+    <p class="muted">Massage your spreadsheet into the columns of
+        <code>docs/import-template.csv</code> and export it as <strong>CSV UTF-8</strong>
+        (plain "CSV" from Excel mangles accented names). Preview is a dry run;
+        Apply writes everything in one transaction, and is enabled only once a
+        preview comes back with no errors.</p>
+    <label>Target period <input id="importPeriod" placeholder="e.g. 2026-2027 (blank = current)"></label>
+    <label>CSV file <input id="importFile" type="file" accept=".csv,text/csv"></label>
+    <button id="importPreview">Preview</button>
+    <button id="importApply" disabled>Apply</button>
+    <div id="importReport"></div>
+
     <h3>People</h3>
     <p class="muted">People are never deleted — the register is the historical record.</p>
     <label>Search: <input id="personSearch" placeholder="name or email"></label>

@@ -87,6 +87,14 @@
             <artifactId>postgresql</artifactId>
             <version>42.7.5</version>
         </dependency>
+        <!-- member-list CSV import (CR-002): RFC 4180 quoting, embedded
+             newlines and Excel's UTF-8 BOM are a hand-rolled-parser bug
+             farm. Small jar, no runtime transitive dependencies. -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>1.11.0</version>
+        </dependency>
         <!-- route the above libraries' slf4j output into Tomcat's JUL logs -->
         <dependency>
             <groupId>org.slf4j</groupId>

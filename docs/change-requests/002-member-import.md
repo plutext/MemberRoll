@@ -1,6 +1,7 @@
 # CR 002: Member list import (CSV, preview + apply)
 
-Status: PROPOSED
+Status: IMPLEMENTED — scripted verification green (PASS=130 FAIL=0);
+browser walkthrough pending (human step)
 
 ## Problem
 
@@ -205,7 +206,85 @@ committed `docs/import-template.csv` with header + 3 example rows.
 
 ## Results
 
-(to be filled in after implementation)
+**2026-07-17**, dev machine, on the project's 18xxx ports (Tomcat 18080,
+Keycloak 18081, Postgres 5433).
+
+**Delivered:** `commons-csv` 1.11.0 dependency (no runtime transitives);
+`ImportService` (parse → validate/dedup → apply, sharing one validation
+pass between the two phases); `AdminImportResource` (`POST
+/api/admin/import/preview` and `POST /api/admin/import?period=`, both
+`@RolesAllowed("admin")`, `text/csv` body, 1 MB cap → 413); registered in
+`ApiApplication`; the Import block in the admin Register section
+(`admin/index.html` + `admin.js`, file input → Preview → gated Apply,
+rendering the counts/errors/warnings/skipped report); and the committed
+`docs/import-template.csv` (header + three example rows).
+
+**HTTP + side-effect matrix** (`PORT=18080 KEYCLOAK_PORT=18081
+POSTGRES_PORT=5433 server/verify-matrix.sh`): **PASS=130 FAIL=0** — the
+83 pre-existing CR-001 checks plus 47 new checks (60–79) covering plan
+cases 1–17. Ran twice consecutively, green both times, confirming
+re-runnability (each run uses a unique per-run family name `Imp$$`, and a
+re-apply of the same file matches every person on dedup and creates
+nothing). Highlights:
+
+- role gates: guest 403, member 403 on preview (case 1–2);
+- preview of the valid 5-row / 2-household fixture (a couple + a
+  dependant, paid, in one household; a couple, unpaid, in the other):
+  `rows=5`, `errors=[]`, `toCreate {people:5, households:2,
+  memberships:2, payments:1}` (case 3);
+- a blank `givenName` errors that row and drops its whole household from
+  `toCreate` (case 4); an unknown column `surname` is reported by name
+  (case 5);
+- apply of the errored file → **400**, and a people search confirms it
+  wrote nothing (case 7); apply of the valid file → **200** with
+  `created == toCreate` (case 8);
+- `GET /admin/households` shows the imported household with 3 current
+  members (case 9); `GET /admin/people` shows the imported people with a
+  mixed-case email stored lowercased (`Aaron.PID@Example.COM` →
+  `aaron.pid@example.com`) and the phone attached (case 10);
+- a row whose email collides with an imported person is **warned** and
+  **skipped** naming the existing person id, creating nobody (case 6);
+  re-applying the whole valid file → `created {0,0,0,0}`, all 5 rows
+  skipped (case 11);
+- psql side-effects: the paid household's membership is `ACTIVE` with
+  `amount_due_cents=6500`, its payment is `6500 / OTHER /
+  recorded_by=testadmin` linked by a `MEMBERSHIP` allocation (case 12);
+  the unpaid household's membership is `PENDING_PAYMENT` with no payment
+  (case 13); a blank `membershipType` creates the person + household and
+  **no** membership (case 14); the `DEPENDANT` row is
+  `is_statutory_member=false` while the `MEMBER` row is `true` (case 15);
+- a UTF-8 BOM prefix plus a quoted field containing a comma parse
+  correctly, with an accented given name (`Zoé`) intact on the round-trip
+  (case 16); a body over 1 MB → **413** (case 17).
+
+**Surprises recorded:**
+1. CSV record numbering: with `setHeader().setSkipHeaderRecord(true)`,
+   commons-csv's `getRecordNumber()` counts from the first *data* row, so
+   the reported `line` is `getRecordNumber() + 1` to make the header
+   line 1 and the first data row line 2 (what a treasurer sees in Excel).
+2. Nested transactions: `PersonStore.create`/`HouseholdStore.create` open
+   their own `jdbi.inTransaction` (a fresh connection), so reusing them
+   inside the import's transaction would break atomicity. The apply
+   writes people/households/memberships/payments with direct SQL on the
+   one shared `Handle` — the CR anticipated "direct SQL where the shapes
+   don't fit", and atomicity is why they don't.
+3. Verify-script only (not the implementation): the CR-002 psql
+   assertions first wrote `SELECT status ...` joining `membership` to
+   `household` — both have a `status` column, so Postgres rejected it as
+   ambiguous; qualified to `m.status`. And because people are never
+   deleted, an unqualified `q=Aaron` search picked up Aarons from earlier
+   runs; the assertions search the unique per-run family name instead.
+
+**Browser walkthrough: PENDING** — a human step (no browser in the
+implementation environment). `admin.js` passes `node --check`, the admin
+page and its assets serve 200, and the Import block's elements are wired;
+the register lists refresh after a successful apply. To do:
+Register → Import → choose `tmp/cr002-fixtures/valid.csv` (or the
+synthetic fixture) → Preview shows the counts and any warning → Apply →
+people and households appear in the lists → re-Apply shows all-skipped.
+
+No compose/auth/Caddy changes, so no deploy Local smoke was required (per
+the plan).
 
 ## Follow-ups / amendments
 
@@ -214,3 +293,15 @@ committed `docs/import-template.csv` with header + 3 example rows.
   the flagged 2025/26 placeholders).
 - CR-003 may refactor the import's direct membership/payment SQL into
   its stores.
+- Post-review notes (accepted as-is for v1): a `paid` row whose
+  `membership_type_price` is 0 cents would fail the `payment.amount_cents
+  <> 0` CHECK and roll back the whole apply as a 500 — left unguarded
+  because no 0-priced type exists (seeded 4500/6500) and the failure is
+  safe (nothing written); revisit if a free type is ever added. And
+  `resolvePeriod`/`priceCents` run once per household group rather than
+  once for the import — negligible at a hundred rows, cache if a much
+  larger register ever imports.
+- Partial-household dedup is now called out: when some people in an
+  imported household already exist, they are skipped and a warning names
+  how many will NOT be added to the newly-created household (v1 creates
+  only; link them via the admin UI).

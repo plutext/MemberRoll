@@ -142,6 +142,111 @@ check "57b history has three rows"     "3" "$(body | jsq "len(j['members'])")"
 check "58 reassign primary to Mary 200" "200" "$(code -X PUT $API/admin/households/$HH -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"householdName\":\"$FAM household\",\"primaryContactPersonId\":$MARY}")"
 check "59 primary must be member 400"  "400" "$(code -X PUT $API/admin/households/$HH -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{"primaryContactPersonId":999999}')"
 
+# --- member import (CR-002) -------------------------------------------------
+# Fixtures are written per-run into tmp/cr002-fixtures/ with a unique family
+# name (Imp$$), so re-runs converge instead of duplicating: a re-apply of the
+# same file matches every person on dedup and creates nothing.
+FX="$(dirname "$0")/../tmp/cr002-fixtures"
+mkdir -p "$FX"
+IMP="Imp$$"
+imp() { code -X POST "$1" -H "Authorization: Bearer $2" -H 'Content-Type: text/csv' --data-binary @"$3"; }
+
+# valid: 2 households, 5 people; Alpha (3, incl a DEPENDANT) paid, Beta (2) not
+cat > "$FX/valid.csv" <<EOF
+household,title,givenName,familyName,relationship,email,phone,phoneType,line1,locality,state,postcode,membershipType,paid,notes
+AlphaHH$$,Mr,Aaron,$IMP,MEMBER,Aaron.$$@Example.COM,0400 111 111,MOBILE,1 Alpha St,Yass,NSW,2582,HOUSEHOLD,yes,
+AlphaHH$$,Mrs,Alice,$IMP,PARTNER,alice.$$@example.com,,,1 Alpha St,Yass,NSW,2582,HOUSEHOLD,yes,
+AlphaHH$$,,Andy,$IMP,DEPENDANT,,,,1 Alpha St,Yass,NSW,2582,HOUSEHOLD,yes,child
+BetaHH$$,Mr,Bruno,$IMP,MEMBER,bruno.$$@example.com,0400 222 222,MOBILE,2 Beta St,Yass,NSW,2582,HOUSEHOLD,no,
+BetaHH$$,Ms,Bella,$IMP,PARTNER,bella.$$@example.com,,,2 Beta St,Yass,NSW,2582,HOUSEHOLD,no,
+EOF
+# same file with one givenName blanked → that whole household is excluded
+cat > "$FX/badname.csv" <<EOF
+household,givenName,familyName,relationship,membershipType,paid
+AlphaHH$$,,$IMP,MEMBER,HOUSEHOLD,yes
+BetaHH$$,Bruno,$IMP,MEMBER,HOUSEHOLD,no
+EOF
+# unknown column
+cat > "$FX/unknowncol.csv" <<EOF
+household,givenName,familyName,surname,membershipType,paid
+Gam$$,Greg,$IMP,X,SINGLE,no
+EOF
+# a row whose email collides with an imported Alpha person
+cat > "$FX/dup.csv" <<EOF
+household,givenName,familyName,email
+Dup$$,Aaron,$IMP,aaron.$$@example.com
+EOF
+# blank membershipType → people + household, no membership
+cat > "$FX/nomem.csv" <<EOF
+household,givenName,familyName,line1,locality,state,postcode,membershipType,paid
+NoMem$$,Nora,$IMP,9 No St,Yass,NSW,2582,,
+EOF
+# UTF-8 BOM prefix + a quoted field containing a comma + an accented name
+printf '\xef\xbb\xbf' > "$FX/bom.csv"
+cat >> "$FX/bom.csv" <<EOF
+household,givenName,familyName,line1,locality,state,postcode,membershipType
+BomHH$$,Zoé,$IMP,"5 Main St, Apt 2",Yass,NSW,2582,SINGLE
+EOF
+# > 1 MB body
+{ echo "household,givenName,familyName"; yes "Big$$,Pad,${IMP}paddingpaddingpaddingpaddingpaddingpad" | head -n 20000; } > "$FX/big.csv"
+
+check "60 import preview guest 403"     "403" "$(code -X POST $API/admin/import/preview -H 'Content-Type: text/csv' --data-binary @"$FX/valid.csv")"
+check "61 import preview user 403"      "403" "$(imp $API/admin/import/preview "$USER" "$FX/valid.csv")"
+check "62 preview valid 200"            "200" "$(imp $API/admin/import/preview "$ADMIN" "$FX/valid.csv")"
+check "62b rows 5"                      "5"   "$(body | jsq "j['rows']")"
+check "62c no errors"                   "0"   "$(body | jsq "len(j['errors'])")"
+check "62d toCreate people 5"           "5"   "$(body | jsq "j['toCreate']['people']")"
+check "62e toCreate households 2"       "2"   "$(body | jsq "j['toCreate']['households']")"
+check "62f toCreate memberships 2"      "2"   "$(body | jsq "j['toCreate']['memberships']")"
+check "62g toCreate payments 1"         "1"   "$(body | jsq "j['toCreate']['payments']")"
+check "63 preview badname 200"          "200" "$(imp $API/admin/import/preview "$ADMIN" "$FX/badname.csv")"
+check "63b badname has error"           "true" "$(body | jsq "str(len(j['errors'])>0).lower()")"
+check "63c badname excludes household"  "1"   "$(body | jsq "j['toCreate']['households']")"
+check "64 preview unknown col 200"      "200" "$(imp $API/admin/import/preview "$ADMIN" "$FX/unknowncol.csv")"
+check "64b names the bad column"        "true" "$(body | jsq "str(any('surname' in e['message'] for e in j['errors'])).lower()")"
+
+check "65 baseline no Imp people"       "0"   "$(curl -s "$API/admin/people?q=$IMP" -H "Authorization: Bearer $ADMIN" | jsq "j['total']")"
+check "66 apply badname 400"            "400" "$(imp $API/admin/import "$ADMIN" "$FX/badname.csv")"
+check "66b apply badname created nothing" "0" "$(curl -s "$API/admin/people?q=$IMP" -H "Authorization: Bearer $ADMIN" | jsq "j['total']")"
+check "67 apply valid 200"              "200" "$(imp "$API/admin/import?period=2026-2027" "$ADMIN" "$FX/valid.csv")"
+check "67b created people 5"            "5"   "$(body | jsq "j['created']['people']")"
+check "67c created households 2"        "2"   "$(body | jsq "j['created']['households']")"
+check "67d created memberships 2"       "2"   "$(body | jsq "j['created']['memberships']")"
+check "67e created payments 1"          "1"   "$(body | jsq "j['created']['payments']")"
+check "68 households Alpha found"       "1"   "$(curl -s "$API/admin/households?q=AlphaHH$$" -H "Authorization: Bearer $ADMIN" | jsq "j['total']")"
+check "68b Alpha has 3 current"         "3"   "$(curl -s "$API/admin/households?q=AlphaHH$$" -H "Authorization: Bearer $ADMIN" | jsq "j['households'][0]['currentMembers']")"
+check "69 people Imp total 5"           "5"   "$(curl -s "$API/admin/people?q=$IMP" -H "Authorization: Bearer $ADMIN" | jsq "j['total']")"
+check "69b Aaron email lowercased"      "aaron.$$@example.com" "$(curl -s "$API/admin/people?q=$IMP" -H "Authorization: Bearer $ADMIN" | jsq "next(p['emails'][0]['email'] for p in j['people'] if p['givenName']=='Aaron')")"
+check "69c Aaron phone attached"        "1"   "$(curl -s "$API/admin/people?q=$IMP" -H "Authorization: Bearer $ADMIN" | jsq "next(len(p['phones']) for p in j['people'] if p['givenName']=='Aaron')")"
+check "70 preview dup 200"              "200" "$(imp $API/admin/import/preview "$ADMIN" "$FX/dup.csv")"
+check "70b dup warned"                  "true" "$(body | jsq "str(len(j['warnings'])>0).lower()")"
+check "70c dup skipped names person"    "true" "$(body | jsq "str(any('#' in s['reason'] for s in j['skipped'])).lower()")"
+check "70d dup creates nobody"          "0"   "$(body | jsq "j['toCreate']['people']")"
+check "71 re-apply valid 200"           "200" "$(imp "$API/admin/import?period=2026-2027" "$ADMIN" "$FX/valid.csv")"
+check "71b re-apply creates nothing"    "0"   "$(body | jsq "j['created']['people']+j['created']['households']+j['created']['memberships']+j['created']['payments']")"
+check "71c re-apply skips all 5"        "5"   "$(body | jsq "len(j['skipped'])")"
+check "72 apply nomem 200"              "200" "$(imp "$API/admin/import?period=2026-2027" "$ADMIN" "$FX/nomem.csv")"
+check "72b nomem created 1 person"      "1"   "$(body | jsq "j['created']['people']")"
+check "72c nomem created 0 memberships" "0"   "$(body | jsq "j['created']['memberships']")"
+check "73 apply bom 200"                "200" "$(imp "$API/admin/import?period=2026-2027" "$ADMIN" "$FX/bom.csv")"
+check "73b accented name intact"        "Zoé" "$(curl -s "$API/admin/people?q=Zo" -H "Authorization: Bearer $ADMIN" | jsq "next(p['givenName'] for p in j['people'] if p['familyName']=='$IMP' and p['givenName'].startswith('Zo'))")"
+check "74 body over 1MB 413"            "413" "$(imp $API/admin/import/preview "$ADMIN" "$FX/big.csv")"
+
+# --- CR-002 side effects (psql; skipped where the client is absent) ----------
+PSQL_OK=0; command -v psql >/dev/null 2>&1 && PSQL_OK=1
+psqlq() { PGPASSWORD=memberroll psql -h localhost -p "${POSTGRES_PORT:-5433}" -U memberroll -d memberroll -tAc "$1" 2>/dev/null; }
+if [ "$PSQL_OK" = 1 ]; then
+  check "75 Alpha membership ACTIVE/due" "ACTIVE|6500" "$(psqlq "SELECT m.status||'|'||m.amount_due_cents FROM membership m JOIN household h ON h.household_id=m.household_id WHERE h.household_name='AlphaHH$$'")"
+  check "76 Alpha payment recorded"      "6500|OTHER|testadmin" "$(psqlq "SELECT p.amount_cents||'|'||p.payment_method||'|'||p.recorded_by FROM payment p JOIN payment_allocation pa ON pa.payment_id=p.payment_id JOIN membership m ON m.membership_id=pa.membership_id JOIN household h ON h.household_id=m.household_id WHERE h.household_name='AlphaHH$$' AND pa.allocation_type='MEMBERSHIP'")"
+  check "77 Beta membership PENDING"     "PENDING_PAYMENT" "$(psqlq "SELECT m.status FROM membership m JOIN household h ON h.household_id=m.household_id WHERE h.household_name='BetaHH$$'")"
+  check "77b Beta no payment"            "0" "$(psqlq "SELECT count(*) FROM payment p JOIN payment_allocation pa ON pa.payment_id=p.payment_id JOIN membership m ON m.membership_id=pa.membership_id JOIN household h ON h.household_id=m.household_id WHERE h.household_name='BetaHH$$'")"
+  check "78 dependant not statutory"     "f" "$(psqlq "SELECT mp.is_statutory_member FROM membership_person mp JOIN person pe ON pe.person_id=mp.person_id WHERE pe.given_name='Andy' AND pe.family_name='$IMP'")"
+  check "78b member is statutory"        "t" "$(psqlq "SELECT mp.is_statutory_member FROM membership_person mp JOIN person pe ON pe.person_id=mp.person_id WHERE pe.given_name='Aaron' AND pe.family_name='$IMP'")"
+  check "79 nomem household has no membership" "0" "$(psqlq "SELECT count(*) FROM membership m JOIN household h ON h.household_id=m.household_id WHERE h.household_name='NoMem$$'")"
+else
+  echo "note: psql not found — skipping CR-002 side-effect checks 75–79 (membership/payment/flags)"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "32 web page 200"                "200" "$(code http://localhost:${PORT:-18080}/server/web/)"
 check "33 admin page 200"              "200" "$(code http://localhost:${PORT:-18080}/server/admin/)"

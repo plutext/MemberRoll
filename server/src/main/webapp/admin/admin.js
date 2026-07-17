@@ -336,10 +336,112 @@ async function addHouseholdMember() {
     }
 }
 
+// ---- register: CSV import ---------------------------------------------------
+
+// the CSV that last previewed clean; Apply is gated on this being non-null so
+// you can never apply a file the server hasn't just validated error-free
+let importCsv = null;
+
+function importPath(base) {
+    const period = document.getElementById("importPeriod").value.trim();
+    return period ? `${base}?period=${encodeURIComponent(period)}` : base;
+}
+
+// posts the CSV and returns {status, report}; the report is read even on the
+// 400 that apply gives when validation fails, so its errors can be shown
+async function importCall(base, csv) {
+    const response = await Auth.api(importPath(base), {
+        method: "POST",
+        headers: {"Content-Type": "text/csv"},
+        body: csv,
+    });
+    if (!response) return null;
+    if (response.status === 413) { say("CSV exceeds the 1 MB limit.", true); return null; }
+    // preview and the apply-with-errors 400 both return the report as JSON; an
+    // unexpected non-JSON body (a 500 page) is surfaced rather than swallowed
+    const text = await response.text();
+    try {
+        return {status: response.status, report: JSON.parse(text)};
+    } catch {
+        say(`Import failed (HTTP ${response.status}): ${text.slice(0, 300)}`, true);
+        return null;
+    }
+}
+
+async function previewImport() {
+    const input = document.getElementById("importFile");
+    if (!input.files || !input.files[0]) return say("Choose a CSV file first.", true);
+    const csv = await input.files[0].text();
+    const result = await importCall("/admin/import/preview", csv);
+    if (!result) return;
+    renderImportReport(result.report);
+    const clean = result.report.errors.length === 0;
+    importCsv = clean ? csv : null;
+    document.getElementById("importApply").disabled = !clean;
+    say(clean
+        ? `Preview OK — would create ${describeCounts(result.report.toCreate)}. Review below, then Apply.`
+        : `Preview found ${result.report.errors.length} error(s) — fix the file and preview again.`, !clean);
+}
+
+async function applyImport() {
+    if (importCsv === null) return say("Preview a clean file before applying.", true);
+    const result = await importCall("/admin/import", importCsv);
+    if (!result) return;
+    renderImportReport(result.report);
+    importCsv = null;
+    document.getElementById("importApply").disabled = true;
+    if (result.status === 200) {
+        say(`Imported ${describeCounts(result.report.created)}.`);
+        renderPeople();
+        renderHouseholds();
+    } else {
+        say("Apply refused — the file no longer validates (see the report).", true);
+    }
+}
+
+function describeCounts(c) {
+    return `${c.people} people, ${c.households} households, ${c.memberships} memberships, ${c.payments} payments`;
+}
+
+function renderImportReport(report) {
+    const el = document.getElementById("importReport");
+    el.innerHTML = "";
+    const line = (html) => { const p = document.createElement("p"); p.innerHTML = html; el.appendChild(p); };
+    line(`${report.rows} data row(s).`);
+    line(`<strong>To create:</strong> ${describeCounts(report.toCreate)}`);
+    if (report.created) line(`<strong>Created:</strong> ${describeCounts(report.created)}`);
+    importIssueTable("Errors", report.errors, "message", el);
+    importIssueTable("Warnings", report.warnings, "message", el);
+    importIssueTable("Skipped", report.skipped, "reason", el);
+}
+
+function importIssueTable(title, rows, textKey, parent) {
+    if (!rows.length) return;
+    const heading = document.createElement("h4");
+    heading.textContent = `${title} (${rows.length})`;
+    parent.appendChild(heading);
+    const table = document.createElement("table");
+    const head = table.createTHead().insertRow();
+    for (const label of ["Line", title.replace(/s$/, "")]) {
+        const th = document.createElement("th");
+        th.textContent = label;
+        head.appendChild(th);
+    }
+    const tbody = table.createTBody();
+    for (const r of rows) {
+        const tr = tbody.insertRow();
+        tr.insertCell().textContent = r.line;
+        tr.insertCell().textContent = r[textKey];
+    }
+    parent.appendChild(table);
+}
+
 function wireRegister() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
     const enter = (id, handler) =>
         { document.getElementById(id).onkeydown = (e) => { if (e.key === "Enter") handler(); }; };
+    on("importPreview", previewImport);
+    on("importApply", applyImport);
     on("personSearchGo", renderPeople);      enter("personSearch", renderPeople);
     on("personNew", () => openPersonForm(null));
     on("personSave", savePerson);

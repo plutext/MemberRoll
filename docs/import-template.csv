@@ -1,0 +1,4 @@
+household,title,givenName,familyName,preferredName,relationship,email,phone,phoneType,line1,line2,locality,state,postcode,membershipType,paid,notes
+Smith,Mr,John,Smith,,MEMBER,john.smith@example.com;j.smith@work.example.com,0400 000 001,MOBILE,12 Comur Street,,Yass,NSW,2582,HOUSEHOLD,yes,Long-standing member
+Smith,Mrs,Mary,Smith,,PARTNER,mary.smith@example.com,,,12 Comur Street,,Yass,NSW,2582,HOUSEHOLD,yes,
+,Ms,Jane,Doe,Janey,MEMBER,jane.doe@example.com,0400 000 002,MOBILE,3 Rossi Street,,Yass,NSW,2582,SINGLE,no,Joined this year
