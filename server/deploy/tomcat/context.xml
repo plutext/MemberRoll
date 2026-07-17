@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Stock conf/context.xml plus RemoteIpValve. Caddy terminates TLS and
+     forwards plain HTTP with X-Forwarded-* headers; the valve makes
+     request.getScheme()/isSecure()/getRemoteAddr() reflect them.
+     RemoteIpValve's default internalProxies regex already covers the
+     compose network ranges (172.16-31/12, 10/8, 192.168/16, 127/8). -->
+<Context>
+    <WatchedResource>WEB-INF/web.xml</WatchedResource>
+    <WatchedResource>WEB-INF/tomcat-web.xml</WatchedResource>
+    <WatchedResource>${catalina.base}/conf/web.xml</WatchedResource>
+    <Valve className="org.apache.catalina.valves.RemoteIpValve" />
+</Context>

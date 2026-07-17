@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>myapp</title>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; color: #222; }
+        h1 { font-size: 1.4rem; }
+        button { padding: .3rem .8rem; cursor: pointer; }
+        input, textarea { font: inherit; width: 100%; box-sizing: border-box; margin: .2rem 0 .6rem; }
+        #status { padding: .5rem .8rem; background: #eef; border-radius: 4px; margin-bottom: 1rem; }
+        #status.warn { background: #fee; }
+        #message { min-height: 1.4rem; color: #060; }
+        #message.error { color: #a00; white-space: pre-wrap; }
+        ul#notes { list-style: none; padding: 0; }
+        ul#notes li { border: 1px solid #ddd; border-radius: 4px; padding: .6rem .8rem; margin: .5rem 0; }
+        ul#notes li h3 { margin: 0 0 .3rem; font-size: 1rem; }
+        ul#notes li p { margin: 0 0 .5rem; white-space: pre-wrap; }
+        fieldset { border: 1px solid #ccc; border-radius: 4px; margin: 1rem 0; }
+        /* the claim modal. [hidden] must beat the display:flex below — an
+           author display on the same element silently overrides the hidden
+           attribute otherwise (a real bug once shipped: page greyed out and
+           untappable because the "hidden" modal still covered it) */
+        [hidden] { display: none !important; }
+        #claim { position: fixed; inset: 0; background: rgba(0,0,0,.5);
+                 display: flex; align-items: center; justify-content: center; }
+        #claim .card { background: #fff; border-radius: 8px; padding: 1.2rem 1.5rem; max-width: 22rem; }
+        #claim button { display: block; width: 100%; margin: .4rem 0; }
+        #claim .error { color: #a00; min-height: 1.2rem; }
+    </style>
+</head>
+<body>
+<h1>myapp</h1>
+<div id="status">Checking login…</div>
+<div id="message"></div>
+
+<!-- The worked example: a private notes collection per signed-in user.
+     Replace this section (and NotesResource/NoteStore on the server)
+     with the real app. -->
+<fieldset id="editor" hidden>
+    <legend>Add or update a note</legend>
+    <label>Id (letters, digits, - _):<input id="noteId" maxlength="64" placeholder="shopping"></label>
+    <label>Title:<input id="noteTitle" maxlength="200"></label>
+    <label>Body:<textarea id="noteBody" rows="4"></textarea></label>
+    <button id="noteSave">Save</button>
+</fieldset>
+<ul id="notes"></ul>
+
+<div id="claim" hidden></div>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="../shared/claim.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

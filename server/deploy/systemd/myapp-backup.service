@@ -1,0 +1,13 @@
+# Oneshot unit driven by myapp-backup.timer.
+# Install (as root on the instance):
+#   cp systemd/myapp-backup.* /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now myapp-backup.timer
+[Unit]
+Description=myapp nightly backup (pg_dump + store tarball)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/myapp
+ExecStart=/opt/myapp/backup.sh

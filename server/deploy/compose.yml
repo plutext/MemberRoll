@@ -1,0 +1,106 @@
+# The production stack. One box, Caddy in front (the only service with
+# published ports; TLS + Let's Encrypt), Tomcat serving server.war at its
+# /server context, Keycloak in production mode under /auth, Postgres
+# holding Keycloak's store.
+#
+# This file is rsynced to /opt/myapp on the instance and driven by
+# deploy.sh (first run) / push-war.sh (updates). It is NOT the dev stack
+# — that stays server/docker-compose.yml. Local smoke: see
+# compose.smoke.yml and deploy/README.md.
+#
+# All state is bind-mounted under ./data so backup.sh is a filesystem walk.
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+      # Point at the Let's Encrypt STAGING CA while iterating on a fresh
+      # provision (rate limits), then remove ./data/caddy and re-up:
+      #   ACME_CA=https://acme-staging-v02.api.letsencrypt.org/directory
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+    networks:
+      default:
+        aliases:
+          # Tomcat fetches JWKS / drives admin REST at the public issuer
+          # URL; this alias resolves $DOMAIN straight to Caddy inside the
+          # compose network (no elastic-IP hairpin), and TLS still
+          # validates because Caddy presents the real certificate.
+          - ${DOMAIN}
+    mem_limit: 128m
+
+  tomcat:
+    build:
+      context: .
+      dockerfile: tomcat/Dockerfile
+    restart: unless-stopped
+    environment:
+      # Single issuer — the whole point of the one-hostname design.
+      KEYCLOAK_ISSUER: https://${DOMAIN}/auth/realms/myapp
+      # Admin REST goes to Keycloak directly on this network: the public
+      # /auth/admin/* paths are 403'd at Caddy. JWKS still uses the
+      # issuer URL (public paths) via the $DOMAIN alias.
+      KEYCLOAK_ADMIN_URL: http://keycloak:8080/auth
+      KEYCLOAK_AUDIENCE: myapp-server
+      KEYCLOAK_SERVICE_CLIENT: server-service
+      KEYCLOAK_SERVICE_SECRET: ${KEYCLOAK_SERVICE_SECRET}
+      MYAPP_DATA: /data/store
+    volumes:
+      - ./data/store:/data/store
+    depends_on:
+      - caddy
+    mem_limit: 1g
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    restart: unless-stopped
+    # Production mode on Postgres: users PERSIST (unlike the dev stack).
+    # --import-realm imports keycloak-import/ once, on an empty database
+    # only — after that the database is authoritative and realm changes
+    # made live must be mirrored back into server/keycloak/.
+    command: start --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      # Pins the issuer to the public URL no matter how a client reached
+      # Keycloak; the admin console gets its own tunnel-facing URL (the
+      # console is 403'd at Caddy — see Caddyfile and README).
+      KC_HOSTNAME: https://${DOMAIN}/auth
+      KC_HOSTNAME_ADMIN: http://localhost:${KEYCLOAK_ADMIN_PORT:-8081}/auth
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_PROXY_HEADERS: xforwarded
+    ports:
+      # Loopback only: reachable exclusively through an SSH tunnel
+      # (ssh -N -L 8081:127.0.0.1:8081 <instance>).
+      - "127.0.0.1:${KEYCLOAK_ADMIN_PORT:-8081}:8080"
+    volumes:
+      - ./keycloak-import:/opt/keycloak/data/import:ro
+    depends_on:
+      - postgres
+    mem_limit: 1g
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      # Keycloak's store only (the app itself is filesystem-backed); when
+      # the app grows its own tables, add a second database here and an
+      # init script that creates it — don't share the keycloak database.
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    mem_limit: 512m
