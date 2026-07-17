@@ -9,3 +9,6 @@ out/
 # scratch area for fixtures/verification runs (convention: tmp/<cr>-fixtures/
 # holding anything a change-request's verification needs to re-run)
 tmp/
+
+# real society data (member lists, import files) — never in the repo
+ydhs/
