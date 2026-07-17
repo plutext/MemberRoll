@@ -1,0 +1,13 @@
+# Oneshot unit driven by memberroll-backup.timer.
+# Install (as root on the instance):
+#   cp systemd/memberroll-backup.* /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now memberroll-backup.timer
+[Unit]
+Description=memberroll nightly backup (pg_dump + store tarball)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/memberroll
+ExecStart=/opt/memberroll/backup.sh

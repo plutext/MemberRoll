@@ -1,0 +1,27 @@
+# Local full-stack smoke override (see README, "Local smoke"). With
+# DOMAIN=smoke.localhost Caddy issues from its internal CA (no ACME), so
+# the whole production topology — Caddy TLS, path-based Keycloak on
+# Postgres, the $DOMAIN network alias, the war's hairpin-free JWKS fetch —
+# runs on the dev machine. The only delta from production: Tomcat must
+# TRUST the internal CA (production trusts Let's Encrypt out of the box),
+# so its entrypoint imports Caddy's root cert into the JVM truststore
+# before starting Catalina.
+#
+# Usage (from a scratch copy of this directory, NOT in the repo tree):
+#   export COMPOSE_FILE=compose.yml:compose.smoke.yml KEYCLOAK_ADMIN_PORT=18081
+#   KEEP_TEST_FIXTURES=1 ./deploy.sh smoke.localhost
+services:
+  tomcat:
+    volumes:
+      - ./data/store:/data/store
+      # host ./data/caddy is the container's /data, and Caddy nests its
+      # storage under a further caddy/ subdirectory
+      - ./data/caddy/caddy/pki/authorities/local:/smoke-ca:ro
+    entrypoint:
+      - bash
+      - -c
+      - |
+        for i in $$(seq 60); do [ -f /smoke-ca/root.crt ] && break; sleep 1; done
+        keytool -importcert -noprompt -cacerts -storepass changeit \
+            -alias caddy-smoke -file /smoke-ca/root.crt || true
+        exec catalina.sh run

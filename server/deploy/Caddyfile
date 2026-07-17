@@ -1,0 +1,35 @@
+# TLS terminator and sole ingress. Caddy obtains and renews the Let's
+# Encrypt certificate automatically (HTTP-01 over port 80); cert storage
+# lives in ./data/caddy (bind mount — restarts re-use the cert, staying
+# clear of LE duplicate-certificate rate limits). For hostnames like
+# *.localhost (the local smoke) Caddy issues from its internal CA
+# instead — no ACME involved.
+{
+	acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+}
+
+{$DOMAIN} {
+	encode gzip zstd
+
+	# Keycloak admin console + master realm: tunnel-only (deploy README).
+	@admin path /auth/admin* /auth/realms/master*
+	handle @admin {
+		respond 403
+	}
+
+	# Keycloak serves under /auth itself (KC_HTTP_RELATIVE_PATH) — no
+	# prefix stripping.
+	handle /auth/* {
+		reverse_proxy keycloak:8080
+	}
+
+	# The war keeps its /server context path (shared/auth.js hardcodes
+	# /server/api; every documented URL keeps working).
+	@app path /server /server/*
+	handle @app {
+		reverse_proxy tomcat:8080
+	}
+
+	# Bare domain lands somewhere useful. Exact-match: only "/".
+	redir / /server/web/ 302
+}
