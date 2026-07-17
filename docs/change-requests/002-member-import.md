@@ -1,7 +1,6 @@
 # CR 002: Member list import (CSV, preview + apply)
 
-Status: IMPLEMENTED — scripted verification green (PASS=130 FAIL=0);
-browser walkthrough pending (human step)
+Status: VERIFIED
 
 ## Problem
 
@@ -275,13 +274,14 @@ nothing). Highlights:
    deleted, an unqualified `q=Aaron` search picked up Aarons from earlier
    runs; the assertions search the unique per-run family name instead.
 
-**Browser walkthrough: PENDING** — a human step (no browser in the
-implementation environment). `admin.js` passes `node --check`, the admin
-page and its assets serve 200, and the Import block's elements are wired;
-the register lists refresh after a successful apply. To do:
-Register → Import → choose `tmp/cr002-fixtures/valid.csv` (or the
-synthetic fixture) → Preview shows the counts and any warning → Apply →
-people and households appear in the lists → re-Apply shows all-skipped.
+**Browser walkthrough / real-data import: DONE** (Jason, 2026-07-17).
+Beyond the scripted matrix, the society's actual member list was imported
+through the admin UI and worked well — preview, apply, and the resulting
+register lists. One UI finding fixed in passing: the household "Members"
+button (and the person edit / new-household forms) un-hid their panel
+below the fold, so it looked inert; opening a panel now scrolls it into
+view (`admin.js` `reveal()`). Real member data lives outside the repo
+(`ydhs/`, gitignored).
 
 No compose/auth/Caddy changes, so no deploy Local smoke was required (per
 the plan).
