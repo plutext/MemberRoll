@@ -12,6 +12,14 @@
     <name>memberroll</name>
     <description>memberroll — Tomcat/Jersey/Keycloak webapp (from webapp-template).</description>
 
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <!-- A one-module reactor on purpose: new modules (a batch job, a shared
          library) slot in beside server/ without restructuring. -->
     <modules>
