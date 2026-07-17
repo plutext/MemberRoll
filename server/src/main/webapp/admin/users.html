@@ -4,13 +4,17 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>memberroll admin — users</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
     <link rel="stylesheet" href="admin.css">
 </head>
 <body>
-<h1>memberroll — admin</h1>
-<div id="status">Checking login…</div>
-<nav id="menu"></nav>
-<div id="message"></div>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
 
 <section id="usersSection" hidden>
     <h2>Users</h2>
@@ -28,6 +32,7 @@
         <tbody></tbody>
     </table>
 </section>
+</main>
 
 <script src="../shared/sha256.js"></script>
 <script src="../shared/auth.js"></script>

@@ -4,36 +4,42 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>memberroll</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
     <style>
-        body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; color: #222; }
-        h1 { font-size: 1.4rem; }
-        button { padding: .3rem .8rem; cursor: pointer; }
-        input, textarea { font: inherit; width: 100%; box-sizing: border-box; margin: .2rem 0 .6rem; }
-        #status { padding: .5rem .8rem; background: #eef; border-radius: 4px; margin-bottom: 1rem; }
-        #status.warn { background: #fee; }
-        #message { min-height: 1.4rem; color: #060; }
-        #message.error { color: #a00; white-space: pre-wrap; }
+        /* Overrides only — Pico (linked above) carries the base look. */
+        /* [hidden] must beat the claim modal's display:flex below — an author
+           display on the same element silently overrides the hidden attribute
+           otherwise (a real bug once shipped: page greyed out and untappable
+           because the "hidden" modal still covered it). */
+        [hidden] { display: none !important; }
+        #status { padding: .5rem .8rem; margin-bottom: 1rem; border-radius: var(--pico-border-radius);
+            background: var(--pico-card-sectioning-background-color); }
+        #status.warn { background: var(--pico-del-color); color: #fff; }
+        #message { min-height: 1.4rem; color: var(--pico-ins-color); }
+        #message.error { color: var(--pico-del-color); white-space: pre-wrap; }
         ul#notes { list-style: none; padding: 0; }
-        ul#notes li { border: 1px solid #ddd; border-radius: 4px; padding: .6rem .8rem; margin: .5rem 0; }
+        ul#notes li { border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius);
+            padding: .6rem .8rem; margin: .5rem 0; }
         ul#notes li h3 { margin: 0 0 .3rem; font-size: 1rem; }
         ul#notes li p { margin: 0 0 .5rem; white-space: pre-wrap; }
-        fieldset { border: 1px solid #ccc; border-radius: 4px; margin: 1rem 0; }
-        /* the claim modal. [hidden] must beat the display:flex below — an
-           author display on the same element silently overrides the hidden
-           attribute otherwise (a real bug once shipped: page greyed out and
-           untappable because the "hidden" modal still covered it) */
-        [hidden] { display: none !important; }
-        #claim { position: fixed; inset: 0; background: rgba(0,0,0,.5);
+        /* the claim modal keeps its own overlay mechanism (shipped-bug history
+           around [hidden]; not worth re-plumbing to <dialog>); only its
+           hardcoded colours move to Pico variables so dark mode stays legible */
+        #claim { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.5);
                  display: flex; align-items: center; justify-content: center; }
-        #claim .card { background: #fff; border-radius: 8px; padding: 1.2rem 1.5rem; max-width: 22rem; }
+        #claim .card { background: var(--pico-card-background-color); color: var(--pico-color);
+            border-radius: var(--pico-border-radius); padding: 1.2rem 1.5rem; max-width: 22rem; }
         #claim button { display: block; width: 100%; margin: .4rem 0; }
-        #claim .error { color: #a00; min-height: 1.2rem; }
+        #claim .error { color: var(--pico-del-color); min-height: 1.2rem; }
     </style>
 </head>
 <body>
-<h1>memberroll</h1>
-<div id="status">Checking login…</div>
-<div id="message"></div>
+<main>
+<header>
+    <h1>memberroll</h1>
+    <div id="status">Checking login…</div>
+    <div id="message"></div>
+</header>
 
 <!-- The worked example: a private notes collection per signed-in user.
      Replace this section (and NotesResource/NoteStore on the server)
@@ -46,6 +52,7 @@
     <button id="noteSave">Save</button>
 </fieldset>
 <ul id="notes"></ul>
+</main>
 
 <div id="claim" hidden></div>
 

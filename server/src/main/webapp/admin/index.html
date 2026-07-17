@@ -4,13 +4,17 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>memberroll admin — register &amp; renewals</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
     <link rel="stylesheet" href="admin.css">
 </head>
 <body>
-<h1>memberroll — admin</h1>
-<div id="status">Checking login…</div>
-<nav id="menu"></nav>
-<div id="message"></div>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
 
 <section id="registerSection" hidden>
     <h2>Register</h2>
@@ -28,21 +32,25 @@
     </table>
     <div id="peopleTotal" class="muted"></div>
 
-    <fieldset id="personForm" hidden>
-        <legend id="personFormTitle">New person</legend>
-        <label>Title <input id="pfTitle"></label>
-        <label>Given name* <input id="pfGiven"></label>
-        <label>Family name* <input id="pfFamily"></label>
-        <label>Preferred name <input id="pfPreferred"></label>
-        <label>Date of birth <input id="pfDob" type="date"></label>
-        <label>Emails (one per line; first is primary)
-            <textarea id="pfEmails" rows="2"></textarea></label>
-        <label>Phones (one per line: number, optionally followed by MOBILE/HOME/WORK)
-            <textarea id="pfPhones" rows="2"></textarea></label>
-        <label>Notes <textarea id="pfNotes" rows="2"></textarea></label>
-        <button id="personSave">Save</button>
-        <button id="personCancel" type="button">Cancel</button>
-    </fieldset>
+    <dialog id="personForm">
+        <article>
+            <header><h3 id="personFormTitle">New person</h3></header>
+            <label>Title <input id="pfTitle"></label>
+            <label>Given name* <input id="pfGiven"></label>
+            <label>Family name* <input id="pfFamily"></label>
+            <label>Preferred name <input id="pfPreferred"></label>
+            <label>Date of birth <input id="pfDob" type="date"></label>
+            <label>Emails (one per line; first is primary)
+                <textarea id="pfEmails" rows="2"></textarea></label>
+            <label>Phones (one per line: number, optionally followed by MOBILE/HOME/WORK)
+                <textarea id="pfPhones" rows="2"></textarea></label>
+            <label>Notes <textarea id="pfNotes" rows="2"></textarea></label>
+            <footer>
+                <button id="personCancel" type="button" class="secondary">Cancel</button>
+                <button id="personSave">Save</button>
+            </footer>
+        </article>
+    </dialog>
 
     <h3>Households</h3>
     <p class="muted">The billing unit. Removing a member records a leaving
@@ -58,36 +66,50 @@
     </table>
     <div id="householdsTotal" class="muted"></div>
 
-    <fieldset id="householdForm" hidden>
-        <legend id="householdFormTitle">New household</legend>
-        <label>Name <input id="hfName" placeholder="e.g. Smith household"></label>
-        <label>Primary contact person id* <input id="hfContact" type="number" min="1"></label>
-        <button id="householdSave">Save</button>
-        <button id="householdCancel" type="button">Cancel</button>
-    </fieldset>
+    <dialog id="householdForm">
+        <article>
+            <header><h3 id="householdFormTitle">New household</h3></header>
+            <label>Name <input id="hfName" placeholder="e.g. Smith household"></label>
+            <label>Primary contact*
+                <input id="hfContact" type="search" autocomplete="off"
+                       placeholder="search people by name or email"></label>
+            <ul id="hfContactResults" class="picker-results" hidden></ul>
+            <footer>
+                <button id="householdCancel" type="button" class="secondary">Cancel</button>
+                <button id="householdSave">Save</button>
+            </footer>
+        </article>
+    </dialog>
 
-    <fieldset id="householdDetail" hidden>
-        <legend id="householdDetailTitle">Household</legend>
-        <table id="householdMembers">
-            <thead>
-            <tr><th>Person</th><th>Relationship</th><th>Joined</th><th>Left</th><th></th></tr>
-            </thead>
-            <tbody></tbody>
-        </table>
-        <label>Add person id <input id="hdPersonId" type="number" min="1"></label>
-        <label>Relationship
-            <select id="hdRelationship">
-                <option>MEMBER</option><option>PARTNER</option>
-                <option>DEPENDANT</option><option>OTHER</option>
-            </select></label>
-        <button id="hdAdd">Add member</button>
-        <hr>
-        <p class="muted">Sign this household up for a period (a returning or brand-new member mid-year).</p>
-        <label>New membership — period <select id="hmPeriod"></select></label>
-        <label>Type <select id="hmType"></select></label>
-        <button id="hmCreate">Create membership</button>
-        <button id="hdClose" type="button">Close</button>
-    </fieldset>
+    <dialog id="householdDetail">
+        <article>
+            <header><h3 id="householdDetailTitle">Household</h3></header>
+            <table id="householdMembers">
+                <thead>
+                <tr><th>Person</th><th>Relationship</th><th>Joined</th><th>Left</th><th></th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <label>Add person
+                <input id="hdPersonId" type="search" autocomplete="off"
+                       placeholder="search people by name or email"></label>
+            <ul id="hdPersonIdResults" class="picker-results" hidden></ul>
+            <label>Relationship
+                <select id="hdRelationship">
+                    <option>MEMBER</option><option>PARTNER</option>
+                    <option>DEPENDANT</option><option>OTHER</option>
+                </select></label>
+            <button id="hdAdd">Add member</button>
+            <hr>
+            <p class="muted">Sign this household up for a period (a returning or brand-new member mid-year).</p>
+            <label>New membership — period <select id="hmPeriod"></select></label>
+            <label>Type <select id="hmType"></select></label>
+            <button id="hmCreate">Create membership</button>
+            <footer>
+                <button id="hdClose" type="button" class="secondary">Close</button>
+            </footer>
+        </article>
+    </dialog>
 </section>
 
 <section id="renewalsSection" hidden>
@@ -101,17 +123,21 @@
     <button id="periodNew">New period</button>
     <div id="periodSummary" class="muted"></div>
 
-    <fieldset id="periodForm" hidden>
-        <legend>New period</legend>
-        <label>Name <input id="npName" placeholder="e.g. 2026-2027"></label>
-        <label>Start date <input id="npStart" type="date"></label>
-        <label>End date <input id="npEnd" type="date"></label>
-        <label>Renewal opens <input id="npRenewalOpen" type="date"></label>
-        <label>Late-joining cutoff <input id="npCutoff" type="date"></label>
-        <div id="npPrices"></div>
-        <button id="npSave">Create period</button>
-        <button id="npCancel" type="button">Cancel</button>
-    </fieldset>
+    <dialog id="periodForm">
+        <article>
+            <header><h3>New period</h3></header>
+            <label>Name <input id="npName" placeholder="e.g. 2026-2027"></label>
+            <label>Start date <input id="npStart" type="date"></label>
+            <label>End date <input id="npEnd" type="date"></label>
+            <label>Renewal opens <input id="npRenewalOpen" type="date"></label>
+            <label>Late-joining cutoff <input id="npCutoff" type="date"></label>
+            <div id="npPrices"></div>
+            <footer>
+                <button id="npCancel" type="button" class="secondary">Cancel</button>
+                <button id="npSave">Create period</button>
+            </footer>
+        </article>
+    </dialog>
 
     <h3>Rollover</h3>
     <p class="muted">Creates a membership for every household with an ACTIVE
@@ -146,37 +172,46 @@
     </table>
     <div id="membershipsTotal" class="muted"></div>
 
-    <fieldset id="membershipDetail" hidden>
-        <legend id="mdTitle">Membership</legend>
-        <div id="mdSummary" class="muted"></div>
-        <div id="mdActions"></div>
-        <button id="mdRecordPayment">Record payment</button>
-        <table id="mdPayments">
-            <thead>
-            <tr><th>Date</th><th>Amount</th><th>Method</th><th>Allocations</th><th>By</th><th></th></tr>
-            </thead>
-            <tbody></tbody>
-        </table>
-        <button id="mdClose" type="button">Close</button>
+    <dialog id="membershipDetail">
+        <article>
+            <header><h3 id="mdTitle">Membership</h3></header>
+            <div id="mdSummary" class="muted"></div>
+            <div id="mdActions"></div>
+            <button id="mdRecordPayment">Record payment</button>
+            <table id="mdPayments">
+                <thead>
+                <tr><th>Date</th><th>Amount</th><th>Method</th><th>Allocations</th><th>By</th><th></th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <footer>
+                <button id="mdClose" type="button" class="secondary">Close</button>
+            </footer>
+        </article>
 
-        <fieldset id="paymentForm" hidden>
-            <legend>Record payment</legend>
-            <label>Received date <input id="payDate" type="date"></label>
-            <label>Method
-                <select id="payMethod">
-                    <option>BANK_TRANSFER</option><option>CASH</option>
-                    <option>CHEQUE</option><option>OTHER</option>
-                </select></label>
-            <label>Bank reference <input id="payRef"></label>
-            <label>Membership amount ($) <input id="payMembership" type="number" step="0.01"></label>
-            <div id="payExtra"></div>
-            <button id="payAddLine" type="button">Add allocation line (donation / journal)</button>
-            <label>Notes <input id="payNotes"></label>
-            <button id="paySave">Save payment</button>
-            <button id="payCancel" type="button">Cancel</button>
-        </fieldset>
-    </fieldset>
+        <dialog id="paymentForm">
+            <article>
+                <header><h3>Record payment</h3></header>
+                <label>Received date <input id="payDate" type="date"></label>
+                <label>Method
+                    <select id="payMethod">
+                        <option>BANK_TRANSFER</option><option>CASH</option>
+                        <option>CHEQUE</option><option>OTHER</option>
+                    </select></label>
+                <label>Bank reference <input id="payRef"></label>
+                <label>Membership amount ($) <input id="payMembership" type="number" step="0.01"></label>
+                <div id="payExtra"></div>
+                <button id="payAddLine" type="button" class="secondary">Add allocation line (donation / journal)</button>
+                <label>Notes <input id="payNotes"></label>
+                <footer>
+                    <button id="payCancel" type="button" class="secondary">Cancel</button>
+                    <button id="paySave">Save payment</button>
+                </footer>
+            </article>
+        </dialog>
+    </dialog>
 </section>
+</main>
 
 <script src="../shared/sha256.js"></script>
 <script src="../shared/auth.js"></script>

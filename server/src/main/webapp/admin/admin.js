@@ -36,13 +36,18 @@ function say(text, isError) {
     message.className = isError ? "error" : "";
 }
 
-// un-hide a fieldset/panel and bring it into view — the forms and the
-// household detail sit below their tables, so opening them silently off-screen
-// otherwise looks like nothing happened
-function reveal(id) {
-    const el = document.getElementById(id);
-    el.hidden = false;
-    el.scrollIntoView({behavior: "smooth", block: "start"});
+// the edit forms and detail panels are <dialog> elements — open them as
+// native modals (backdrop, Esc-to-close, focus trap), so no scroll-into-view
+// juggling and no fighting the [hidden] rule. close() reverses it.
+// openDialog is idempotent: openMembership/openHousehold re-open to refresh in
+// place, and showModal() on an already-open dialog throws.
+function openDialog(id) {
+    const d = document.getElementById(id);
+    if (!d.open) d.showModal();
+}
+function closeDialog(id) {
+    const d = document.getElementById(id);
+    if (d.open) d.close();
 }
 
 async function showIdentity() {
@@ -119,22 +124,27 @@ async function renderUsers() {
         };
         claimCell.appendChild(claim);
 
-        // verified: meaningful only alongside a claim
+        // verified: a colored badge that doubles as the toggle. Meaningful
+        // only alongside a claim — a claimless user gets a muted, disabled dash.
         const verifiedCell = row.insertCell();
-        const verified = document.createElement("input");
-        verified.type = "checkbox";
-        verified.checked = u.verified;
-        verified.disabled = !u.claimed_role;
-        verified.title = u.claimed_role
-            ? "The claim has been checked as fact"
-            : "No claim to verify";
-        verified.onchange = async () => {
-            if (await userAction(`/admin/users/${u.id}/verified`,
-                    {verified: verified.checked})) {
-                say(`${u.username}: ${verified.checked ? "verified" : "verification removed"}.`);
-            }
-            renderUsers();
-        };
+        const verified = document.createElement("button");
+        verified.type = "button";
+        if (!u.claimed_role) {
+            verified.className = "badge badge-grey";
+            verified.textContent = "—";
+            verified.disabled = true;
+            verified.title = "No claim to verify";
+        } else {
+            verified.className = u.verified ? "badge badge-green" : "badge badge-amber";
+            verified.textContent = u.verified ? "Verified" : "Unverified";
+            verified.title = "Whether the claim has been checked as fact — click to toggle";
+            verified.onclick = async () => {
+                if (await userAction(`/admin/users/${u.id}/verified`, {verified: !u.verified})) {
+                    say(`${u.username}: ${!u.verified ? "verified" : "verification removed"}.`);
+                }
+                renderUsers();
+            };
+        }
         verifiedCell.appendChild(verified);
 
         // manager: the admin-only role
@@ -213,7 +223,7 @@ function openPersonForm(person) {
     document.getElementById("pfPhones").value =
         (person?.phones || []).map(ph => ph.number + (ph.type ? " " + ph.type : "")).join("\n");
     document.getElementById("pfNotes").value = person?.notes || "";
-    reveal("personForm");
+    openDialog("personForm");
 }
 
 function personPayload() {
@@ -246,13 +256,67 @@ async function savePerson() {
     if (!response) return;
     const person = await response.json();
     say(`Saved person #${person.id} (${person.givenName} ${person.familyName}).`);
-    document.getElementById("personForm").hidden = true;
+    closeDialog("personForm");
     renderPeople();
 }
 
 // ---- register: households ---------------------------------------------------
 
 let openHouseholdId = null;
+
+// Person type-ahead. Replaces the raw person-id number inputs: type a name or
+// email, hit GET /api/admin/people?q=, pick a match. The chosen id rides on the
+// input's dataset; editing the text clears it so a stale pick can't be
+// submitted. Each picker needs an <input id> and a sibling <ul id="{id}Results">.
+function wirePersonPicker(inputId) {
+    const input = document.getElementById(inputId);
+    const list = document.getElementById(inputId + "Results");
+    let timer = null;
+    const clear = () => { list.innerHTML = ""; list.hidden = true; };
+    input.oninput = () => {
+        delete input.dataset.personId; // text changed → any prior pick is stale
+        const q = input.value.trim();
+        clearTimeout(timer);
+        if (q.length < 2) { clear(); return; }
+        timer = setTimeout(async () => {
+            const response = await registerCall(`/admin/people?${new URLSearchParams({q, limit: "8"})}`);
+            if (!response) return;
+            const people = (await response.json()).people;
+            list.innerHTML = "";
+            for (const p of people) {
+                const name = personName(p);
+                const email = p.emails.find(e => e.isPrimary) || p.emails[0];
+                const li = document.createElement("li");
+                li.textContent = `${name} (#${p.id})` + (email ? ` · ${email.email}` : "");
+                li.onclick = () => {
+                    input.value = name;
+                    input.dataset.personId = p.id;
+                    clear();
+                };
+                list.appendChild(li);
+            }
+            list.hidden = people.length === 0;
+        }, 200);
+    };
+    // a click on a result fires before blur closes the list; the delay lets it
+    input.onblur = () => setTimeout(clear, 150);
+}
+function pickedPersonId(inputId) {
+    const v = document.getElementById(inputId).dataset.personId;
+    return v ? Number(v) : null;
+}
+function resetPicker(inputId) {
+    const input = document.getElementById(inputId);
+    input.value = "";
+    delete input.dataset.personId;
+    const list = document.getElementById(inputId + "Results");
+    list.innerHTML = "";
+    list.hidden = true;
+}
+function personName(p) {
+    return [p.title, p.givenName, p.familyName].filter(Boolean).join(" ")
+        + (p.preferredName ? ` (${p.preferredName})` : "");
+}
 
 async function renderHouseholds() {
     const q = document.getElementById("householdSearch").value.trim();
@@ -311,36 +375,37 @@ async function openHousehold(id) {
         }
     }
     fillPeriodTypeSelects(); // the household's "New membership" period/type pickers
-    reveal("householdDetail");
+    resetPicker("hdPersonId");
+    openDialog("householdDetail");
 }
 
 async function saveHousehold() {
     const name = document.getElementById("hfName").value.trim() || null;
-    const contact = document.getElementById("hfContact").value.trim();
-    if (!contact) return say("Primary contact person id is required.", true);
+    const contact = pickedPersonId("hfContact");
+    if (!contact) return say("Choose a primary contact — search by name or email.", true);
     const response = await registerCall("/admin/households", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({householdName: name, primaryContactPersonId: Number(contact)}),
+        body: JSON.stringify({householdName: name, primaryContactPersonId: contact}),
     });
     if (!response) return;
     const household = await response.json();
     say(`Created household #${household.id}.`);
-    document.getElementById("householdForm").hidden = true;
+    closeDialog("householdForm");
     renderHouseholds();
 }
 
 async function addHouseholdMember() {
-    const personId = document.getElementById("hdPersonId").value.trim();
-    if (!personId || openHouseholdId === null) return say("Person id is required.", true);
+    const personId = pickedPersonId("hdPersonId");
+    if (!personId || openHouseholdId === null) return say("Choose a person — search by name or email.", true);
     const relationship = document.getElementById("hdRelationship").value;
     if (await registerCall(`/admin/households/${openHouseholdId}/people`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({personId: Number(personId), relationshipType: relationship}),
+        body: JSON.stringify({personId, relationshipType: relationship}),
     })) {
         say(`Added person #${personId}.`);
-        document.getElementById("hdPersonId").value = "";
+        resetPicker("hdPersonId");
         openHousehold(openHouseholdId);
         renderHouseholds();
     }
@@ -487,6 +552,17 @@ const STATUS_LABELS = {
     APPLIED: "Applied", CEASED: "Ceased",
 };
 const statusLabel = (s) => STATUS_LABELS[s] || s;
+// Paid green, Unpaid amber, Applied blue, Lapsed/Ceased grey (CR-009)
+const STATUS_BADGE = {
+    ACTIVE: "green", PENDING_PAYMENT: "amber", APPLIED: "blue",
+    LAPSED: "grey", CEASED: "grey",
+};
+function statusBadge(status) {
+    const span = document.createElement("span");
+    span.className = `badge badge-${STATUS_BADGE[status] || "grey"}`;
+    span.textContent = statusLabel(status);
+    return span;
+}
 const dollars = (cents) => "$" + (cents / 100).toFixed(2);
 const today = () => new Date().toISOString().slice(0, 10);
 // an ISO date wound forward one year (string-based, so no timezone surprises);
@@ -562,7 +638,7 @@ async function renderMemberships() {
         row.insertCell().textContent = r.primaryContactName;
         row.insertCell().textContent = r.memberNames.join(", ");
         row.insertCell().textContent = r.typeName;
-        row.insertCell().textContent = statusLabel(r.status);
+        row.insertCell().appendChild(statusBadge(r.status));
         row.insertCell().textContent = dollars(r.amountDueCents);
         row.insertCell().textContent = dollars(r.amountPaidCents);
         const manage = document.createElement("button");
@@ -593,14 +669,14 @@ async function openMembership(id) {
     renderMembershipActions(m);
     renderMembershipPayments(m);
     // prep the payment form for this membership (prefilled with the balance)
-    document.getElementById("paymentForm").hidden = true;
+    closeDialog("paymentForm");
     document.getElementById("payDate").value = today();
     document.getElementById("payMembership").value =
         ((m.amountDueCents - m.amountPaidCents) / 100).toFixed(2);
     document.getElementById("payExtra").innerHTML = "";
     document.getElementById("payRef").value = "";
     document.getElementById("payNotes").value = "";
-    reveal("membershipDetail");
+    openDialog("membershipDetail");
 }
 
 function renderMembershipActions(m) {
@@ -727,7 +803,7 @@ async function submitPayment() {
     const result = await response.json();
     say(`Recorded payment #${result.id}.`
         + (result.warnings && result.warnings.length ? " " + result.warnings.join("; ") : ""));
-    document.getElementById("paymentForm").hidden = true;
+    closeDialog("paymentForm");
     openMembership(openMembershipId);
     renderMemberships();
 }
@@ -761,7 +837,7 @@ function openPeriodForm() {
         label.appendChild(input);
         container.appendChild(label);
     }
-    reveal("periodForm");
+    openDialog("periodForm");
 }
 
 async function savePeriod() {
@@ -786,7 +862,7 @@ async function savePeriod() {
     if (!response) return;
     const p = await response.json();
     say(`Created period ${p.name}.`);
-    document.getElementById("periodForm").hidden = true;
+    closeDialog("periodForm");
     await loadPeriods(p.id);
 }
 
@@ -900,7 +976,7 @@ function wireRenewals() {
     };
     on("periodNew", openPeriodForm);
     on("npSave", savePeriod);
-    on("npCancel", () => { document.getElementById("periodForm").hidden = true; });
+    on("npCancel", () => closeDialog("periodForm"));
     on("rolloverPreview", rolloverPreview);
     on("rolloverApply", rolloverApply);
     on("memberSearchGo", renderMemberships);
@@ -910,11 +986,11 @@ function wireRenewals() {
     on("exportAgm", () => exportCsv("agm-register.csv"));
     on("exportLabels", () => exportCsv("mailing-labels.csv"));
     on("exportFinancial", () => exportCsv("financial.csv"));
-    on("mdRecordPayment", () => reveal("paymentForm"));
+    on("mdRecordPayment", () => openDialog("paymentForm"));
     on("payAddLine", addAllocationLine);
     on("paySave", submitPayment);
-    on("payCancel", () => { document.getElementById("paymentForm").hidden = true; });
-    on("mdClose", () => { document.getElementById("membershipDetail").hidden = true; });
+    on("payCancel", () => closeDialog("paymentForm"));
+    on("mdClose", () => closeDialog("membershipDetail"));
     on("hmCreate", createHouseholdMembership);
     document.getElementById("renewalsSection").hidden = false;
 }
@@ -933,13 +1009,19 @@ function wireRegister() {
     on("personSearchGo", renderPeople);      enter("personSearch", renderPeople);
     on("personNew", () => openPersonForm(null));
     on("personSave", savePerson);
-    on("personCancel", () => { document.getElementById("personForm").hidden = true; });
+    on("personCancel", () => closeDialog("personForm"));
     on("householdSearchGo", renderHouseholds); enter("householdSearch", renderHouseholds);
-    on("householdNew", () => reveal("householdForm"));
+    on("householdNew", () => {
+        document.getElementById("hfName").value = "";
+        resetPicker("hfContact");
+        openDialog("householdForm");
+    });
     on("householdSave", saveHousehold);
-    on("householdCancel", () => { document.getElementById("householdForm").hidden = true; });
+    on("householdCancel", () => closeDialog("householdForm"));
     on("hdAdd", addHouseholdMember);
-    on("hdClose", () => { document.getElementById("householdDetail").hidden = true; });
+    on("hdClose", () => closeDialog("householdDetail"));
+    wirePersonPicker("hfContact");   // household primary-contact search
+    wirePersonPicker("hdPersonId");  // household add-member search
     document.getElementById("registerSection").hidden = false;
 }
 

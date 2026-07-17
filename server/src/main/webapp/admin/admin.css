@@ -14,34 +14,55 @@
  * limitations under the License.
  */
 
-/* Shared styles for every admin page (index / users / import) — one file so
-   the look and the menu stay in step across pages. */
+/* Overrides only — the base look comes from ../shared/pico.classless.min.css
+   (linked first). This file carries what Pico does not: the load-bearing
+   [hidden] rule, the shared menu, the status/message semantics, and the
+   status badges. Colours are Pico variables so both themes stay legible. */
 
-body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; color: #222; }
-h1 { font-size: 1.4rem; }
-table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
-th { background: #f4f4f4; }
-button { padding: .3rem .8rem; cursor: pointer; }
-#status { padding: .5rem .8rem; background: #eef; border-radius: 4px; margin-bottom: 1rem; }
-#status.warn { background: #fee; }
-#message { min-height: 1.4rem; color: #060; }
-#message.error { color: #a00; white-space: pre-wrap; }
-code { background: #f4f4f4; padding: 0 .3rem; }
-fieldset { border: 1px solid #ccc; border-radius: 4px; margin: 1rem 0; }
-fieldset label { display: block; margin: .3rem 0; }
-fieldset input, fieldset textarea, fieldset select { width: 100%; max-width: 24rem; box-sizing: border-box; }
-.muted { color: #777; }
-.warn-note { color: #a00; margin: .3rem 0; }
-/* the import period picker sits outside a fieldset, so give it a visible
-   width of its own (the fieldset selects get one via the rule above) */
-#importPeriod { min-width: 14rem; padding: .2rem; }
-
-/* keep the hidden attribute winning over any author display rule — an
-   invisible overlay/fieldset otherwise still eats clicks */
+/* Keep the hidden attribute winning over any author display rule — an
+   invisible overlay/section otherwise still eats clicks (a real shipped bug;
+   see CLAUDE.md). Dialogs don't rely on this: they open/close via the [open]
+   attribute (showModal()/close()), which Pico's dialog:not([open]) handles. */
 [hidden] { display: none !important; }
 
 /* the shared top menu, rendered by admin.js on every page */
-nav#menu { display: flex; gap: .5rem; flex-wrap: wrap; margin: 0 0 1rem; border-bottom: 1px solid #ddd; padding-bottom: .6rem; }
-nav#menu a { text-decoration: none; padding: .3rem .8rem; border-radius: 4px; color: #224; background: #eef; }
-nav#menu a.active { background: #224; color: #fff; }
+nav#menu { gap: .25rem; flex-wrap: wrap; margin: 0 0 1.5rem; padding-bottom: .5rem;
+    border-bottom: 1px solid var(--pico-muted-border-color); }
+nav#menu a { text-decoration: none; padding: .3rem .8rem; border-radius: var(--pico-border-radius); }
+nav#menu a.active { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
+
+/* #status = the login box; #message = per-action feedback. Info/warn/error
+   semantics preserved, restated in Pico variables for dark mode. */
+#status { padding: .5rem .8rem; margin-bottom: 1rem; border-radius: var(--pico-border-radius);
+    background: var(--pico-card-sectioning-background-color); }
+#status.warn { background: var(--pico-del-color); color: #fff; }
+#message { min-height: 1.4rem; color: var(--pico-ins-color); }
+#message.error { color: var(--pico-del-color); white-space: pre-wrap; }
+
+.muted { color: var(--pico-muted-color); }
+.warn-note { color: var(--pico-del-color); margin: .3rem 0; }
+
+/* status badges — carry their own background so the label reads in both
+   themes; white text clears AA on every colour below. Membership statuses:
+   Paid green, Unpaid amber, Applied blue, Lapsed/Ceased grey. Also the
+   Verified flag on the users page. */
+.badge { display: inline-block; padding: .15rem .55rem; border-radius: 1rem;
+    font-size: .75rem; font-weight: 600; line-height: 1.5; color: #fff; white-space: nowrap; }
+.badge-green { background: #2e7d32; }
+.badge-amber { background: #b26a00; }
+.badge-blue  { background: #1565c0; }
+.badge-grey  { background: #666; }
+/* the Verified badge doubles as its own toggle */
+button.badge { border: none; cursor: pointer; }
+button.badge:disabled { opacity: .5; cursor: not-allowed; }
+
+/* the person type-ahead dropdown (household primary contact / add member) */
+.picker-results { list-style: none; margin: -.5rem 0 var(--pico-spacing); padding: 0;
+    border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius);
+    max-height: 12rem; overflow-y: auto; }
+.picker-results li { padding: .35rem .6rem; cursor: pointer; }
+.picker-results li:hover { background: var(--pico-secondary-background); color: var(--pico-secondary-inverse); }
+
+/* a payment allocation line: type select + amount, laid out in a row */
+.allocLine { display: flex; gap: .5rem; align-items: center; margin: .3rem 0; }
+.allocLine input { max-width: 8rem; }

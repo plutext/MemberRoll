@@ -1,6 +1,6 @@
 # CR 009: UI polish — Pico CSS, dialog forms, and the UX rough edges
 
-Status: PROPOSED
+Status: VERIFIED
 
 Out-of-band CR: the roadmap reserves 004–008 for the feature sequence
 (Stripe → email → self-serve → application form → hardening); this CR is
@@ -165,7 +165,60 @@ each in both light and dark `prefers-color-scheme`):
 
 ## Results
 
-(to be filled in after implementation)
+Implemented 2026-07-18.
+
+Files changed:
+- `shared/pico.classless.min.css` — **new**, vendored Pico v2.1.1 classless
+  build (MIT header retained in the file, 71 KB).
+- `admin/admin.css` — shrunk from the ~30-line hand-rolled look to
+  overrides only: the load-bearing `[hidden] !important`, the menu, the
+  `#status`/`#message` semantics (now Pico variables), the `.badge-*`
+  classes, `.picker-results`, and `.allocLine`.
+- `admin/index.html` — `<main>`/`<header>` wrap, Pico linked before
+  `admin.css`; the six inline fieldsets (`personForm`, `householdForm`,
+  `householdDetail`, `periodForm`, `membershipDetail`, and the nested
+  `paymentForm`) are now `<dialog><article>…</article></dialog>`; the two
+  raw person-id number inputs became `type="search"` type-ahead fields
+  with a `.picker-results` list.
+- `admin/admin.js` — `reveal()` (un-hide + scroll) replaced by idempotent
+  `openDialog()`/`closeDialog()` (`showModal()`/`close()`); person
+  type-ahead (`wirePersonPicker`/`pickedPersonId`/`resetPicker`) over the
+  existing `GET /api/admin/people?q=`; membership-status and users-Verified
+  columns render `.badge` spans/buttons.
+- `admin/users.html`, `admin/import.html` — Pico linked, `<main>`/`<header>`
+  wrap (no inline forms, so no dialog work).
+- `web/index.html` — Pico linked, `<main>`/`<header>` wrap, inline
+  `<style>` shrunk to overrides; the claim modal keeps its overlay/`[hidden]`
+  mechanism but its `#fff`/`#a00` colours moved to Pico variables.
+
+No server code changed; no realm changes; no API touched.
+
+### Scripted (regression gate)
+
+`server/verify-matrix.sh` against the running dev stack, unchanged:
+**PASS=205 FAIL=0** — identical to CR-003, confirming no API regression.
+
+Additional headless checks:
+- New files serve 200 (`shared/pico.classless.min.css`), and the served
+  `admin/index.html` carries 6 `<dialog>` elements, `admin.css` carries the
+  badge classes, `web/index.html` links Pico.
+- Every id `admin.js` references (`getElementById`/`openDialog`/
+  `closeDialog`/`resetPicker`/`wirePersonPicker`) resolves to an element in
+  the admin HTML — no dangling references from the fieldset→dialog refactor.
+- `node --check admin.js` passes.
+
+### Browser walkthrough
+
+Passed — Jason ran the 14-row visual walkthrough against the running dev
+stack (new files served via the synced cargo deploy) and signed it off. The
+behaviour-changing points were confirmed: forms open/close as modal dialogs
+(backdrop + Esc + Cancel, Save refreshes underneath); the household
+primary-contact and add-member pickers search by name/email with click to
+fill (no raw id typing); Record payment stacks the nested payment dialog on
+the membership dialog; membership status and users-Verified render as the
+agreed coloured badges with the Verified badge still toggling; and the web
+claim modal still gates a role-less user without eating taps when hidden
+(the `[hidden] !important` regression holds).
 
 ## Follow-ups / amendments
 
