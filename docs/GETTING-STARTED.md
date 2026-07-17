@@ -30,30 +30,30 @@ file; add your organization's LICENSE and headers before the first push.
 
 ```bash
 mvn clean package                  # builds server/target/server.war
-cd server && docker compose up -d  # Keycloak :8081, realm imported from server/keycloak/
-cd .. && mvn -pl server cargo:run  # Tomcat :8080, war deployed at /server
+cd server && docker compose up -d  # Keycloak :18081 (realm from server/keycloak/) + Postgres :5433
+cd .. && mvn -pl server cargo:run  # Tomcat :18080, war deployed at /server (Flyway migrates on start)
 ```
 
 Smoke:
 
 ```bash
-curl http://localhost:8080/server/api/health        # {"status":"ok"}
-TOKEN=$(curl -s -X POST http://localhost:8081/realms/memberroll/protocol/openid-connect/token \
+curl http://localhost:18080/server/api/health        # {"status":"ok","db":"ok"}
+TOKEN=$(curl -s -X POST http://localhost:18081/realms/memberroll/protocol/openid-connect/token \
   -d grant_type=password -d client_id=test-cli \
   -d username=testuser -d password=testuser | jq -r .access_token)
-curl -s http://localhost:8080/server/api/whoami -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:18080/server/api/whoami -H "Authorization: Bearer $TOKEN"
 ```
 
 Browse:
 
-- <http://localhost:8080/server/web/> — the user page (notes example).
+- <http://localhost:18080/server/web/> — the user page (notes example).
   Log in as `testuser` / `testuser`, or click through Keycloak's
   **Register** link to create a real account (the registration form
   includes the "I am a …" role picker).
-- <http://localhost:8080/server/admin/> — the admin panel
+- <http://localhost:18080/server/admin/> — the admin panel
   (`testadmin` / `testadmin`): user list, claim correction, verified
-  flag, manager grant.
-- <http://localhost:8081/> — the Keycloak admin console
+  flag, manager grant, and the membership register (people, households).
+- <http://localhost:18081/> — the Keycloak admin console
   (`admin` / `admin`): look, but put permanent changes in
   `server/keycloak/memberroll-realm.json` — a `docker compose down` discards
   console edits in dev.
@@ -71,11 +71,11 @@ the issuer **as the client saw it**, so the war must allowlist both:
 
 ```bash
 IP=$(ip route get 1.1.1.1 | grep -oP 'src \K[0-9.]+')
-KEYCLOAK_ISSUER="http://localhost:8081/realms/memberroll,http://$IP:8081/realms/memberroll" \
+KEYCLOAK_ISSUER="http://localhost:18081/realms/memberroll,http://$IP:18081/realms/memberroll" \
     mvn -pl server cargo:run
 ```
 
-Also add `http://$IP:8080/*` to the `web` client's `redirectUris` and
+Also add `http://$IP:18080/*` to the `web` client's `redirectUris` and
 `webOrigins` in the realm JSON (and restart Keycloak), or Keycloak
 answers "Invalid parameter: redirect_uri" on the phone. Note a DHCP
 lease change breaks both places — recheck the IP first when LAN login
@@ -88,9 +88,11 @@ The worked example is the pattern:
 - **New endpoint**: copy `NotesResource` (guest 401 challenge, owner
   scoping via the token's `sub`, admin override, id validation) and
   register it in `ApiApplication.getClasses()`.
-- **New storage**: copy `NoteStore` (env-configured root, atomic writes,
-  id pattern = path-traversal guard). Reach for Postgres only when you
-  need cross-user queries.
+- **New tables/queries**: copy `PersonStore`/`HouseholdStore` (hand-written
+  SQL over JDBI, records, transactions via `jdbi.inTransaction`) and add a
+  Flyway migration under `server/src/main/resources/db/migration/`. For
+  single-owner blob data, `NoteStore` (env-configured root, atomic writes,
+  id pattern = path-traversal guard) remains the filesystem example.
 - **New page**: copy `web/` (boot sequence in `app.js`; every fetch via
   `Auth.api`). Keep `[hidden]{display:none !important}` in the CSS.
 - **New role**: claimable → `KeycloakAdmin.CLAIMABLE` + realm JSON

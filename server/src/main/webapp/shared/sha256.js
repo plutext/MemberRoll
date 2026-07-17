@@ -1,7 +1,23 @@
+/*
+ * Copyright 2026 Jason Harrop
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 /* SHA-256 in plain JS, because the PKCE S256 challenge must be
  * computable where WebCrypto's crypto.subtle does not exist — it is
  * secure-context-gated, and the HTTP-on-LAN dev loop (a phone browsing
- * http://<LAN-IP>:8080) is not a secure context. auth.js prefers
+ * http://<LAN-IP>:18080) is not a secure context. auth.js prefers
  * crypto.subtle when present and falls back to this, keeping the
  * challenge method S256 everywhere (no downgrade to `plain`).
  * FIPS 180-4; verified against node:crypto over fixture vectors and

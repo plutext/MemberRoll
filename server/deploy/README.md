@@ -140,6 +140,23 @@ just the tomcat service; Keycloak/Postgres/Caddy keep running. Config
 changes (Caddyfile, compose.yml) ride the same rsync — follow with
 `docker compose up -d` on the instance to apply.
 
+### Adding the app database (instances provisioned before CR-001)
+
+Fresh provisions get the `memberroll` database automatically
+(`postgres-init/` runs on an empty data dir). An instance provisioned
+before CR-001 has Postgres data already, so the init script will never
+run — create the database by hand, once:
+
+```bash
+cd /opt/memberroll
+echo "MEMBERROLL_DB_PASSWORD=$(openssl rand -hex 16)" >> .env
+set -a; . ./.env; set +a
+docker compose exec postgres psql -U keycloak -d postgres \
+  -c "CREATE ROLE memberroll LOGIN PASSWORD '$MEMBERROLL_DB_PASSWORD'" \
+  -c "CREATE DATABASE memberroll OWNER memberroll"
+docker compose up -d          # tomcat picks up MEMBERROLL_DB_* ; Flyway migrates on start
+```
+
 ## 5. Backups
 
 Nightly on-box dumps:
@@ -181,7 +198,7 @@ rm -rf /tmp/memberroll-smoke && mkdir -p /tmp/memberroll-smoke && cp -r server/d
 cp server/keycloak/memberroll-realm.json /tmp/memberroll-smoke/realm-src.json
 cp server/target/server.war /tmp/memberroll-smoke/server.war
 cd /tmp/memberroll-smoke
-export COMPOSE_FILE=compose.yml:compose.smoke.yml KEYCLOAK_ADMIN_PORT=18081
+export COMPOSE_FILE=compose.yml:compose.smoke.yml KEYCLOAK_ADMIN_PORT=28081
 KEEP_TEST_FIXTURES=1 ./deploy.sh smoke.localhost     # keeps test users/clients — smoke ONLY
 ```
 
@@ -200,5 +217,5 @@ Tear down with `docker compose down` (add `-v` — the smoke's bind mounts
 live in the scratch dir and die with it).
 
 Port collisions with the dev stack: the smoke publishes 80/443 (dev uses
-neither) and loopback `18081` for Keycloak (dev Keycloak owns 8081 —
-hence `KEYCLOAK_ADMIN_PORT`). Dev Tomcat on 8080 is untouched.
+neither) and loopback `28081` for Keycloak (dev Keycloak owns 18081 —
+hence `KEYCLOAK_ADMIN_PORT`). Dev Tomcat on 18080 is untouched.

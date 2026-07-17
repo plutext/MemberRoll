@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# Copyright 2026 Jason Harrop
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # First-run (and re-run — it is idempotent) provisioning driver. Runs ON
 # THE INSTANCE in /opt/memberroll after push-war.sh has synced the deploy
 # assets, realm-src.json and server.war across.
@@ -36,6 +50,7 @@ KEYCLOAK_ADMIN_USER=admin
 KEYCLOAK_ADMIN_PASSWORD=$(openssl rand -hex 16)
 KEYCLOAK_SERVICE_SECRET=$(openssl rand -hex 24)
 KEYCLOAK_DB_PASSWORD=$(openssl rand -hex 16)
+MEMBERROLL_DB_PASSWORD=$(openssl rand -hex 16)
 EOF
     umask 022
     echo "wrote .env for $1 (secrets generated; keep this file — it IS the credentials)"

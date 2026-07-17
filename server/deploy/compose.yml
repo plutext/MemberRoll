@@ -52,10 +52,14 @@ services:
       KEYCLOAK_SERVICE_CLIENT: server-service
       KEYCLOAK_SERVICE_SECRET: ${KEYCLOAK_SERVICE_SECRET}
       MEMBERROLL_DATA: /data/store
+      MEMBERROLL_DB_URL: jdbc:postgresql://postgres:5432/memberroll
+      MEMBERROLL_DB_USER: memberroll
+      MEMBERROLL_DB_PASSWORD: ${MEMBERROLL_DB_PASSWORD}
     volumes:
       - ./data/store:/data/store
     depends_on:
       - caddy
+      - postgres
     mem_limit: 1g
 
   keycloak:
@@ -95,12 +99,17 @@ services:
     image: postgres:17
     restart: unless-stopped
     environment:
-      # Keycloak's store only (the app itself is filesystem-backed); when
-      # the app grows its own tables, add a second database here and an
-      # init script that creates it — don't share the keycloak database.
+      # Two databases, one server: keycloak (below, via the official
+      # image's env vars) and memberroll (the app's register, created by
+      # postgres-init/ — which only runs on an EMPTY data dir; for an
+      # already-provisioned instance see README "Adding the app database").
+      # Deliberately separate databases: independent backup/restore, no
+      # entanglement with Keycloak upgrades.
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
       POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      MEMBERROLL_DB_PASSWORD: ${MEMBERROLL_DB_PASSWORD}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     mem_limit: 512m

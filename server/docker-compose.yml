@@ -1,6 +1,8 @@
 # Keycloak owns identity. Dev mode, config-as-code — the realm in
 # keycloak/ is imported at startup and is the single source of Keycloak
-# configuration (clients, roles, test users). Port 8081: Tomcat has 8080.
+# configuration (clients, roles, test users). Port 18081: this project's
+# dev stack lives on 18xxx ports (Tomcat 18080 via cargo) so it can run
+# beside other projects' dev stacks on the conventional 8080/8081.
 #
 #   docker compose up -d      # start (first run pulls the image)
 #   docker compose logs -f    # watch startup ("Imported realm memberroll")
@@ -14,9 +16,29 @@
 # Keycloak on Postgres and the database is authoritative after the
 # one-time import.)
 #
-# Admin console: http://localhost:8081/ — bootstrap credentials below
+# Admin console: http://localhost:18081/ — bootstrap credentials below
 # (dev only; override via env for anything internet-facing).
+# Explicit project name: without it compose infers "server" from this
+# directory's name, which COLLIDES with any other checkout whose compose
+# also lives in a server/ dir (docker compose up here would silently
+# recreate that project's keycloak/postgres containers with THIS file's
+# config). Container names become memberroll-keycloak-1 etc.
+name: memberroll
+
 services:
+  # The app's register database. Same dev semantics as Keycloak — NO
+  # volume: `down` wipes it, Flyway recreates the schema at the next
+  # webapp start, fixtures reseed. Host port 5433 because dev boxes
+  # often run their own Postgres on 5432.
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: memberroll
+      POSTGRES_USER: memberroll
+      POSTGRES_PASSWORD: memberroll
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.4
     command: start-dev --import-realm
@@ -24,6 +46,6 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
     ports:
-      - "${KEYCLOAK_PORT:-8081}:8080"
+      - "${KEYCLOAK_PORT:-18081}:8080"
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro

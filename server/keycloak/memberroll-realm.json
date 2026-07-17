@@ -39,14 +39,14 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "http://localhost:8080/*"
+        "http://localhost:18080/*"
       ],
       "webOrigins": [
-        "http://localhost:8080"
+        "http://localhost:18080"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:8080/*"
+        "post.logout.redirect.uris": "http://localhost:18080/*"
       },
       "defaultClientScopes": [
         "basic",

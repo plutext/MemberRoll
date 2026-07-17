@@ -16,6 +16,11 @@
         #message { min-height: 1.4rem; color: #060; }
         #message.error { color: #a00; white-space: pre-wrap; }
         code { background: #f4f4f4; padding: 0 .3rem; }
+        fieldset { border: 1px solid #ccc; border-radius: 4px; margin: 1rem 0; }
+        fieldset label { display: block; margin: .3rem 0; }
+        fieldset input, fieldset textarea, fieldset select { width: 100%; max-width: 24rem; box-sizing: border-box; }
+        .muted { color: #777; }
+        [hidden] { display: none !important; }
     </style>
 </head>
 <body>
@@ -38,6 +43,79 @@
         </thead>
         <tbody></tbody>
     </table>
+</section>
+
+<section id="registerSection" hidden>
+    <h2>Register</h2>
+
+    <h3>People</h3>
+    <p class="muted">People are never deleted — the register is the historical record.</p>
+    <label>Search: <input id="personSearch" placeholder="name or email"></label>
+    <button id="personSearchGo">Search</button>
+    <button id="personNew">New person</button>
+    <table id="people">
+        <thead>
+        <tr><th>Id</th><th>Name</th><th>Emails</th><th>Phones</th><th>Notes</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <div id="peopleTotal" class="muted"></div>
+
+    <fieldset id="personForm" hidden>
+        <legend id="personFormTitle">New person</legend>
+        <label>Title <input id="pfTitle"></label>
+        <label>Given name* <input id="pfGiven"></label>
+        <label>Family name* <input id="pfFamily"></label>
+        <label>Preferred name <input id="pfPreferred"></label>
+        <label>Date of birth <input id="pfDob" type="date"></label>
+        <label>Emails (one per line; first is primary)
+            <textarea id="pfEmails" rows="2"></textarea></label>
+        <label>Phones (one per line: number, optionally followed by MOBILE/HOME/WORK)
+            <textarea id="pfPhones" rows="2"></textarea></label>
+        <label>Notes <textarea id="pfNotes" rows="2"></textarea></label>
+        <button id="personSave">Save</button>
+        <button id="personCancel" type="button">Cancel</button>
+    </fieldset>
+
+    <h3>Households</h3>
+    <p class="muted">The billing unit. Removing a member records a leaving
+        date (history stays); reassign the primary contact before removing them.</p>
+    <label>Search: <input id="householdSearch" placeholder="household or member name"></label>
+    <button id="householdSearchGo">Search</button>
+    <button id="householdNew">New household</button>
+    <table id="households">
+        <thead>
+        <tr><th>Id</th><th>Name</th><th>Primary contact</th><th>Status</th><th>Current members</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <div id="householdsTotal" class="muted"></div>
+
+    <fieldset id="householdForm" hidden>
+        <legend id="householdFormTitle">New household</legend>
+        <label>Name <input id="hfName" placeholder="e.g. Smith household"></label>
+        <label>Primary contact person id* <input id="hfContact" type="number" min="1"></label>
+        <button id="householdSave">Save</button>
+        <button id="householdCancel" type="button">Cancel</button>
+    </fieldset>
+
+    <fieldset id="householdDetail" hidden>
+        <legend id="householdDetailTitle">Household</legend>
+        <table id="householdMembers">
+            <thead>
+            <tr><th>Person</th><th>Relationship</th><th>Joined</th><th>Left</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <label>Add person id <input id="hdPersonId" type="number" min="1"></label>
+        <label>Relationship
+            <select id="hdRelationship">
+                <option>MEMBER</option><option>PARTNER</option>
+                <option>DEPENDANT</option><option>OTHER</option>
+            </select></label>
+        <button id="hdAdd">Add member</button>
+        <button id="hdClose" type="button">Close</button>
+    </fieldset>
 </section>
 
 <script src="../shared/sha256.js"></script>

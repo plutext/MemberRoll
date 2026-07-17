@@ -52,6 +52,47 @@
             <artifactId>parsson</artifactId>
             <version>1.1.7</version>
         </dependency>
+        <!-- servlet API for the @WebListener db lifecycle; Tomcat provides it -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <version>6.0.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- the register database (CR-001): JDBI executes hand-written SQL
+             (fluent API only — no ORM, no sqlobject, no codegen), Flyway owns
+             the schema (src/main/resources/db/migration), Hikari pools -->
+        <dependency>
+            <groupId>org.jdbi</groupId>
+            <artifactId>jdbi3-core</artifactId>
+            <version>3.49.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+            <version>11.7.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <version>11.7.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>6.3.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.5</version>
+        </dependency>
+        <!-- route the above libraries' slf4j output into Tomcat's JUL logs -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-jdk14</artifactId>
+            <version>2.0.17</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -69,7 +110,12 @@
             </plugin>
             <!-- local dev loop: mvn -pl server cargo:run
                  (downloads Tomcat via the local repo, deploys the war at
-                 /server on port 8080) -->
+                 /server on port 18080). The 18xxx ports — servlet, RMI
+                 shutdown, AJP — keep this project's dev Tomcat from
+                 colliding with other checkouts' cargo Tomcats on the
+                 defaults (8080/8205/8009); with only the servlet port
+                 moved, cargo would find 8205 busy and SHUT DOWN the other
+                 project's Tomcat through it. Keycloak pairs on 18081. -->
             <plugin>
                 <groupId>org.codehaus.cargo</groupId>
                 <artifactId>cargo-maven3-plugin</artifactId>
@@ -83,6 +129,13 @@
                             <version>${tomcat.version}</version>
                         </artifactInstaller>
                     </container>
+                    <configuration>
+                        <properties>
+                            <cargo.servlet.port>18080</cargo.servlet.port>
+                            <cargo.rmi.port>18205</cargo.rmi.port>
+                            <cargo.tomcat.ajp.port>18009</cargo.tomcat.ajp.port>
+                        </properties>
+                    </configuration>
                 </configuration>
             </plugin>
         </plugins>

@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 Jason Harrop
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 /* The shared login for every page in the war. A hand-rolled OAuth2
  * Authorization Code + PKCE flow against the Keycloak `web` public
  * client — deliberately no keycloak-js: these ~80 lines are
@@ -20,13 +36,16 @@ const Auth = (() => {
     // The scheme is the deployment discriminator. Production is https and
     // serves Keycloak on the page's own origin under /auth — one origin,
     // one issuer. The http dev loop keeps "same host as the page, port
-    // 8081": visiting the page via localhost or via the machine's LAN IP
+    // 18081": visiting the page via localhost or via the machine's LAN IP
     // then automatically talks to a Keycloak whose issuer matches
     // (Keycloak 26 stamps the issuer as the client saw it, and the war
-    // validates against its KEYCLOAK_ISSUER allowlist)
+    // validates against its KEYCLOAK_ISSUER allowlist). 18081 — not
+    // Keycloak's habitual 8081 — because this machine may host other
+    // projects' dev stacks: MemberRoll dev owns the 18xxx ports
+    // (Tomcat 18080, Keycloak 18081; see docker-compose.yml and pom.xml).
     const KEYCLOAK_BASE = location.protocol === "https:"
         ? `${location.origin}/auth`
-        : `${location.protocol}//${location.hostname}:8081`;
+        : `${location.protocol}//${location.hostname}:18081`;
     const REALM = "memberroll";
     const CLIENT_ID = "web";
     const ISSUER = `${KEYCLOAK_BASE}/realms/${REALM}`;

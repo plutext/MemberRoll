@@ -21,16 +21,16 @@ placeholder app content, made to be replaced.
 
 ```bash
 mvn clean package              # build server/target/server.war
-mvn -pl server cargo:run       # dev Tomcat 10.1: http://localhost:8080/server/api/health (Ctrl-C stops)
-(cd server && docker compose up -d)   # dev Keycloak :8081, realm imported from server/keycloak/
-(cd server && docker compose down)    # discard Keycloak state; next up re-imports the realm
+mvn -pl server cargo:run       # dev Tomcat 10.1: http://localhost:18080/server/api/health (Ctrl-C stops)
+(cd server && docker compose up -d)   # dev Keycloak :18081 + Postgres :5433 (project name "memberroll")
+(cd server && docker compose down)    # discard dev state; next up re-imports realm, Flyway re-creates schema
 
-server/verify-matrix.sh         # the 48-case role x endpoint matrix against the running
+server/verify-matrix.sh         # the role x endpoint matrix (83 checks) against the running
                                 # dev stack (ports via PORT / KEYCLOAK_PORT); extend it
                                 # alongside new endpoints — it must stay green
 
 # token for scripted verification (dev realm only)
-curl -s -X POST http://localhost:8081/realms/memberroll/protocol/openid-connect/token \
+curl -s -X POST http://localhost:18081/realms/memberroll/protocol/openid-connect/token \
   -d grant_type=password -d client_id=test-cli -d username=testuser -d password=testuser \
   | jq -r .access_token
 
@@ -63,9 +63,14 @@ model: `member`/`other` are **self-claimed** (registration picker,
 `PUT /api/me/claim`, or the webapp's mandatory modal); the server
 reconciles claim → granted realm role on the fly (`KeycloakAdmin`, the
 `server-service` service account); admins mark claims verified in the
-panel; `manager` is grant-only; `admin` is console-only. Storage is
-per-owner JSON files under `MEMBERROLL_DATA` (default `~/memberroll-server/`)
-written atomically — add Postgres only when cross-user queries appear.
+panel; `manager` is grant-only; `admin` is console-only. The membership
+register (CR-001, docs/membership_management_database_schema.md) lives
+in Postgres: Flyway migrations under `server/src/main/resources/db/migration/`
+are the schema's source of truth, the `Db` @WebListener (Hikari + Flyway,
+fail-fast) exposes a shared JDBI instance, and hand-written SQL sits in
+store classes (`PersonStore`, `HouseholdStore` — the pattern to copy).
+`NoteStore`'s per-owner JSON files under `MEMBERROLL_DATA` remain the
+worked example for single-owner blobs, slated for retirement.
 Production topology (server/deploy/): Caddy is the sole ingress and TLS
 terminator, Tomcat serves the war, Keycloak runs in production mode on
 Postgres under `/auth` with a single public issuer, and the admin
@@ -95,11 +100,27 @@ console is SSH-tunnel-only.
   loads it BEFORE `auth.js`. No downgrade to `plain`, ever.
 - **A killed cargo poisons its config dir**: if `cargo:run` dies
   abnormally, `rm -rf server/target/cargo` before the next run.
-- **Two cargo Tomcats on one machine share more than port 8080**: a
-  second instance needs `-Dcargo.servlet.port` AND `-Dcargo.rmi.port`
-  AND `-Dcargo.tomcat.ajp.port` overridden — with only the servlet port
-  changed, cargo finds the default RMI/shutdown port 8205 busy and
-  SHUTS DOWN the other project's running Tomcat through it.
+- **Compose infers the project name from the directory** (`server`), and
+  two checkouts with compose files in same-named dirs silently RECREATE
+  each other's containers on `up`. The dev compose pins `name:
+  memberroll`; any new compose file needs its own `name:` too.
+- **JDBI's SQL parser treats `\'` as an escaped quote** inside string
+  literals, so `ESCAPE '\'` swallows the rest of the statement and named
+  params reach Postgres raw (syntax error at ":"). Don't write `ESCAPE`
+  clauses — backslash is already Postgres's default LIKE escape (the
+  stores' escapeLike() relies on that).
+- **DriverManager doesn't find JDBC drivers in the webapp classloader**
+  under Tomcat: Hikari needs the explicit
+  `setDriverClassName("org.postgresql.Driver")` that `Db` already has —
+  keep it when copying that setup.
+- **This project's dev stack deliberately lives on 18xxx ports**
+  (Tomcat 18080 + RMI 18205 + AJP 18009 pinned in server/pom.xml's cargo
+  config; Keycloak 18081; auth.js pins the browser side) so it coexists
+  with other checkouts' dev stacks on the conventional 8080/8081. Two
+  cargo Tomcats share more than the servlet port: with only that port
+  changed, cargo finds the other's RMI/shutdown port busy and SHUTS
+  DOWN the other project's running Tomcat through it — change the port
+  scheme only as a full set, in all the places above at once.
 - **Keycloak REST user creation needs `lastName`** (and the user-profile
   required fields generally) or logins fail with "Account is not fully
   set up".
