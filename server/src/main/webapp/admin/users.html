@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — users</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<h1>memberroll — admin</h1>
+<div id="status">Checking login…</div>
+<nav id="menu"></nav>
+<div id="message"></div>
+
+<section id="usersSection" hidden>
+    <h2>Users</h2>
+    <p>Role claims are self-service (registration or the user webapp);
+        <strong>Verified</strong> records that you checked the claim as fact —
+        it resets automatically whenever the user changes their claim.
+        <strong>Manager</strong> is the one role nobody can claim: grant it here.</p>
+    <label>Search: <input id="userSearch" placeholder="username or email"></label>
+    <button id="userSearchGo">Search</button>
+    <table id="users">
+        <thead>
+        <tr><th>Username</th><th>Name</th><th>Email</th><th>Claimed role</th>
+            <th>Verified</th><th>Manager</th><th>Granted roles</th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</section>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

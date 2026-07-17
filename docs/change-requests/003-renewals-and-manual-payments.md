@@ -1,6 +1,6 @@
 # CR 003: Renewals and manual payments
 
-Status: PROPOSED
+Status: VERIFIED
 
 ## Problem
 
@@ -230,11 +230,11 @@ psql — there is deliberately no type-management API.
 | 1 | guest | GET /api/admin/periods | 403 |
 | 2 | testuser | POST /api/admin/payments | 403 |
 | 3 | test-cli-noaud | GET /api/admin/periods | 401 |
-| 4 | testadmin | GET /api/admin/periods | 200, contains seeded 2026-2027 with SINGLE 4500 / HOUSEHOLD 6500 |
+| 4 | testadmin | GET /api/admin/periods | 200, contains seeded 2025-2026 with SINGLE 4500 / HOUSEHOLD 6500 |
 | 5 | testadmin | POST /api/admin/periods {name:"2027-2028", dates, prices for SINGLE+HOUSEHOLD+LIFE} | 201 |
 | 6 | testadmin | POST same name again | 409 |
 | 7 | testadmin | POST /api/admin/periods missing a type's price | 400 naming the type |
-| 8 | testadmin | POST /api/admin/memberships {household w/o membership, SINGLE, 2026-2027} | 201 PENDING_PAYMENT, amount_due 4500; psql: membership_person flags true for MEMBER, false for DEPENDANT |
+| 8 | testadmin | POST /api/admin/memberships {household w/o membership, SINGLE, 2025-2026} | 201 PENDING_PAYMENT, amount_due 4500; psql: membership_person flags true for MEMBER, false for DEPENDANT |
 | 9 | testadmin | POST again same household+period | 409 |
 | 10 | testadmin | PUT /api/admin/memberships/{id} {membershipTypeId:HOUSEHOLD} | 200, amount_due re-snapshots to 6500 |
 | 11 | testadmin | POST /api/admin/payments — partial (3000 of 6500, BANK_TRANSFER, MEMBERSHIP allocation) | 201; membership stays PENDING_PAYMENT; GET shows amountPaidCents 3000 |
@@ -243,7 +243,7 @@ psql — there is deliberately no type-management API.
 | 14 | testadmin | POST /api/admin/payments allocations sum ≠ amount | 400 |
 | 15 | testadmin | negative payment −3500 (reversal) | 201; membership back to PENDING_PAYMENT; paid 3000 |
 | 16 | testadmin | payment 3500 + extra DONATION allocation line (sum matches) | 201; membership ACTIVE; DONATION allocation does NOT count toward paid (psql) |
-| 17 | testadmin | GET /api/admin/periods/{2026-2027}/memberships?status=ACTIVE&q={run family} | 200, row shows due 6500 paid 6500; summary counts consistent |
+| 17 | testadmin | GET /api/admin/periods/{2025-2026}/memberships?status=ACTIVE&q={run family} | 200, row shows due 6500 paid 6500; summary counts consistent |
 | 18 | testadmin | POST /api/admin/periods/{id}/lapse-unpaid | 200 count ≥ 1; lapsed membership listed under status=LAPSED |
 | 19 | testadmin | payment covering a LAPSED membership | 201; status ACTIVE (late payment reactivates) |
 | 20 | testadmin | PUT {status:"CEASED", ceasedDate, cessationReason:"RESIGNED"} | 200; psql: ceased_date set; subsequent payment recompute leaves CEASED untouched |
@@ -272,7 +272,82 @@ No compose/auth/Caddy changes → no deploy Local smoke required.
 
 ## Results
 
-*(to be recorded at implementation)*
+Implemented 2026-07-17. Scripted verification (`server/verify-matrix.sh`
+against the dev stack on the 18xxx ports, with psql side-effect checks):
+
+```
+PASS=202 FAIL=0
+```
+
+- The pre-CR-003 baseline (130 checks, CR-001 register + CR-002 import,
+  incl. cases 12–15 / 75–79 membership and payment side effects) stays
+  **green after `ImportService` moved onto the new stores** — the import
+  refactor guard held.
+- All 28 planned CR-003 cases pass, scripted as `CR3-01`…`CR3-28`
+  (several with sub-checks, e.g. `CR3-08d/e` the membership_person flag
+  side effects, `CR3-13c` approved_date = received date, `CR3-16c/d`
+  the JOURNAL/DONATION-does-not-count derivation, `CR3-22c–f` the
+  rollover LIFE/left-member/HH_B side effects via psql). Fixtures use a
+  unique per-run tag (`Ren$$`) and seed the LIFE type + a departed-member
+  LIFE household via psql, so re-runs converge.
+
+Code shape as built (matches the approach, with these notes):
+
+- Three stores in the CR-001 pattern — `PeriodStore`, `MembershipStore`,
+  `PaymentStore` — write methods take an explicit `Handle`, read methods
+  open their own; resources own the transaction and compose across stores
+  (a payment insert + the per-membership `recompute` run in one
+  transaction). `ImportService`'s membership/payment SQL now calls
+  `MembershipStore.insertMembership`/`insertMembershipPerson` and
+  `PaymentStore.insertImportPayment`.
+- Resources: `AdminPeriodsResource` (periods CRUD, rollover preview/apply,
+  lapse-unpaid, the financial-status view, the three CSV exports),
+  `AdminMembershipsResource` (create / detail / transition),
+  `AdminPaymentsResource` (record / list). Two small leaf helpers added:
+  `ConflictException` (→ 409) and `Payloads` (request-body parsing for
+  the richer payloads), alongside the existing `AdminPeopleResource`
+  helpers reused for JSON output.
+- CSV exports use commons-csv's `CSVPrinter` (already a dependency) for
+  correct quoting; the admin page downloads them with `fetch` +
+  Authorization header → Blob (static pages have no cookies).
+
+Divergences from the written spec, all minor:
+
+- `PUT /api/admin/periods/{id}` treats dates as optional (omitted → keep
+  existing) rather than requiring them, so a pure reprice needs no dates;
+  prices are upserted per provided type.
+- `changeType` runs a `recompute` afterwards so retyping a zero-allocation
+  membership to a zero-due type activates it (0 ≥ 0), keeping rule 6
+  honest without a special case.
+- `POST /api/admin/payments` returns `{id, memberships:[…fresh
+  status/due/paid…], warnings:[…]}` rather than echoing the whole
+  payment — the UI refreshes the table from it; the overpayment warning
+  rides `warnings`.
+
+**Browser walkthrough: done** (Jason, 2026-07-18) — the admin panel drove
+the flow end to end (create period → rollover → record a transfer →
+reverse → lapse-all → download the three CSVs; household-detail "New
+membership"), which is what moves this CR to VERIFIED.
+
+Post-implementation refinements made while walking it through (same
+session, all matrix-green):
+
+- The seed period is now **2025-2026** (1 Sep 2025 – 31 Aug 2026); the
+  society's membership year runs September–August (`V2__reference_data.sql`).
+- The admin panel was split into menu-driven pages (`admin/index.html`
+  register + renewals, `admin/users.html`, `admin/import.html`) sharing
+  `admin.css` and a page-aware `admin.js` — CSV import is a one-off, and
+  Users is a separate concern, so both moved off the main page.
+- New-period form pre-fills from the selected period (dates +1 year,
+  prices carried over); the import Target-period field became a dropdown
+  of existing periods (with an empty-state prompt when none exist).
+- The role×endpoint matrix now stands at **205 checks** (the extra static-
+  page checks for the new admin pages); rollover cases pin the source
+  period with `?from=` so the matrix stays re-runnable against a dev DB
+  that holds periods created by hand.
+
+A treasurer-facing guide covering all of the above lives in
+`docs/user-manual.md`.
 
 ## Follow-ups / amendments
 

@@ -2,6 +2,7 @@
 
 A Tomcat/Jersey/Keycloak webapp (from webapp-template).
 
+- User manual (admin panel: register, import, renewals): [docs/user-manual.md](docs/user-manual.md)
 - Roadmap and scope decisions: [docs/ROADMAP.md](docs/ROADMAP.md)
 - Getting started (dev loop, LAN phones, production): [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)
 - Server details and Keycloak primer: [server/README.md](server/README.md)
@@ -15,6 +16,26 @@ mvn clean package
 (cd server && docker compose up -d)   # Keycloak :18081 + Postgres :5433
 mvn -pl server cargo:run              # Tomcat :18080 → http://localhost:18080/server/web/
 ```
+
+Fresh start (wipe the dev database and Keycloak state back to a clean slate):
+
+```bash
+# 1. stop the running app FIRST — see the note below on why order matters
+#    (Ctrl-C the cargo:run, or: pkill -f cargo:run)
+(cd server && docker compose down)    # discard Postgres + Keycloak volumes
+(cd server && docker compose up -d)   # fresh Postgres :5433 + Keycloak :18081 (realm re-imported)
+mvn -pl server cargo:run              # start the app AGAINST the new DB → Flyway re-creates the schema
+```
+
+This leaves you with the V1 schema + V2 seed (the 2025-2026 period, 1 Sep 2025
+– 31 Aug 2026, at Single $45 / Household $65) and no members — re-import your
+list through the admin Import UI from there.
+
+**Order matters.** `Db` runs Flyway once, at webapp startup. If you recreate
+the database while `cargo:run` is still running, the app keeps pointing at a
+fresh *empty* Postgres and never re-migrates it — every request then fails
+with `relation "…" does not exist`. Always restart cargo *after* a
+`compose down && up`.
 
 ## License
 

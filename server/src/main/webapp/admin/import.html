@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — import members</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<h1>memberroll — admin</h1>
+<div id="status">Checking login…</div>
+<nav id="menu"></nav>
+<div id="message"></div>
+
+<section id="importSection" hidden>
+    <h2>Import members (CSV)</h2>
+    <p class="muted">A one-off bulk load — usually to seed a new install from the
+        society's existing spreadsheet. For day-to-day changes use the register and
+        renewals pages instead.</p>
+    <p class="muted">Massage your spreadsheet into the columns of
+        <code>docs/import-template.csv</code> and export it as <strong>CSV UTF-8</strong>
+        (plain "CSV" from Excel mangles accented names). Preview is a dry run;
+        Apply writes everything in one transaction, and is enabled only once a
+        preview comes back with no errors.</p>
+    <label>Target period <select id="importPeriod"></select></label>
+    <div id="importPeriodHint" class="warn-note" hidden></div>
+    <label>CSV file <input id="importFile" type="file" accept=".csv,text/csv"></label>
+    <button id="importPreview">Preview</button>
+    <button id="importApply" disabled>Apply</button>
+    <div id="importReport"></div>
+</section>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

@@ -38,7 +38,8 @@ public class ApiApplication extends Application {
                 AdminPingResource.class, MeResource.class,
                 AdminUsersResource.class, NotesResource.class,
                 AdminPeopleResource.class, AdminHouseholdsResource.class,
-                AdminImportResource.class,
+                AdminImportResource.class, AdminPeriodsResource.class,
+                AdminMembershipsResource.class, AdminPaymentsResource.class,
                 AuthFilter.class, RolesAllowedDynamicFeature.class);
     }
 }

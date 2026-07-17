@@ -72,9 +72,16 @@ final class ImportService {
                   List<Skip> skipped, Counts toCreate, Counts created) {}
 
     private final Jdbi jdbi;
+    // membership/payment writes go through the CR-003 stores (the flagged
+    // CR-002 follow-up) so there is one place each table is written; behaviour
+    // is unchanged and the verification matrix guards it
+    private final MembershipStore membershipStore;
+    private final PaymentStore paymentStore;
 
     ImportService(Jdbi jdbi) {
         this.jdbi = jdbi;
+        this.membershipStore = new MembershipStore(jdbi);
+        this.paymentStore = new PaymentStore(jdbi);
     }
 
     /** Parse, validate and dedup; writes nothing. */
@@ -355,6 +362,8 @@ final class ImportService {
 
     private Counts applyWrites(Handle handle, List<GroupPlan> plan, String recordedBy) {
         int people = 0, households = 0, memberships = 0, payments = 0;
+        LocalDate today = handle.createQuery("SELECT current_date")
+                .map((rs, ctx) -> rs.getDate(1).toLocalDate()).one();
         for (GroupPlan group : plan) {
             List<Long> personIds = new ArrayList<>();
             for (Row row : group.createdRows) {
@@ -378,14 +387,20 @@ final class ImportService {
             insertAddress(handle, householdId, group.addressRow);
 
             if (group.membershipType != null) {
-                long membershipId = insertMembership(handle, householdId, group);
+                // ACTIVE only once paid (approved on the import date); otherwise it
+                // waits for payment, so paid-ness stays derivable from allocations
+                String status = group.paid ? "ACTIVE" : "PENDING_PAYMENT";
+                LocalDate approved = group.paid ? today : null;
+                long membershipId = membershipStore.insertMembership(handle, group.period.id(),
+                        group.membershipTypeId, householdId, status, today, approved,
+                        group.period.start(), group.period.end(), group.amountDueCents);
                 memberships++;
                 for (int i = 0; i < group.createdRows.size(); i++) {
-                    insertMembershipPerson(handle, membershipId, personIds.get(i),
+                    membershipStore.insertMembershipPerson(handle, membershipId, personIds.get(i),
                             group.createdRows.get(i).relationship);
                 }
                 if (group.paid) {
-                    insertPayment(handle, membershipId, personIds.get(0),
+                    paymentStore.insertImportPayment(handle, membershipId, personIds.get(0),
                             group.amountDueCents, recordedBy);
                     payments++;
                 }
@@ -423,49 +438,6 @@ final class ImportService {
                 + " VALUES (:hh, 'POSTAL', :l1, :l2, :loc, :st, :pc, current_date, true)")
                 .bind("hh", householdId).bind("l1", row.line1).bind("l2", row.line2)
                 .bind("loc", row.locality).bind("st", row.state).bind("pc", row.postcode).execute();
-    }
-
-    private long insertMembership(Handle handle, long householdId, GroupPlan group) {
-        // ACTIVE only once paid (approved on the import date); otherwise it
-        // waits for payment, so paid-ness stays derivable from allocations
-        String status = group.paid ? "ACTIVE" : "PENDING_PAYMENT";
-        String approved = group.paid ? "current_date" : "NULL";
-        return handle.createUpdate(
-                "INSERT INTO membership (membership_period_id, membership_type_id, household_id,"
-                + " status, application_date, approved_date, start_date, end_date, amount_due_cents)"
-                + " VALUES (:period, :type, :hh, :status, current_date, " + approved
-                + ", :start, :end, :due)")
-                .bind("period", group.period.id()).bind("type", group.membershipTypeId)
-                .bind("hh", householdId).bind("status", status)
-                .bind("start", group.period.start()).bind("end", group.period.end())
-                .bind("due", group.amountDueCents)
-                .executeAndReturnGeneratedKeys("membership_id").mapTo(Long.class).one();
-    }
-
-    private void insertMembershipPerson(Handle handle, long membershipId, long personId,
-                                        String relationship) {
-        // both adults in a household vote (the society's decision): MEMBER and
-        // PARTNER carry statutory/voting/committee rights, dependants do not
-        boolean adult = relationship.equals("MEMBER") || relationship.equals("PARTNER");
-        handle.createUpdate(
-                "INSERT INTO membership_person (membership_id, person_id, membership_role,"
-                + " is_statutory_member, has_voting_rights, eligible_for_committee, start_date)"
-                + " VALUES (:mid, :pid, :role, :adult, :adult, :adult, current_date)")
-                .bind("mid", membershipId).bind("pid", personId).bind("role", relationship)
-                .bind("adult", adult).execute();
-    }
-
-    private void insertPayment(Handle handle, long membershipId, long payerPersonId,
-                               int amountCents, String recordedBy) {
-        long paymentId = handle.createUpdate(
-                "INSERT INTO payment (received_date, amount_cents, payment_method, payer_person_id,"
-                + " recorded_by, notes) VALUES (current_date, :amt, 'OTHER', :payer, :by, 'CSV import')")
-                .bind("amt", amountCents).bind("payer", payerPersonId).bind("by", recordedBy)
-                .executeAndReturnGeneratedKeys("payment_id").mapTo(Long.class).one();
-        handle.createUpdate(
-                "INSERT INTO payment_allocation (payment_id, allocation_type, membership_id, amount_cents)"
-                + " VALUES (:pay, 'MEMBERSHIP', :mid, :amt)")
-                .bind("pay", paymentId).bind("mid", membershipId).bind("amt", amountCents).execute();
     }
 
     // ---- dedup and lookups --------------------------------------------------

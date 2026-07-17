@@ -1,0 +1,47 @@
+/*
+ * Copyright 2026 Jason Harrop
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Shared styles for every admin page (index / users / import) — one file so
+   the look and the menu stay in step across pages. */
+
+body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; color: #222; }
+h1 { font-size: 1.4rem; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+th { background: #f4f4f4; }
+button { padding: .3rem .8rem; cursor: pointer; }
+#status { padding: .5rem .8rem; background: #eef; border-radius: 4px; margin-bottom: 1rem; }
+#status.warn { background: #fee; }
+#message { min-height: 1.4rem; color: #060; }
+#message.error { color: #a00; white-space: pre-wrap; }
+code { background: #f4f4f4; padding: 0 .3rem; }
+fieldset { border: 1px solid #ccc; border-radius: 4px; margin: 1rem 0; }
+fieldset label { display: block; margin: .3rem 0; }
+fieldset input, fieldset textarea, fieldset select { width: 100%; max-width: 24rem; box-sizing: border-box; }
+.muted { color: #777; }
+.warn-note { color: #a00; margin: .3rem 0; }
+/* the import period picker sits outside a fieldset, so give it a visible
+   width of its own (the fieldset selects get one via the rule above) */
+#importPeriod { min-width: 14rem; padding: .2rem; }
+
+/* keep the hidden attribute winning over any author display rule — an
+   invisible overlay/fieldset otherwise still eats clicks */
+[hidden] { display: none !important; }
+
+/* the shared top menu, rendered by admin.js on every page */
+nav#menu { display: flex; gap: .5rem; flex-wrap: wrap; margin: 0 0 1rem; border-bottom: 1px solid #ddd; padding-bottom: .6rem; }
+nav#menu a { text-decoration: none; padding: .3rem .8rem; border-radius: 4px; color: #224; background: #eef; }
+nav#menu a.active { background: #224; color: #fff; }

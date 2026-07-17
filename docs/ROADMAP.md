@@ -73,16 +73,21 @@ decisions and the planned change-request sequence; individual CRs in
 
 ## Change-request sequence
 
-| CR | Title | Delivers |
-|---|---|---|
-| 001 | Membership register data layer | Postgres + Flyway + JDBI, core schema, admin people/household CRUD API, minimal admin register UI |
-| 002 | Import | CSV import with preview/dedup; synthetic dev fixture shaped like the real list |
-| 003 | Renewals and manual payments | Period rollover, cash/cheque/transfer payment entry, financial-status filters, CSV exports |
-| 004 | Stripe | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
-| 005 | Segment email | Templates, merge fields, segment sends with embedded magic links, send log, communication preferences |
-| 006 | Member self-serve | Keycloak-linked "my membership" page, pay from there |
-| 007 | Public application form | New-member APPLIED workflow with admin approval |
-| 008 | Production hardening | Prod DB provisioning, Stripe live keys, SPF/DKIM/from-address, backup coverage, deploy docs |
+Status vocabulary (the change-request lifecycle, `change-requests/README.md`):
+**Planned** (no CR doc yet) → **Proposed** (doc written) → **Implemented**
+(built, scripted matrix green) → **Verified** (browser walkthrough / real
+data too) → **Committed**.
+
+| CR | Title | Status | Delivers |
+|---|---|---|---|
+| 001 | Membership register data layer | Verified · committed | Postgres + Flyway + JDBI, core schema, admin people/household CRUD API, minimal admin register UI |
+| 002 | Import | Verified · committed | CSV import with preview/dedup; synthetic dev fixture shaped like the real list |
+| 003 | Renewals and manual payments | Verified · committed | Period rollover, cash/cheque/transfer payment entry, financial-status filters, CSV exports |
+| 004 | Stripe | Planned | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
+| 005 | Segment email | Planned | Templates, merge fields, segment sends with embedded magic links, send log, communication preferences |
+| 006 | Member self-serve | Planned | Keycloak-linked "my membership" page, pay from there |
+| 007 | Public application form | Planned | New-member APPLIED workflow with admin approval |
+| 008 | Production hardening | Planned | Prod DB provisioning, Stripe live keys, SPF/DKIM/from-address, backup coverage, deploy docs |
 
 Ordering principle: admin value first — after CR-003 the app already
 replaces the spreadsheet-and-bank-statement process with zero

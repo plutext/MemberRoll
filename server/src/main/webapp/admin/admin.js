@@ -310,6 +310,7 @@ async function openHousehold(id) {
             cell.appendChild(remove);
         }
     }
+    fillPeriodTypeSelects(); // the household's "New membership" period/type pickers
     reveal("householdDetail");
 }
 
@@ -354,6 +355,37 @@ let importCsv = null;
 function importPath(base) {
     const period = document.getElementById("importPeriod").value.trim();
     return period ? `${base}?period=${encodeURIComponent(period)}` : base;
+}
+
+// the target-period dropdown, filled from the loaded periods (blank = the
+// period covering today, which is what the import resolves with no ?period)
+function fillImportPeriods() {
+    const select = document.getElementById("importPeriod");
+    if (!select) return;
+    const chosen = select.value;
+    select.innerHTML = "";
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "(current period)";
+    select.appendChild(blank);
+    for (const p of periodsCache) {
+        const o = document.createElement("option");
+        o.value = p.name;         // the import API resolves ?period by name
+        o.textContent = p.name;
+        o.selected = p.name === chosen;
+        select.appendChild(o);
+    }
+    // no periods → memberships in the file have nowhere to land; guide the user.
+    // (people/households still import; only rows with a membershipType need a period)
+    const hint = document.getElementById("importPeriodHint");
+    if (hint) {
+        const none = periodsCache.length === 0;
+        hint.textContent = none
+            ? "No membership periods exist yet. Create one under Renewals → New period "
+              + "before importing rows that carry a membershipType."
+            : "";
+        hint.hidden = !none;
+    }
 }
 
 // posts the CSV and returns {status, report}; the report is read even on the
@@ -445,12 +477,459 @@ function importIssueTable(title, rows, textKey, parent) {
     parent.appendChild(table);
 }
 
+// ---- renewals: periods, memberships, payments (CR-003) ----------------------
+
+let periodsCache = [];        // last-loaded periods (also feeds household "New membership")
+let openMembershipId = null;
+
+const STATUS_LABELS = {
+    PENDING_PAYMENT: "Unpaid", ACTIVE: "Paid", LAPSED: "Lapsed",
+    APPLIED: "Applied", CEASED: "Ceased",
+};
+const statusLabel = (s) => STATUS_LABELS[s] || s;
+const dollars = (cents) => "$" + (cents / 100).toFixed(2);
+const today = () => new Date().toISOString().slice(0, 10);
+// an ISO date wound forward one year (string-based, so no timezone surprises);
+// "" for a null/absent date
+function plusYear(iso) {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-");
+    return `${Number(y) + 1}-${m}-${d}`;
+}
+function toCents(value) {
+    const n = Math.round(parseFloat(value) * 100);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function selectedPeriodId() {
+    const v = document.getElementById("periodSelect").value;
+    return v ? Number(v) : null;
+}
+function selectedPeriod() {
+    return periodsCache.find(p => p.id === selectedPeriodId()) || null;
+}
+// the membership types, unioned from every period's prices (there is no type API)
+function allTypes() {
+    const seen = new Map();
+    for (const p of periodsCache) for (const pr of p.prices) seen.set(pr.type, pr.typeId);
+    return [...seen.entries()].map(([type, typeId]) => ({type, typeId}));
+}
+
+async function loadPeriods(selectId) {
+    const response = await registerCall("/admin/periods");
+    if (!response) return;
+    periodsCache = (await response.json()).periods;
+    fillImportPeriods(); // the CSV-import "Target period" picker shares the same list
+    const select = document.getElementById("periodSelect");
+    if (!select) return; // import page only needs the dropdown above — no renewals UI here
+    const keep = selectId ?? (selectedPeriodId() || (periodsCache[0] && periodsCache[0].id));
+    select.innerHTML = "";
+    for (const p of periodsCache) {
+        const o = document.createElement("option");
+        o.value = p.id;
+        o.textContent = p.name;
+        o.selected = p.id === keep;
+        select.appendChild(o);
+    }
+    renderPeriodSummary();
+    await renderMemberships();
+}
+
+function renderPeriodSummary() {
+    const p = selectedPeriod();
+    const el = document.getElementById("periodSummary");
+    if (!p) { el.textContent = "No period. Create one to begin."; return; }
+    const prices = p.prices.map(pr => `${pr.type} ${dollars(pr.amountCents)}`).join(", ");
+    el.textContent = `${p.name}: ${p.startDate} → ${p.endDate}. Prices: ${prices || "—"}.`;
+}
+
+async function renderMemberships() {
+    const periodId = selectedPeriodId();
+    if (!periodId) return;
+    const q = document.getElementById("memberSearch").value.trim();
+    const status = document.getElementById("statusFilter").value;
+    const params = new URLSearchParams({limit: "200"});
+    if (q) params.set("q", q);
+    if (status) params.set("status", status);
+    const response = await registerCall(`/admin/periods/${periodId}/memberships?${params}`);
+    if (!response) return;
+    const page = await response.json();
+    const tbody = document.querySelector("#memberships tbody");
+    tbody.innerHTML = "";
+    for (const r of page.rows) {
+        const row = tbody.insertRow();
+        row.insertCell().textContent = r.householdName || `#${r.householdId}`;
+        row.insertCell().textContent = r.primaryContactName;
+        row.insertCell().textContent = r.memberNames.join(", ");
+        row.insertCell().textContent = r.typeName;
+        row.insertCell().textContent = statusLabel(r.status);
+        row.insertCell().textContent = dollars(r.amountDueCents);
+        row.insertCell().textContent = dollars(r.amountPaidCents);
+        const manage = document.createElement("button");
+        manage.textContent = "Manage";
+        manage.onclick = () => openMembership(r.membershipId);
+        row.insertCell().appendChild(manage);
+    }
+    const s = page.summary;
+    const counts = Object.entries(s.countsByStatus)
+        .map(([k, v]) => `${statusLabel(k)} ${v}`).join(", ");
+    document.getElementById("membershipsTotal").textContent =
+        `${page.total} shown. Period totals — ${counts || "none"}; `
+        + `collected ${dollars(s.totalCollectedCents)} of ${dollars(s.totalDueCents)} due.`;
+}
+
+async function openMembership(id) {
+    const response = await registerCall(`/admin/memberships/${id}`);
+    if (!response) return;
+    const m = await response.json();
+    openMembershipId = id;
+    document.getElementById("mdTitle").textContent =
+        `Membership #${id}: ${m.householdName || "household #" + m.householdId} (${m.periodName})`;
+    const members = m.people.map(p =>
+        `${p.givenName} ${p.familyName}${p.voting ? "" : " (non-voting)"}`).join(", ");
+    document.getElementById("mdSummary").textContent =
+        `${m.typeName} — ${statusLabel(m.status)}. Due ${dollars(m.amountDueCents)}, `
+        + `paid ${dollars(m.amountPaidCents)}.` + (members ? " Members: " + members : "");
+    renderMembershipActions(m);
+    renderMembershipPayments(m);
+    // prep the payment form for this membership (prefilled with the balance)
+    document.getElementById("paymentForm").hidden = true;
+    document.getElementById("payDate").value = today();
+    document.getElementById("payMembership").value =
+        ((m.amountDueCents - m.amountPaidCents) / 100).toFixed(2);
+    document.getElementById("payExtra").innerHTML = "";
+    document.getElementById("payRef").value = "";
+    document.getElementById("payNotes").value = "";
+    reveal("membershipDetail");
+}
+
+function renderMembershipActions(m) {
+    const el = document.getElementById("mdActions");
+    el.innerHTML = "";
+    const btn = (label, handler) => {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.style.marginRight = ".4rem";
+        b.onclick = handler;
+        el.appendChild(b);
+    };
+    if (m.status === "PENDING_PAYMENT") btn("Lapse", () => transition(m.id, {status: "LAPSED"}));
+    if (m.status === "LAPSED") btn("Undo lapse", () => transition(m.id, {status: "PENDING_PAYMENT"}));
+    if (m.status !== "CEASED") btn("Cease…", () => ceaseMembership(m.id));
+}
+
+async function transition(id, body) {
+    const response = await registerCall(`/admin/memberships/${id}`, {
+        method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    if (!response) return;
+    say(`Membership #${id} updated.`);
+    openMembership(id);
+    renderMemberships();
+}
+
+function ceaseMembership(id) {
+    const reason = prompt("Cessation reason — RESIGNED / DECEASED / OTHER:", "RESIGNED");
+    if (!reason) return;
+    const date = prompt("Ceased date (YYYY-MM-DD):", today());
+    if (!date) return;
+    transition(id, {status: "CEASED", ceasedDate: date, cessationReason: reason.trim().toUpperCase()});
+}
+
+function renderMembershipPayments(m) {
+    const tbody = document.querySelector("#mdPayments tbody");
+    tbody.innerHTML = "";
+    for (const p of m.payments) {
+        const row = tbody.insertRow();
+        row.insertCell().textContent = p.receivedDate;
+        row.insertCell().textContent = dollars(p.amountCents);
+        row.insertCell().textContent = p.method;
+        row.insertCell().textContent =
+            p.allocations.map(a => `${a.type} ${dollars(a.amountCents)}`).join(", ");
+        row.insertCell().textContent = p.recordedBy;
+        const reverse = document.createElement("button");
+        reverse.textContent = "Reverse";
+        reverse.onclick = () => reversePayment(m.id, p);
+        row.insertCell().appendChild(reverse);
+    }
+}
+
+async function reversePayment(membershipId, p) {
+    if (!confirm(`Reverse payment #${p.id} (${dollars(p.amountCents)})? `
+            + "This records an equal-and-opposite payment.")) return;
+    const body = {
+        receivedDate: today(),
+        amountCents: -p.amountCents,
+        method: p.method === "STRIPE" ? "OTHER" : p.method, // STRIPE is never hand-entered
+        notes: `reversal of payment #${p.id}`,
+        allocations: p.allocations.map(a =>
+            ({type: a.type, membershipId: a.membershipId, amountCents: -a.amountCents})),
+    };
+    const response = await registerCall("/admin/payments", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    if (!response) return;
+    say(`Reversed payment #${p.id}.`);
+    openMembership(membershipId);
+    renderMemberships();
+}
+
+function addAllocationLine() {
+    const div = document.createElement("div");
+    const type = document.createElement("select");
+    for (const t of ["DONATION", "JOURNAL", "OTHER"]) {
+        const o = document.createElement("option");
+        o.value = o.textContent = t;
+        type.appendChild(o);
+    }
+    const amount = document.createElement("input");
+    amount.type = "number";
+    amount.step = "0.01";
+    amount.placeholder = "amount $";
+    amount.style.maxWidth = "8rem";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.onclick = () => div.remove();
+    div.className = "allocLine";
+    div.append(type, " ", amount, " ", remove);
+    document.getElementById("payExtra").appendChild(div);
+}
+
+async function submitPayment() {
+    if (openMembershipId === null) return;
+    const allocations = [];
+    const memCents = toCents(document.getElementById("payMembership").value);
+    if (memCents !== 0) {
+        allocations.push({type: "MEMBERSHIP", membershipId: openMembershipId, amountCents: memCents});
+    }
+    for (const line of document.querySelectorAll("#payExtra .allocLine")) {
+        const type = line.querySelector("select").value;
+        const cents = toCents(line.querySelector("input").value);
+        if (cents === 0) continue;
+        // JOURNAL rides the membership renewal; a standalone donation names nobody
+        allocations.push({type, membershipId: type === "JOURNAL" ? openMembershipId : null, amountCents: cents});
+    }
+    if (!allocations.length) return say("Enter at least one non-zero amount.", true);
+    const amountCents = allocations.reduce((sum, a) => sum + a.amountCents, 0);
+    const response = await registerCall("/admin/payments", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            receivedDate: document.getElementById("payDate").value,
+            amountCents,
+            method: document.getElementById("payMethod").value,
+            bankReference: document.getElementById("payRef").value.trim() || null,
+            notes: document.getElementById("payNotes").value.trim() || null,
+            allocations,
+        }),
+    });
+    if (!response) return;
+    const result = await response.json();
+    say(`Recorded payment #${result.id}.`
+        + (result.warnings && result.warnings.length ? " " + result.warnings.join("; ") : ""));
+    document.getElementById("paymentForm").hidden = true;
+    openMembership(openMembershipId);
+    renderMemberships();
+}
+
+// ---- renewals: new period, rollover, bulk lapse, CSV export -----------------
+
+function openPeriodForm() {
+    // pre-fill from the selected period — the common case is "next year, same
+    // prices": dates wound forward a year, prices carried over, name left blank
+    const base = selectedPeriod();
+    document.getElementById("npName").value = "";
+    document.getElementById("npStart").value = base ? plusYear(base.startDate) : "";
+    document.getElementById("npEnd").value = base ? plusYear(base.endDate) : "";
+    document.getElementById("npRenewalOpen").value = base ? plusYear(base.renewalOpenDate) : "";
+    document.getElementById("npCutoff").value = base ? plusYear(base.lateJoiningCutoff) : "";
+    const priceByType = new Map((base ? base.prices : []).map(pr => [pr.type, pr.amountCents]));
+    const container = document.getElementById("npPrices");
+    container.innerHTML = "";
+    const types = allTypes();
+    if (!types.length) {
+        container.textContent = "No membership types found yet — none of the existing periods carry a price.";
+    }
+    for (const t of types) {
+        const label = document.createElement("label");
+        label.textContent = `Price for ${t.type} ($) `;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.01";
+        input.dataset.type = t.type;
+        if (priceByType.has(t.type)) input.value = (priceByType.get(t.type) / 100).toFixed(2);
+        label.appendChild(input);
+        container.appendChild(label);
+    }
+    reveal("periodForm");
+}
+
+async function savePeriod() {
+    const prices = [];
+    for (const input of document.querySelectorAll("#npPrices input")) {
+        if (input.value.trim() === "") return say(`Enter a price for ${input.dataset.type}.`, true);
+        prices.push({type: input.dataset.type, amountCents: toCents(input.value)});
+    }
+    const name = document.getElementById("npName").value.trim();
+    const startDate = document.getElementById("npStart").value;
+    const endDate = document.getElementById("npEnd").value;
+    if (!name || !startDate || !endDate) return say("Name, start and end dates are required.", true);
+    const response = await registerCall("/admin/periods", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            name, startDate, endDate,
+            renewalOpenDate: document.getElementById("npRenewalOpen").value || null,
+            lateJoiningCutoff: document.getElementById("npCutoff").value || null,
+            prices,
+        }),
+    });
+    if (!response) return;
+    const p = await response.json();
+    say(`Created period ${p.name}.`);
+    document.getElementById("periodForm").hidden = true;
+    await loadPeriods(p.id);
+}
+
+async function rolloverPreview() {
+    const id = selectedPeriodId();
+    if (!id) return;
+    const response = await registerCall(`/admin/periods/${id}/rollover/preview`, {method: "POST"});
+    if (!response) return;
+    const report = await response.json();
+    renderRolloverReport(report, false);
+    document.getElementById("rolloverApply").disabled = report.errors.length > 0 || report.toCreate === 0;
+}
+
+async function rolloverApply() {
+    const id = selectedPeriodId();
+    if (!id) return;
+    if (!confirm("Apply rollover? This creates memberships for the prior year's paid households.")) return;
+    const response = await registerCall(`/admin/periods/${id}/rollover`, {method: "POST"});
+    if (!response) return;
+    renderRolloverReport(await response.json(), true);
+    document.getElementById("rolloverApply").disabled = true;
+    await loadPeriods(id);
+}
+
+function renderRolloverReport(report, applied) {
+    const el = document.getElementById("rolloverReport");
+    el.innerHTML = "";
+    const line = (html) => { const p = document.createElement("p"); p.innerHTML = html; el.appendChild(p); };
+    line(`Source: <strong>${report.fromPeriodName || "(none found)"}</strong> → target `
+        + `<strong>${report.targetPeriodName}</strong>.`);
+    line(applied
+        ? `<strong>Created ${report.created}</strong> memberships.`
+        : `<strong>Would create ${report.toCreate}</strong> memberships.`);
+    if (report.skipped.length) {
+        line(`Skipped ${report.skipped.length}: `
+            + report.skipped.map(s => `#${s.householdId} (${s.reason})`).join("; "));
+    }
+    if (report.errors.length) line(`<span style="color:#a00">Errors: ${report.errors.join("; ")}</span>`);
+}
+
+async function lapseAll() {
+    const id = selectedPeriodId();
+    if (!id) return;
+    if (!confirm("Lapse ALL unpaid (Unpaid/PENDING_PAYMENT) memberships in this period?")) return;
+    const response = await registerCall(`/admin/periods/${id}/lapse-unpaid`, {method: "POST"});
+    if (!response) return;
+    const r = await response.json();
+    say(`Lapsed ${r.lapsed} unpaid membership(s).`);
+    renderMemberships();
+}
+
+// bearer auth means no cookie ride-along: fetch with the header, then save the Blob
+async function exportCsv(kind) {
+    const id = selectedPeriodId();
+    if (!id) return;
+    const response = await Auth.api(`/admin/periods/${id}/export/${kind}`);
+    if (!response) return;
+    if (!response.ok) return say(`Export failed (HTTP ${response.status}).`, true);
+    const url = URL.createObjectURL(await response.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = kind;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+// household detail "New membership": fill the period/type selects from the cache
+function fillPeriodTypeSelects() {
+    const periodSel = document.getElementById("hmPeriod");
+    periodSel.innerHTML = "";
+    for (const p of periodsCache) {
+        const o = document.createElement("option");
+        o.value = p.id;
+        o.textContent = p.name;
+        periodSel.appendChild(o);
+    }
+    const typeSel = document.getElementById("hmType");
+    typeSel.innerHTML = "";
+    for (const t of allTypes()) {
+        const o = document.createElement("option");
+        o.value = t.typeId;
+        o.textContent = t.type;
+        typeSel.appendChild(o);
+    }
+}
+
+async function createHouseholdMembership() {
+    if (openHouseholdId === null) return say("Open a household first.", true);
+    const periodId = Number(document.getElementById("hmPeriod").value);
+    const typeId = Number(document.getElementById("hmType").value);
+    if (!periodId || !typeId) return say("Pick a period and a type.", true);
+    const response = await registerCall("/admin/memberships", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({householdId: openHouseholdId, membershipPeriodId: periodId, membershipTypeId: typeId}),
+    });
+    if (!response) return;
+    const m = await response.json();
+    say(`Created membership #${m.id} for the household.` + (m.warning ? " " + m.warning : ""));
+    renderMemberships();
+}
+
+function wireRenewals() {
+    const on = (id, handler) => { document.getElementById(id).onclick = handler; };
+    document.getElementById("periodSelect").onchange = () => {
+        renderPeriodSummary();
+        renderMemberships();
+        document.getElementById("rolloverApply").disabled = true;
+        document.getElementById("rolloverReport").innerHTML = "";
+    };
+    on("periodNew", openPeriodForm);
+    on("npSave", savePeriod);
+    on("npCancel", () => { document.getElementById("periodForm").hidden = true; });
+    on("rolloverPreview", rolloverPreview);
+    on("rolloverApply", rolloverApply);
+    on("memberSearchGo", renderMemberships);
+    document.getElementById("memberSearch").onkeydown = (e) => { if (e.key === "Enter") renderMemberships(); };
+    document.getElementById("statusFilter").onchange = renderMemberships;
+    on("lapseAll", lapseAll);
+    on("exportAgm", () => exportCsv("agm-register.csv"));
+    on("exportLabels", () => exportCsv("mailing-labels.csv"));
+    on("exportFinancial", () => exportCsv("financial.csv"));
+    on("mdRecordPayment", () => reveal("paymentForm"));
+    on("payAddLine", addAllocationLine);
+    on("paySave", submitPayment);
+    on("payCancel", () => { document.getElementById("paymentForm").hidden = true; });
+    on("mdClose", () => { document.getElementById("membershipDetail").hidden = true; });
+    on("hmCreate", createHouseholdMembership);
+    document.getElementById("renewalsSection").hidden = false;
+}
+
+// the CSV import lives on its own page (import.html) — a one-off bulk load
+function wireImport() {
+    document.getElementById("importPreview").onclick = previewImport;
+    document.getElementById("importApply").onclick = applyImport;
+    document.getElementById("importSection").hidden = false;
+}
+
 function wireRegister() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
     const enter = (id, handler) =>
         { document.getElementById(id).onkeydown = (e) => { if (e.key === "Enter") handler(); }; };
-    on("importPreview", previewImport);
-    on("importApply", applyImport);
     on("personSearchGo", renderPeople);      enter("personSearch", renderPeople);
     on("personNew", () => openPersonForm(null));
     on("personSave", savePerson);
@@ -464,6 +943,37 @@ function wireRegister() {
     document.getElementById("registerSection").hidden = false;
 }
 
+// ---- menu + per-page wiring -------------------------------------------------
+
+// the admin panel is split across pages that share this script; each page
+// carries only its own sections, and the boot wires whatever is present
+const MENU = [
+    {href: "index.html", label: "Register & renewals"},
+    {href: "import.html", label: "Import members"},
+    {href: "users.html", label: "Users"},
+];
+
+function renderMenu() {
+    const nav = document.getElementById("menu");
+    if (!nav) return;
+    const here = location.pathname.split("/").pop() || "index.html"; // "" at /admin/ → index
+    nav.innerHTML = "";
+    for (const item of MENU) {
+        const a = document.createElement("a");
+        a.href = item.href;
+        a.textContent = item.label;
+        if (item.href === here) a.className = "active";
+        nav.appendChild(a);
+    }
+}
+
+async function wireUsers() {
+    document.getElementById("userSearchGo").onclick = renderUsers;
+    document.getElementById("userSearch").onkeydown =
+        (e) => { if (e.key === "Enter") renderUsers(); };
+    await renderUsers();
+}
+
 // ---- boot ---------------------------------------------------------------
 
 (async () => {
@@ -471,13 +981,18 @@ function wireRegister() {
         await Auth.completeLoginIfReturning();
         if (!Auth.hasToken()) return await Auth.login(); // await: reach the catch below
         if (await showIdentity()) {
-            document.getElementById("userSearchGo").onclick = renderUsers;
-            document.getElementById("userSearch").onkeydown =
-                (e) => { if (e.key === "Enter") renderUsers(); };
-            await renderUsers();
-            wireRegister();
-            await renderPeople();
-            await renderHouseholds();
+            renderMenu();
+            if (document.getElementById("usersSection")) await wireUsers();
+            if (document.getElementById("importSection")) { wireImport(); await loadPeriods(); }
+            if (document.getElementById("registerSection")) {
+                wireRegister();
+                await renderPeople();
+                await renderHouseholds();
+            }
+            if (document.getElementById("renewalsSection")) {
+                wireRenewals();
+                await loadPeriods();
+            }
         }
     } catch (e) {
         statusBox.textContent = "Login failed: " + e;

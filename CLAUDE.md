@@ -25,7 +25,7 @@ mvn -pl server cargo:run       # dev Tomcat 10.1: http://localhost:18080/server/
 (cd server && docker compose up -d)   # dev Keycloak :18081 + Postgres :5433 (project name "memberroll")
 (cd server && docker compose down)    # discard dev state; next up re-imports realm, Flyway re-creates schema
 
-server/verify-matrix.sh         # the role x endpoint matrix (83 checks) against the running
+server/verify-matrix.sh         # the role x endpoint matrix (205 checks) against the running
                                 # dev stack (ports via PORT / KEYCLOAK_PORT); extend it
                                 # alongside new endpoints — it must stay green
 
@@ -69,6 +69,13 @@ in Postgres: Flyway migrations under `server/src/main/resources/db/migration/`
 are the schema's source of truth, the `Db` @WebListener (Hikari + Flyway,
 fail-fast) exposes a shared JDBI instance, and hand-written SQL sits in
 store classes (`PersonStore`, `HouseholdStore` — the pattern to copy).
+CR-003 (renewals + manual payments) added `PeriodStore`/`MembershipStore`/
+`PaymentStore` and the `AdminPeriods`/`AdminMemberships`/`AdminPayments`
+resources over the same CR-001 tables (no schema change): their write
+methods take an explicit `Handle` and the resource owns the transaction,
+so a payment insert and the per-membership status recompute (paid-ness
+derives from `payment_allocation`, rule 6) commit atomically. Corrections
+are negative payments, never edits.
 `NoteStore`'s per-owner JSON files under `MEMBERROLL_DATA` remain the
 worked example for single-owner blobs, slated for retirement.
 Production topology (server/deploy/): Caddy is the sole ingress and TLS
@@ -100,6 +107,12 @@ console is SSH-tunnel-only.
   loads it BEFORE `auth.js`. No downgrade to `plain`, ever.
 - **A killed cargo poisons its config dir**: if `cargo:run` dies
   abnormally, `rm -rf server/target/cargo` before the next run.
+- **Recreating the dev DB under a running app leaves it schemaless**:
+  `Db` runs Flyway once, at webapp start. `docker compose down && up`
+  gives you a fresh empty Postgres, but a still-running `cargo:run`
+  never re-migrates it — every query then fails with `relation ... does
+  not exist`. Restart cargo after a compose down/up so Flyway re-creates
+  the schema (V1) and seed data (V2) against the new database.
 - **Compose infers the project name from the directory** (`server`), and
   two checkouts with compose files in same-named dirs silently RECREATE
   each other's containers on `up`. The dev compose pins `name:

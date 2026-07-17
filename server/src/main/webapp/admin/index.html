@@ -3,62 +3,17 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>memberroll admin</title>
-    <style>
-        body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; color: #222; }
-        h1 { font-size: 1.4rem; }
-        table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-        th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
-        th { background: #f4f4f4; }
-        button { padding: .3rem .8rem; cursor: pointer; }
-        #status { padding: .5rem .8rem; background: #eef; border-radius: 4px; margin-bottom: 1rem; }
-        #status.warn { background: #fee; }
-        #message { min-height: 1.4rem; color: #060; }
-        #message.error { color: #a00; white-space: pre-wrap; }
-        code { background: #f4f4f4; padding: 0 .3rem; }
-        fieldset { border: 1px solid #ccc; border-radius: 4px; margin: 1rem 0; }
-        fieldset label { display: block; margin: .3rem 0; }
-        fieldset input, fieldset textarea, fieldset select { width: 100%; max-width: 24rem; box-sizing: border-box; }
-        .muted { color: #777; }
-        [hidden] { display: none !important; }
-    </style>
+    <title>memberroll admin — register &amp; renewals</title>
+    <link rel="stylesheet" href="admin.css">
 </head>
 <body>
 <h1>memberroll — admin</h1>
 <div id="status">Checking login…</div>
+<nav id="menu"></nav>
 <div id="message"></div>
-
-<section id="usersSection" hidden>
-    <h2>Users</h2>
-    <p>Role claims are self-service (registration or the user webapp);
-        <strong>Verified</strong> records that you checked the claim as fact —
-        it resets automatically whenever the user changes their claim.
-        <strong>Manager</strong> is the one role nobody can claim: grant it here.</p>
-    <label>Search: <input id="userSearch" placeholder="username or email"></label>
-    <button id="userSearchGo">Search</button>
-    <table id="users">
-        <thead>
-        <tr><th>Username</th><th>Name</th><th>Email</th><th>Claimed role</th>
-            <th>Verified</th><th>Manager</th><th>Granted roles</th></tr>
-        </thead>
-        <tbody></tbody>
-    </table>
-</section>
 
 <section id="registerSection" hidden>
     <h2>Register</h2>
-
-    <h3>Import members (CSV)</h3>
-    <p class="muted">Massage your spreadsheet into the columns of
-        <code>docs/import-template.csv</code> and export it as <strong>CSV UTF-8</strong>
-        (plain "CSV" from Excel mangles accented names). Preview is a dry run;
-        Apply writes everything in one transaction, and is enabled only once a
-        preview comes back with no errors.</p>
-    <label>Target period <input id="importPeriod" placeholder="e.g. 2026-2027 (blank = current)"></label>
-    <label>CSV file <input id="importFile" type="file" accept=".csv,text/csv"></label>
-    <button id="importPreview">Preview</button>
-    <button id="importApply" disabled>Apply</button>
-    <div id="importReport"></div>
 
     <h3>People</h3>
     <p class="muted">People are never deleted — the register is the historical record.</p>
@@ -126,7 +81,100 @@
                 <option>DEPENDANT</option><option>OTHER</option>
             </select></label>
         <button id="hdAdd">Add member</button>
+        <hr>
+        <p class="muted">Sign this household up for a period (a returning or brand-new member mid-year).</p>
+        <label>New membership — period <select id="hmPeriod"></select></label>
+        <label>Type <select id="hmType"></select></label>
+        <button id="hmCreate">Create membership</button>
         <button id="hdClose" type="button">Close</button>
+    </fieldset>
+</section>
+
+<section id="renewalsSection" hidden>
+    <h2>Renewals</h2>
+    <p class="muted">Run a membership year: open a period with its prices, roll the
+        prior year's paid members forward, record the cash and transfers as they
+        arrive, and export the AGM and mailing lists. Payments are insert-only —
+        a mistake is fixed with a Reverse (an equal-and-opposite entry), never an edit.</p>
+
+    <label>Period <select id="periodSelect"></select></label>
+    <button id="periodNew">New period</button>
+    <div id="periodSummary" class="muted"></div>
+
+    <fieldset id="periodForm" hidden>
+        <legend>New period</legend>
+        <label>Name <input id="npName" placeholder="e.g. 2026-2027"></label>
+        <label>Start date <input id="npStart" type="date"></label>
+        <label>End date <input id="npEnd" type="date"></label>
+        <label>Renewal opens <input id="npRenewalOpen" type="date"></label>
+        <label>Late-joining cutoff <input id="npCutoff" type="date"></label>
+        <div id="npPrices"></div>
+        <button id="npSave">Create period</button>
+        <button id="npCancel" type="button">Cancel</button>
+    </fieldset>
+
+    <h3>Rollover</h3>
+    <p class="muted">Creates a membership for every household with an ACTIVE
+        membership in the prior period. Preview first — it writes nothing.</p>
+    <button id="rolloverPreview">Preview</button>
+    <button id="rolloverApply" disabled>Apply rollover</button>
+    <div id="rolloverReport"></div>
+
+    <h3>Members</h3>
+    <label>Search <input id="memberSearch" placeholder="household or member name"></label>
+    <label>Status
+        <select id="statusFilter">
+            <option value="">All</option>
+            <option value="PENDING_PAYMENT">Unpaid</option>
+            <option value="ACTIVE">Paid</option>
+            <option value="LAPSED">Lapsed</option>
+            <option value="APPLIED">Applied</option>
+            <option value="CEASED">Ceased</option>
+        </select></label>
+    <button id="memberSearchGo">Search</button>
+    <button id="lapseAll">Lapse all unpaid</button>
+    <span class="muted"> — export: </span>
+    <button id="exportAgm">AGM register</button>
+    <button id="exportLabels">Mailing labels</button>
+    <button id="exportFinancial">Financial</button>
+    <table id="memberships">
+        <thead>
+        <tr><th>Household</th><th>Contact</th><th>Members</th><th>Type</th>
+            <th>Status</th><th>Due</th><th>Paid</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <div id="membershipsTotal" class="muted"></div>
+
+    <fieldset id="membershipDetail" hidden>
+        <legend id="mdTitle">Membership</legend>
+        <div id="mdSummary" class="muted"></div>
+        <div id="mdActions"></div>
+        <button id="mdRecordPayment">Record payment</button>
+        <table id="mdPayments">
+            <thead>
+            <tr><th>Date</th><th>Amount</th><th>Method</th><th>Allocations</th><th>By</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <button id="mdClose" type="button">Close</button>
+
+        <fieldset id="paymentForm" hidden>
+            <legend>Record payment</legend>
+            <label>Received date <input id="payDate" type="date"></label>
+            <label>Method
+                <select id="payMethod">
+                    <option>BANK_TRANSFER</option><option>CASH</option>
+                    <option>CHEQUE</option><option>OTHER</option>
+                </select></label>
+            <label>Bank reference <input id="payRef"></label>
+            <label>Membership amount ($) <input id="payMembership" type="number" step="0.01"></label>
+            <div id="payExtra"></div>
+            <button id="payAddLine" type="button">Add allocation line (donation / journal)</button>
+            <label>Notes <input id="payNotes"></label>
+            <button id="paySave">Save payment</button>
+            <button id="payCancel" type="button">Cancel</button>
+        </fieldset>
     </fieldset>
 </section>
 

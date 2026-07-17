@@ -208,7 +208,7 @@ check "64b names the bad column"        "true" "$(body | jsq "str(any('surname' 
 check "65 baseline no Imp people"       "0"   "$(curl -s "$API/admin/people?q=$IMP" -H "Authorization: Bearer $ADMIN" | jsq "j['total']")"
 check "66 apply badname 400"            "400" "$(imp $API/admin/import "$ADMIN" "$FX/badname.csv")"
 check "66b apply badname created nothing" "0" "$(curl -s "$API/admin/people?q=$IMP" -H "Authorization: Bearer $ADMIN" | jsq "j['total']")"
-check "67 apply valid 200"              "200" "$(imp "$API/admin/import?period=2026-2027" "$ADMIN" "$FX/valid.csv")"
+check "67 apply valid 200"              "200" "$(imp "$API/admin/import?period=2025-2026" "$ADMIN" "$FX/valid.csv")"
 check "67b created people 5"            "5"   "$(body | jsq "j['created']['people']")"
 check "67c created households 2"        "2"   "$(body | jsq "j['created']['households']")"
 check "67d created memberships 2"       "2"   "$(body | jsq "j['created']['memberships']")"
@@ -222,13 +222,13 @@ check "70 preview dup 200"              "200" "$(imp $API/admin/import/preview "
 check "70b dup warned"                  "true" "$(body | jsq "str(len(j['warnings'])>0).lower()")"
 check "70c dup skipped names person"    "true" "$(body | jsq "str(any('#' in s['reason'] for s in j['skipped'])).lower()")"
 check "70d dup creates nobody"          "0"   "$(body | jsq "j['toCreate']['people']")"
-check "71 re-apply valid 200"           "200" "$(imp "$API/admin/import?period=2026-2027" "$ADMIN" "$FX/valid.csv")"
+check "71 re-apply valid 200"           "200" "$(imp "$API/admin/import?period=2025-2026" "$ADMIN" "$FX/valid.csv")"
 check "71b re-apply creates nothing"    "0"   "$(body | jsq "j['created']['people']+j['created']['households']+j['created']['memberships']+j['created']['payments']")"
 check "71c re-apply skips all 5"        "5"   "$(body | jsq "len(j['skipped'])")"
-check "72 apply nomem 200"              "200" "$(imp "$API/admin/import?period=2026-2027" "$ADMIN" "$FX/nomem.csv")"
+check "72 apply nomem 200"              "200" "$(imp "$API/admin/import?period=2025-2026" "$ADMIN" "$FX/nomem.csv")"
 check "72b nomem created 1 person"      "1"   "$(body | jsq "j['created']['people']")"
 check "72c nomem created 0 memberships" "0"   "$(body | jsq "j['created']['memberships']")"
-check "73 apply bom 200"                "200" "$(imp "$API/admin/import?period=2026-2027" "$ADMIN" "$FX/bom.csv")"
+check "73 apply bom 200"                "200" "$(imp "$API/admin/import?period=2025-2026" "$ADMIN" "$FX/bom.csv")"
 check "73b accented name intact"        "Zoé" "$(curl -s "$API/admin/people?q=Zo" -H "Authorization: Bearer $ADMIN" | jsq "next(p['givenName'] for p in j['people'] if p['familyName']=='$IMP' and p['givenName'].startswith('Zo'))")"
 check "74 body over 1MB 413"            "413" "$(imp $API/admin/import/preview "$ADMIN" "$FX/big.csv")"
 
@@ -247,9 +247,182 @@ else
   echo "note: psql not found — skipping CR-002 side-effect checks 75–79 (membership/payment/flags)"
 fi
 
+# --- renewals + manual payments (CR-003) ------------------------------------
+# The rollover/payment lifecycle. Unique per-run names (Ren$$) keep re-runs
+# green. The data-dependent cases need psql to seed the LIFE type (there is
+# deliberately no type-management API) and the LIFE/left-member fixtures; the
+# pure auth checks run regardless.
+JADMIN() { code "$@" -H "Authorization: Bearer $ADMIN"; }        # admin GET/POST, body to file
+JPOST() { code -X POST "$1" -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "$2"; }
+JPUT()  { code -X PUT  "$1" -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "$2"; }
+
+check "CR3-01 periods guest 403"        "403" "$(code $API/admin/periods)"
+check "CR3-02 payments user 403"        "403" "$(code -X POST $API/admin/payments -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
+check "CR3-03 periods noaud 401"        "401" "$(code $API/admin/periods -H "Authorization: Bearer $NOAUD")"
+
+if [ "$PSQL_OK" = 1 ]; then
+  R="Ren$$"
+  # LIFE type (idempotent) — no type-management API by design
+  psqlq "INSERT INTO membership_type (name, description, minimum_people, maximum_people) SELECT 'LIFE','Life member',1,NULL WHERE NOT EXISTS (SELECT 1 FROM membership_type WHERE name='LIFE')" >/dev/null
+  T_SINGLE=$(psqlq "SELECT membership_type_id FROM membership_type WHERE name='SINGLE'")
+  T_HH=$(psqlq "SELECT membership_type_id FROM membership_type WHERE name='HOUSEHOLD'")
+  T_LIFE=$(psqlq "SELECT membership_type_id FROM membership_type WHERE name='LIFE'")
+  P2526=$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "next(p['id'] for p in j['periods'] if p['name']=='2025-2026')")
+
+  # CR3-04: the seeded period and its prices
+  check "CR3-04 periods admin 200"      "200" "$(JADMIN $API/admin/periods)"
+  check "CR3-04b 2025-2026 SINGLE 4500" "4500" "$(body | jsq "next(pr['amountCents'] for p in j['periods'] if p['name']=='2025-2026' for pr in p['prices'] if pr['type']=='SINGLE')")"
+  check "CR3-04c 2025-2026 HOUSEHOLD 6500" "6500" "$(body | jsq "next(pr['amountCents'] for p in j['periods'] if p['name']=='2025-2026' for pr in p['prices'] if pr['type']=='HOUSEHOLD')")"
+
+  # CR3-05/06/07: create a target period with a full price set; dup name; missing price
+  TGT="Tgt$$"
+  check "CR3-05 create target period 201" "201" "$(JPOST $API/admin/periods "{\"name\":\"$TGT\",\"startDate\":\"2027-07-01\",\"endDate\":\"2028-06-30\",\"renewalOpenDate\":\"2027-06-01\",\"lateJoiningCutoff\":\"2028-04-01\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}")"
+  TGTID=$(body | jsq "j['id']")
+  check "CR3-06 duplicate name 409"      "409" "$(JPOST $API/admin/periods "{\"name\":\"$TGT\",\"startDate\":\"2027-07-01\",\"endDate\":\"2028-06-30\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}")"
+  check "CR3-07 missing a price 400"     "400" "$(JPOST $API/admin/periods "{\"name\":\"${TGT}mp\",\"startDate\":\"2027-07-01\",\"endDate\":\"2028-06-30\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"LIFE\",\"amountCents\":0}]}")"
+  check "CR3-07b names the missing type" "true" "$(body | jsq "str('HOUSEHOLD' in j['error']).lower()")"
+
+  # CR3-08: create a membership for a fresh household (MEMBER + DEPENDANT)
+  JPOST $API/admin/people "{\"givenName\":\"Rhoda\",\"familyName\":\"$R\"}" >/dev/null; PA1=$(body | jsq "j['id']")
+  JPOST $API/admin/people "{\"givenName\":\"Deb\",\"familyName\":\"$R\"}" >/dev/null;   PA2=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$R A\",\"primaryContactPersonId\":$PA1}" >/dev/null; HHA=$(body | jsq "j['id']")
+  JPOST $API/admin/households/$HHA/people "{\"personId\":$PA2,\"relationshipType\":\"DEPENDANT\"}" >/dev/null
+  psqlq "INSERT INTO household_address (household_id, address_type, line_1, locality, state, postcode, is_preferred) VALUES ($HHA,'POSTAL','7 Test St','Yass','NSW','2582',true)" >/dev/null
+  check "CR3-08 create membership 201"   "201" "$(JPOST $API/admin/memberships "{\"householdId\":$HHA,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}")"
+  MA=$(body | jsq "j['id']")
+  check "CR3-08b status PENDING_PAYMENT" "PENDING_PAYMENT" "$(body | jsq "j['status']")"
+  check "CR3-08c amount_due 4500"        "4500" "$(body | jsq "j['amountDueCents']")"
+  check "CR3-08d MEMBER statutory true"  "t" "$(psqlq "SELECT mp.is_statutory_member FROM membership_person mp WHERE mp.membership_id=$MA AND mp.person_id=$PA1")"
+  check "CR3-08e DEPENDANT statutory false" "f" "$(psqlq "SELECT mp.is_statutory_member FROM membership_person mp WHERE mp.membership_id=$MA AND mp.person_id=$PA2")"
+  check "CR3-09 duplicate membership 409" "409" "$(JPOST $API/admin/memberships "{\"householdId\":$HHA,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}")"
+
+  # CR3-10: change type re-snapshots amount_due
+  check "CR3-10 change type HOUSEHOLD 200" "200" "$(JPUT $API/admin/memberships/$MA "{\"membershipTypeId\":$T_HH}")"
+  check "CR3-10b amount_due 6500"        "6500" "$(body | jsq "j['amountDueCents']")"
+
+  # CR3-11: partial payment; membership stays pending
+  check "CR3-11 partial payment 201"     "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-08-01\",\"amountCents\":3000,\"method\":\"BANK_TRANSFER\",\"bankReference\":\"BT-1\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA,\"amountCents\":3000}]}")"
+  check "CR3-11b still pending"          "PENDING_PAYMENT" "$(curl -s $API/admin/memberships/$MA -H "Authorization: Bearer $ADMIN" | jsq "j['status']")"
+  check "CR3-11c paid 3000"              "3000" "$(curl -s $API/admin/memberships/$MA -H "Authorization: Bearer $ADMIN" | jsq "j['amountPaidCents']")"
+
+  # CR3-12: type change refused once an allocation exists
+  check "CR3-12 type change now 400"     "400" "$(JPUT $API/admin/memberships/$MA "{\"membershipTypeId\":$T_SINGLE}")"
+
+  # CR3-13: second payment activates; approved_date = received date
+  check "CR3-13 second payment 201"      "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-08-15\",\"amountCents\":3500,\"method\":\"CHEQUE\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA,\"amountCents\":3500}]}")"
+  check "CR3-13b now ACTIVE"             "ACTIVE" "$(curl -s $API/admin/memberships/$MA -H "Authorization: Bearer $ADMIN" | jsq "j['status']")"
+  check "CR3-13c approved = received"    "2026-08-15" "$(psqlq "SELECT approved_date FROM membership WHERE membership_id=$MA")"
+
+  # CR3-14: allocations must sum to the payment amount
+  check "CR3-14 sum mismatch 400"        "400" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-08-20\",\"amountCents\":1000,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA,\"amountCents\":500}]}")"
+
+  # CR3-15: negative (reversal) payment demotes back to pending
+  check "CR3-15 reversal 201"            "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-08-25\",\"amountCents\":-3500,\"method\":\"CHEQUE\",\"notes\":\"reversal of payment\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA,\"amountCents\":-3500}]}")"
+  check "CR3-15b back to pending"        "PENDING_PAYMENT" "$(curl -s $API/admin/memberships/$MA -H "Authorization: Bearer $ADMIN" | jsq "j['status']")"
+  check "CR3-15c paid 3000"              "3000" "$(curl -s $API/admin/memberships/$MA -H "Authorization: Bearer $ADMIN" | jsq "j['amountPaidCents']")"
+
+  # CR3-16: membership + donation in one payment; donation never counts
+  check "CR3-16 payment+donation 201"    "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-09-01\",\"amountCents\":4500,\"method\":\"BANK_TRANSFER\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA,\"amountCents\":3500},{\"type\":\"DONATION\",\"amountCents\":1000}]}")"
+  check "CR3-16b ACTIVE again"           "ACTIVE" "$(curl -s $API/admin/memberships/$MA -H "Authorization: Bearer $ADMIN" | jsq "j['status']")"
+  check "CR3-16c membership-paid 6500"   "6500" "$(psqlq "SELECT COALESCE(SUM(amount_cents),0) FROM payment_allocation WHERE membership_id=$MA AND allocation_type='MEMBERSHIP'")"
+  check "CR3-16d donation not counted"   "6500" "$(curl -s $API/admin/memberships/$MA -H "Authorization: Bearer $ADMIN" | jsq "j['amountPaidCents']")"
+
+  # CR3-17: financial status view row
+  check "CR3-17 status view ACTIVE 200"  "200" "$(JADMIN "$API/admin/periods/$P2526/memberships?status=ACTIVE&q=$R")"
+  check "CR3-17b row due 6500"           "6500" "$(body | jsq "next(r['amountDueCents'] for r in j['rows'] if r['membershipId']==$MA)")"
+  check "CR3-17c row paid 6500"          "6500" "$(body | jsq "next(r['amountPaidCents'] for r in j['rows'] if r['membershipId']==$MA)")"
+  check "CR3-17d summary has ACTIVE"     "true" "$(body | jsq "str('ACTIVE' in j['summary']['countsByStatus']).lower()")"
+
+  # HH_B: a pending membership for the lapse/reactivate cases
+  JPOST $API/admin/people "{\"givenName\":\"Bruno\",\"familyName\":\"$R\"}" >/dev/null; PB1=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$R B\",\"primaryContactPersonId\":$PB1}" >/dev/null; HHB=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$HHB,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; MB=$(body | jsq "j['id']")
+
+  # CR3-18: bulk lapse of the unpaid
+  check "CR3-18 lapse-unpaid 200"        "200" "$(code -X POST $API/admin/periods/$P2526/lapse-unpaid -H "Authorization: Bearer $ADMIN")"
+  check "CR3-18b lapsed >= 1"            "true" "$(body | jsq "str(j['lapsed']>=1).lower()")"
+  check "CR3-18c HH_B now lapsed"        "LAPSED" "$(psqlq "SELECT status FROM membership WHERE membership_id=$MB")"
+  check "CR3-18d LAPSED filter lists it" "true" "$(curl -s "$API/admin/periods/$P2526/memberships?status=LAPSED&q=$R" -H "Authorization: Bearer $ADMIN" | jsq "str(any(r['membershipId']==$MB for r in j['rows'])).lower()")"
+
+  # CR3-19: a late payment reactivates a lapsed membership
+  check "CR3-19 pay lapsed 201"          "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-09-15\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MB,\"amountCents\":4500}]}")"
+  check "CR3-19b reactivated ACTIVE"     "ACTIVE" "$(curl -s $API/admin/memberships/$MB -H "Authorization: Bearer $ADMIN" | jsq "j['status']")"
+
+  # CR3-20: cease, then a later payment must not disturb CEASED
+  JPOST $API/admin/people "{\"givenName\":\"Cara\",\"familyName\":\"$R\"}" >/dev/null; PC1=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$R C\",\"primaryContactPersonId\":$PC1}" >/dev/null; HHC=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$HHC,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; MC=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-09-20\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MC,\"amountCents\":4500}]}" >/dev/null
+  check "CR3-20 cease 200"               "200" "$(JPUT $API/admin/memberships/$MC "{\"status\":\"CEASED\",\"ceasedDate\":\"2026-10-01\",\"cessationReason\":\"RESIGNED\"}")"
+  check "CR3-20b ceased_date set"        "2026-10-01" "$(psqlq "SELECT ceased_date FROM membership WHERE membership_id=$MC")"
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-10-05\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MC,\"amountCents\":4500}]}" >/dev/null
+  check "CR3-20c stays CEASED"           "CEASED" "$(curl -s $API/admin/memberships/$MC -H "Authorization: Bearer $ADMIN" | jsq "j['status']")"
+
+  # LIFE household with a departed member (psql: no type API, and $0 ACTIVE is a rollover shape)
+  psqlq "WITH p1 AS (INSERT INTO person(given_name,family_name) VALUES ('Lifer','${R}L') RETURNING person_id),
+              p2 AS (INSERT INTO person(given_name,family_name) VALUES ('Gone','${R}L') RETURNING person_id),
+              hh AS (INSERT INTO household(household_name,primary_contact_person_id) SELECT '$R Life', person_id FROM p1 RETURNING household_id),
+              a  AS (INSERT INTO household_person(household_id,person_id,relationship_type,joined_household_date) SELECT hh.household_id,p1.person_id,'MEMBER',current_date FROM hh,p1),
+              b  AS (INSERT INTO household_person(household_id,person_id,relationship_type,joined_household_date,left_household_date) SELECT hh.household_id,p2.person_id,'OTHER',current_date-30,current_date-1 FROM hh,p2),
+              m  AS (INSERT INTO membership(membership_period_id,membership_type_id,household_id,status,application_date,approved_date,start_date,end_date,amount_due_cents) SELECT $P2526,$T_LIFE,hh.household_id,'ACTIVE',current_date,current_date,DATE '2025-09-01',DATE '2026-08-31',0 FROM hh RETURNING membership_id)
+         INSERT INTO membership_person(membership_id,person_id,membership_role,is_statutory_member,has_voting_rights,eligible_for_committee,start_date) SELECT m.membership_id,p1.person_id,'MEMBER',true,true,true,current_date FROM m,p1" >/dev/null
+
+  # CR3-21: rollover setup — HH_A already renewed into the target, part-paid.
+  # The source is pinned with ?from=$P2526 (the seeded period this run's
+  # fixtures live in): default resolution picks the latest period before the
+  # target, which is non-deterministic once the dev DB holds other periods
+  # (e.g. one an admin created while testing) — pinning keeps the matrix
+  # re-runnable regardless.
+  JPOST $API/admin/memberships "{\"householdId\":$HHA,\"membershipPeriodId\":$TGTID,\"membershipTypeId\":$T_SINGLE}" >/dev/null; MA_TGT=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2027-08-01\",\"amountCents\":2000,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA_TGT,\"amountCents\":2000}]}" >/dev/null
+  TGT_BEFORE=$(psqlq "SELECT count(*) FROM membership WHERE membership_period_id=$TGTID")
+  check "CR3-21 rollover preview 200"    "200" "$(code -X POST "$API/admin/periods/$TGTID/rollover/preview?from=$P2526" -H "Authorization: Bearer $ADMIN")"
+  TOCREATE=$(body | jsq "j['toCreate']")
+  check "CR3-21b source is 2025-2026"    "2025-2026" "$(body | jsq "j['fromPeriodName']")"
+  check "CR3-21c skips already-renewed"  "true" "$(body | jsq "str(any(s['householdId']==$HHA for s in j['skipped'])).lower()")"
+  check "CR3-21d toCreate >= 3"          "true" "$(body | jsq "str(j['toCreate']>=3).lower()")"
+  check "CR3-21e preview wrote nothing"  "$TGT_BEFORE" "$(psqlq "SELECT count(*) FROM membership WHERE membership_period_id=$TGTID")"
+
+  # CR3-22: apply
+  check "CR3-22 rollover apply 200"      "200" "$(code -X POST "$API/admin/periods/$TGTID/rollover?from=$P2526" -H "Authorization: Bearer $ADMIN")"
+  check "CR3-22b created == preview"     "$TOCREATE" "$(body | jsq "j['created']")"
+  check "CR3-22c LIFE ACTIVE due 0"      "ACTIVE|0" "$(psqlq "SELECT m.status||'|'||amount_due_cents FROM membership m JOIN household h ON h.household_id=m.household_id WHERE h.household_name='$R Life' AND m.membership_period_id=$TGTID")"
+  check "CR3-22d LIFE no payment row"    "0" "$(psqlq "SELECT count(*) FROM payment_allocation pa JOIN membership m ON m.membership_id=pa.membership_id JOIN household h ON h.household_id=m.household_id WHERE h.household_name='$R Life' AND m.membership_period_id=$TGTID")"
+  check "CR3-22e left member absent"     "1" "$(psqlq "SELECT count(*) FROM membership_person mp JOIN membership m ON m.membership_id=mp.membership_id JOIN household h ON h.household_id=m.household_id WHERE h.household_name='$R Life' AND m.membership_period_id=$TGTID")"
+  check "CR3-22f HH_B rolled PENDING 4500" "PENDING_PAYMENT|4500" "$(psqlq "SELECT m.status||'|'||amount_due_cents FROM membership m JOIN household h ON h.household_id=m.household_id WHERE h.household_name='$R B' AND m.membership_period_id=$TGTID")"
+
+  # CR3-23: re-run converges
+  check "CR3-23 rollover apply again 200" "200" "$(code -X POST "$API/admin/periods/$TGTID/rollover?from=$P2526" -H "Authorization: Bearer $ADMIN")"
+  check "CR3-23b created 0"              "0" "$(body | jsq "j['created']")"
+
+  # CR3-24: repriceUnpaid re-snapshots zero-allocation memberships only
+  check "CR3-24 reprice 200"            "200" "$(JPUT "$API/admin/periods/$TGTID?repriceUnpaid=true" "{\"startDate\":\"2027-07-01\",\"endDate\":\"2028-06-30\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":5000}]}")"
+  check "CR3-24b unpaid re-priced 5000" "5000" "$(psqlq "SELECT amount_due_cents FROM membership m JOIN household h ON h.household_id=m.household_id WHERE h.household_name='$R B' AND m.membership_period_id=$TGTID")"
+  check "CR3-24c part-paid untouched 4500" "4500" "$(psqlq "SELECT amount_due_cents FROM membership WHERE membership_id=$MA_TGT")"
+
+  # CR3-25/26/27/28: CSV exports (on 2025-2026)
+  check "CR3-25 agm 200"                "200" "$(JADMIN $API/admin/periods/$P2526/export/agm-register.csv)"
+  check "CR3-25b agm is csv"            "text/csv" "$(curl -s -o /dev/null -w '%{content_type}' $API/admin/periods/$P2526/export/agm-register.csv -H "Authorization: Bearer $ADMIN" | grep -o 'text/csv' | head -1)"
+  check "CR3-25c agm has voting member" "yes" "$(grep -q "Rhoda,$R" /tmp/body.$$ && echo yes || echo no)"
+  check "CR3-25d agm excludes dependant" "yes" "$(grep -q "Deb,$R" /tmp/body.$$ && echo no || echo yes)"
+  check "CR3-26 mailing labels 200"     "200" "$(JADMIN $API/admin/periods/$P2526/export/mailing-labels.csv)"
+  check "CR3-26b address household has line" "yes" "$(grep -q '7 Test St' /tmp/body.$$ && echo yes || echo no)"
+  check "CR3-26c addressless present"   "yes" "$(grep -q "$R B" /tmp/body.$$ && echo yes || echo no)"
+  check "CR3-27 financial 200"          "200" "$(JADMIN $API/admin/periods/$P2526/export/financial.csv)"
+  NROWS=$(python3 -c "import csv; print(sum(1 for _ in csv.reader(open('/tmp/body.$$')))-1)" 2>/dev/null)
+  NMEM=$(psqlq "SELECT count(*) FROM membership WHERE membership_period_id=$P2526")
+  check "CR3-27b row count == memberships" "$NMEM" "$NROWS"
+  check "CR3-28 agm guest 403"          "403" "$(code $API/admin/periods/$P2526/export/agm-register.csv)"
+else
+  echo "note: psql not found — skipping CR-003 data cases (LIFE type + rollover fixtures need psql)"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "32 web page 200"                "200" "$(code http://localhost:${PORT:-18080}/server/web/)"
 check "33 admin page 200"              "200" "$(code http://localhost:${PORT:-18080}/server/admin/)"
+check "33b admin users page 200"       "200" "$(code http://localhost:${PORT:-18080}/server/admin/users.html)"
+check "33c admin import page 200"      "200" "$(code http://localhost:${PORT:-18080}/server/admin/import.html)"
+check "33d admin css served"           "200" "$(code http://localhost:${PORT:-18080}/server/admin/admin.css)"
 check "34 auth.js served"              "200" "$(code http://localhost:${PORT:-18080}/server/shared/auth.js)"
 
 echo
