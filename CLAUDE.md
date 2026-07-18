@@ -32,7 +32,7 @@ STRIPE_WEBHOOK_SECRET=whsec_devmatrix SMTP_HOST=localhost SMTP_PORT=18026 \
   MAIL_FROM=noreply@memberroll.dev MAIL_REPLY_TO=treasurer@memberroll.dev \
   MEMBERROLL_SOCIETY_NAME="MemberRoll Dev Society" mvn -pl server cargo:run
 
-server/verify-matrix.sh         # the role x endpoint matrix (428 checks offline / +1 with a
+server/verify-matrix.sh         # the role x endpoint matrix (453 checks offline / +1 with a
                                 # Stripe key) against the running dev stack (ports via
                                 # PORT / KEYCLOAK_PORT); extend it alongside new endpoints —
                                 # it must stay green. The CR-005 abort/resume rows stop and
@@ -191,6 +191,30 @@ Keycloak sends its own mail, separate from the app's `Mail` env).
 Nobody disables Keycloak accounts on lapse/leave, and unlink
 (`DELETE /api/admin/people/{id}/keycloak-link`) leaves the account
 alone — a stale login simply sees no membership.
+CR-012 added on-demand payment receipts (constitution 38(3)(b), "if
+requested" — never an auto-send). `Receipts` is the ONE renderer:
+it composes from the RECORDED payment (`PaymentStore.find`), never
+request-time inputs, so the counter/email/webhook copies are one
+document; the payment id is the receipt number (insert-only + reverse-
+never-edit keeps it stable). A negative payment renders as a "Refund
+record" (deliberately a plain receipt, not a DGR donation receipt).
+Two admin endpoints (`GET`/`POST /api/admin/payments/{id}/receipt`):
+GET returns the header/line/total fields + canonical `text` +
+`defaultTo` (payer's primary email, else the CR-005/CR-006-attributed
+household address, else null); POST emails it (`{to?}`, 400 when no
+address resolves, 503 when `Mail.enabled()` is false — the checkout
+mirror, never a silent no-op), stateless (nothing written, re-send
+re-composes — no receipt log in v1). `StripeWebhookResource`'s inline
+builder was refactored onto `Receipts.render` (it captures the insert's
+`paymentId` and renders from the committed row after the commit; only
+the Checkout `customer_details` email stays Stripe-specific). UI: a
+**Receipt…** button beside each payment's Reverse opens a dialog with
+**Print** (a bare pop-up holding just the receipt text — built with
+`textContent`, never innerHTML — then `window.print()`, no print-CSS
+against the admin page) and **Email** (prefilled `defaultTo`, disabled
+with a hint when the GET's `mailEnabled` is false — the CR-005 banner
+pattern). One transactional mail via `Mail.sendAsync`, NOT the CR-005
+segment machinery.
 
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):

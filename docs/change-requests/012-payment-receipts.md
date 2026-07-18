@@ -1,6 +1,6 @@
 # CR 012: Payment receipts — email or print, for manual payments too
 
-Status: PROPOSED (2026-07-18)
+Status: VERIFIED (2026-07-18)
 
 ## Problem
 
@@ -123,7 +123,44 @@ cargo runs without SMTP env.
 
 ## Results
 
-(to be recorded when implemented)
+Implemented as proposed. New `Receipts` renderer (composes from the recorded
+`PaymentStore.find` row; per-MEMBERSHIP period/type label + current status for
+the "financial for …" line; `defaultRecipient` resolves payer→household);
+two endpoints on `AdminPaymentsResource` (`GET`/`POST .../payments/{id}/receipt`);
+`StripeWebhookResource` refactored onto the shared renderer (captures the insert's
+`paymentId` and renders from it after commit — only the Checkout email stays
+Stripe-specific); admin membership-detail dialog gained a **Receipt…** button →
+receipt dialog with **Print** (bare pop-up + `window.print()`) and **Email**
+(prefilled `defaultTo`, Email disabled + hint when `mailEnabled` false). No
+schema, realm, or config change.
+
+**Matrix** (`server/verify-matrix.sh`, CR12-* rows + regression, run against the
+dev stack with `STRIPE_WEBHOOK_SECRET`/SMTP set, no Stripe key): **453/453 pass,
+0 fail** (was 428; +25 CR12 rows). Row-by-row against the plan:
+
+| # | result |
+|---|---|
+| 1 | CR12-01/01b/01c — GET receipt guest 403 / user 403 / noaud 401 ✓ |
+| 2 | CR12-02/02b — POST receipt guest 403 / user 403 ✓ |
+| 3 | CR12-03..03g — `text` has "Receipt #P", method, both allocation lines, "Total: $50.00"; `defaultTo` = payer email; `refund` false ✓ |
+| 4 | CR12-04 — membership-only payment, payer unset → `defaultTo` = household attributed address ✓ |
+| 5 | CR12-05 — unknown payment 404 ✓ |
+| 6 | CR12-06/06b/06c — POST no body → 202, `sentTo` = default; Mailpit body equals the GET `text` (modulo SMTP CRLF) ✓ |
+| 7 | CR12-07 — POST `{to}` override delivered to the override, not the default ✓ |
+| 8 | CR12-08/08b — GET `defaultTo` null for a no-email household; POST with no default and no `to` → 400 ✓ |
+| 9 | CR12-09..09d — reversal renders "Refund record #N", negative total, negative line amounts, `refund` true ✓ |
+| 10 | 503-when-mail-unconfigured — the flip-side row (CR12-10), conditional on SMTP being unset; not exercised in this SMTP-configured run (mirrors CR4-09u) |
+| 11 | CR12-11 — ACTIVE membership → receipt carries the "financial for 2025-2026" line ✓ |
+
+**Regression:** CR4-19 (the Stripe webhook receipt) still passes through the
+shared renderer — the emailed body still contains "financial for 2025-2026".
+
+**Browser walkthrough** (headless Chromium via Playwright, testadmin login →
+deep-link to the membership → Receipt…): 12/12 checks — dialog shows the rendered
+receipt (number, $50.00 total, financial-for line), email prefilled with the
+default address, Email enabled with no mail-disabled hint, Print opens a bare
+pop-up containing just the receipt (no app chrome) and calls `window.print()`,
+Email reports "emailed to &lt;default&gt;". Screenshot captured.
 
 ## Follow-ups / amendments
 

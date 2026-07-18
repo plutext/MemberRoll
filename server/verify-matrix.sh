@@ -1097,6 +1097,92 @@ else
   echo "note: psql not found — skipping CR-006 data cases (fixtures + link assertions need psql)"
 fi
 
+# --- payment receipts (CR-012) ----------------------------------------------
+# Receipts render from the RECORDED payment: the GET is stateless JSON (header/
+# line/total + canonical text + defaultTo), the POST emails it (default address
+# payer→household, or an explicit {to}). Mail rows key off the server's SMTP
+# config, probed via the CR-005 templates GET (mailEnabled); the 503 row is the
+# flip side, run exactly when the server has no SMTP.
+if [ "$PSQL_OK" = 1 ]; then
+  RC="Rcpt$$"
+  # payer with a primary email; a household + membership fully paid by payment P
+  # so its receipt carries the "financial for <period>" line
+  JPOST $API/admin/people "{\"givenName\":\"Rhys\",\"familyName\":\"$RC\",\"emails\":[{\"email\":\"cr12payer.$$@example.com\",\"isPrimary\":true}]}" >/dev/null; RCPAYER=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RC HH\",\"primaryContactPersonId\":$RCPAYER}" >/dev/null; RCHH=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$RCHH,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; RCMEM=$(body | jsq "j['id']")
+  # payment P: BANK_TRANSFER, MEMBERSHIP 4500 (fully pays) + DONATION 500, payer set
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":5000,\"method\":\"BANK_TRANSFER\",\"bankReference\":\"TFR-$$\",\"payerPersonId\":$RCPAYER,\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RCMEM,\"amountCents\":4500},{\"type\":\"DONATION\",\"amountCents\":500}]}" >/dev/null; RCP=$(body | jsq "j['id']")
+
+  # rows 1–2: role gate (guest/user 403, noaud 401)
+  check "CR12-01 GET receipt guest 403"  "403" "$(code $API/admin/payments/$RCP/receipt)"
+  check "CR12-01b GET receipt user 403"  "403" "$(code $API/admin/payments/$RCP/receipt -H "Authorization: Bearer $USER")"
+  check "CR12-01c GET receipt noaud 401" "401" "$(code $API/admin/payments/$RCP/receipt -H "Authorization: Bearer $NOAUD")"
+  check "CR12-02 POST receipt guest 403" "403" "$(code -X POST $API/admin/payments/$RCP/receipt)"
+  check "CR12-02b POST receipt user 403" "403" "$(code -X POST $API/admin/payments/$RCP/receipt -H "Authorization: Bearer $USER")"
+
+  # row 3: the composed receipt (+ row 11 financial line, membership is ACTIVE)
+  RGET=$(curl -s $API/admin/payments/$RCP/receipt -H "Authorization: Bearer $ADMIN")
+  RTEXT=$(echo "$RGET" | jsq "j['text']")
+  check "CR12-03 text has receipt no"    "true" "$(python3 -c "import sys;print(str('Receipt #$RCP' in sys.argv[1]).lower())" "$RTEXT")"
+  check "CR12-03b text has method"       "true" "$(python3 -c "import sys;print(str('BANK_TRANSFER' in sys.argv[1]).lower())" "$RTEXT")"
+  check "CR12-03c text membership line"  "true" "$(python3 -c "import sys;print(str('Membership 2025-2026 (SINGLE): \$45.00' in sys.argv[1]).lower())" "$RTEXT")"
+  check "CR12-03d text donation line"    "true" "$(python3 -c "import sys;print(str('Donation: \$5.00' in sys.argv[1]).lower())" "$RTEXT")"
+  check "CR12-03e text total"            "true" "$(python3 -c "import sys;print(str('Total: \$50.00' in sys.argv[1]).lower())" "$RTEXT")"
+  check "CR12-03f defaultTo is payer"    "cr12payer.$$@example.com" "$(echo "$RGET" | jsq "j['defaultTo']")"
+  check "CR12-03g not a refund"          "False" "$(echo "$RGET" | jsq "j['refund']")"
+  check "CR12-11 financial-for line"     "true" "$(python3 -c "import sys;print(str('financial for 2025-2026' in sys.argv[1]).lower())" "$RTEXT")"
+
+  # row 4: membership-only payment, payer unset → default = household attributed address
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":100,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RCMEM,\"amountCents\":100}]}" >/dev/null; RCP4=$(body | jsq "j['id']")
+  check "CR12-04 default = household email" "cr12payer.$$@example.com" "$(curl -s $API/admin/payments/$RCP4/receipt -H "Authorization: Bearer $ADMIN" | jsq "j['defaultTo']")"
+
+  # row 5: unknown payment 404
+  check "CR12-05 unknown payment 404"    "404" "$(code $API/admin/payments/999999/receipt -H "Authorization: Bearer $ADMIN")"
+
+  # row 8 (GET half): a household with no member email yields no default
+  JPOST $API/admin/people "{\"givenName\":\"Nemo\",\"familyName\":\"$RC\"}" >/dev/null; RCNOEM=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RC NoMail\",\"primaryContactPersonId\":$RCNOEM}" >/dev/null; RCHH8=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$RCHH8,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; RCMEM8=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":100,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RCMEM8,\"amountCents\":100}]}" >/dev/null; RCP8=$(body | jsq "j['id']")
+  check "CR12-08 GET no default null"    "None" "$(curl -s $API/admin/payments/$RCP8/receipt -H "Authorization: Bearer $ADMIN" | jsq "j['defaultTo']")"
+
+  # rows 6/7/8-POST vs 10: the mail path depends on the server's SMTP config
+  MAIL_ON=$(curl -s $API/admin/email/templates -H "Authorization: Bearer $ADMIN" | jsq "j['mailEnabled']")
+  if [ "$MAIL_ON" = "True" ]; then
+    # row 8 (POST half): no default and no `to` → 400 (never a silent no-op)
+    check "CR12-08b POST no address 400" "400" "$(code -X POST $API/admin/payments/$RCP8/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}')"
+    # row 6: no body → default address; 202 and sentTo echoes the default
+    check "CR12-06 POST default 202"     "202" "$(code -X POST $API/admin/payments/$RCP/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}')"
+    check "CR12-06b sentTo is default"   "cr12payer.$$@example.com" "$(body | jsq "j['sentTo']")"
+    if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
+      MBODY=$(mailpit_text "cr12payer.$$@example.com")
+      RTEXT2=$(curl -s $API/admin/payments/$RCP/receipt -H "Authorization: Bearer $ADMIN" | jsq "j['text']")
+      # SMTP canonicalises the text body to CRLF; strip \r before comparing content
+      check "CR12-06c mail body == receipt text" "true" "$(python3 -c "import sys;n=lambda s:s.replace(chr(13),'').strip();print(str(n(sys.argv[1])==n(sys.argv[2])).lower())" "${MBODY:-x}" "${RTEXT2:-y}")"
+      # row 7: an explicit {to} overrides the default
+      code -X POST $API/admin/payments/$RCP/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"to\":\"cr12over.$$@example.com\"}" >/dev/null
+      check "CR12-07 override delivered" "1" "$(mailpit_count "cr12over.$$@example.com")"
+    else
+      echo "SKIP CR12-06c/07 mail-content rows (Mailpit not reachable at $MAILPIT)"
+    fi
+  else
+    # row 10: the flip side — no SMTP means an explicit 503, never a silent no-op
+    check "CR12-10 POST mail unconfigured 503" "503" "$(code -X POST $API/admin/payments/$RCP/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}')"
+  fi
+
+  # row 9: a reversal renders as a refund record with negative amounts. LAST in
+  # this block — it demotes RCMEM below its fee, so run it after every P receipt
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":-5000,\"method\":\"BANK_TRANSFER\",\"notes\":\"reversal of #$RCP\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RCMEM,\"amountCents\":-4500},{\"type\":\"DONATION\",\"amountCents\":-500}]}" >/dev/null; RCN=$(body | jsq "j['id']")
+  NGET=$(curl -s $API/admin/payments/$RCN/receipt -H "Authorization: Bearer $ADMIN")
+  NTEXT=$(echo "$NGET" | jsq "j['text']")
+  check "CR12-09 refund flag true"       "True" "$(echo "$NGET" | jsq "j['refund']")"
+  check "CR12-09b refund heading"        "true" "$(python3 -c "import sys;print(str('Refund record #$RCN' in sys.argv[1]).lower())" "$NTEXT")"
+  check "CR12-09c negative total"        "true" "$(python3 -c "import sys;print(str('Total: -\$50.00' in sys.argv[1]).lower())" "$NTEXT")"
+  check "CR12-09d membership line -4500" "-4500" "$(echo "$NGET" | jsq "j['lines'][0]['amountCents']")"
+else
+  echo "note: psql not found — skipping CR-012 receipt cases (fixtures need psql)"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.js)"

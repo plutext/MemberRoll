@@ -84,3 +84,9 @@ button.badge:disabled { opacity: .5; cursor: not-allowed; }
     background: var(--pico-card-sectioning-background-color); padding: .8rem; border-radius: var(--pico-border-radius); }
 /* an inherited (household/default) preference reads muted; a real override is full-strength */
 select.muted { opacity: .55; }
+
+/* receipt (CR-012): the rendered payment receipt shown in its dialog, monospace
+   so amounts line up — the print window builds the same text bare, no chrome */
+.receipt { white-space: pre-wrap; word-break: break-word; font-family: var(--pico-font-family-monospace, monospace);
+    font-size: .85rem; background: var(--pico-card-sectioning-background-color);
+    padding: .8rem; border-radius: var(--pico-border-radius); }

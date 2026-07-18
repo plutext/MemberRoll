@@ -233,6 +233,23 @@
                 </footer>
             </article>
         </dialog>
+
+        <!-- CR-012: rendered receipt for one payment; Print opens a bare window,
+             Email sends it (to prefilled with the resolved default address) -->
+        <dialog id="receiptDialog">
+            <article>
+                <header><h3 id="rcTitle">Receipt</h3></header>
+                <pre id="rcText" class="receipt"></pre>
+                <label>Email to <input id="rcTo" type="email" placeholder="address@example.com"></label>
+                <div id="rcMailHint" class="muted" hidden>Email is not configured on this
+                    server — use Print instead.</div>
+                <footer>
+                    <button id="rcPrint" type="button" class="secondary">Print</button>
+                    <button id="rcEmail" type="button">Email</button>
+                    <button id="rcClose" type="button" class="secondary">Close</button>
+                </footer>
+            </article>
+        </dialog>
     </dialog>
 </section>
 </main>

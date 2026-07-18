@@ -870,11 +870,72 @@ function renderMembershipPayments(m) {
         row.insertCell().textContent =
             p.allocations.map(a => `${a.type} ${dollars(a.amountCents)}`).join(", ");
         row.insertCell().textContent = p.recordedBy;
+        const actions = row.insertCell();
+        const receipt = document.createElement("button");
+        receipt.textContent = "Receipt…";
+        receipt.className = "secondary";
+        receipt.style.marginRight = ".4rem";
+        receipt.onclick = () => openReceipt(p.id);
+        actions.appendChild(receipt);
         const reverse = document.createElement("button");
         reverse.textContent = "Reverse";
         reverse.onclick = () => reversePayment(m.id, p);
-        row.insertCell().appendChild(reverse);
+        actions.appendChild(reverse);
     }
+}
+
+// ---- receipts (CR-012) ------------------------------------------------------
+
+let receiptPaymentId = null;
+let receiptText = "";
+
+// render one payment's receipt (from the recorded row) and offer Print / Email
+async function openReceipt(paymentId) {
+    const response = await registerCall(`/admin/payments/${paymentId}/receipt`);
+    if (!response) return;
+    const r = await response.json();
+    receiptPaymentId = paymentId;
+    receiptText = r.text;
+    document.getElementById("rcTitle").textContent =
+        (r.refund ? "Refund record #" : "Receipt #") + paymentId;
+    document.getElementById("rcText").textContent = r.text;
+    document.getElementById("rcTo").value = r.defaultTo || "";
+    // mirror the CR-005 mail banner: disable Email upfront when SMTP is unset
+    document.getElementById("rcEmail").disabled = !r.mailEnabled;
+    document.getElementById("rcMailHint").hidden = !!r.mailEnabled;
+    openDialog("receiptDialog");
+}
+
+// print: a bare new window holding just the receipt text (no app chrome), then
+// the browser's own print dialog — textContent, never innerHTML, so nothing the
+// receipt text contains can be interpreted as markup
+function printReceipt() {
+    const w = window.open("", "_blank");
+    if (!w) {
+        say("Pop-up blocked — allow pop-ups for this site to print the receipt.", true);
+        return;
+    }
+    w.document.title = document.getElementById("rcTitle").textContent;
+    const pre = w.document.createElement("pre");
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.fontFamily = "monospace";
+    pre.style.fontSize = "13px";
+    pre.textContent = receiptText;
+    w.document.body.appendChild(pre);
+    w.document.close();
+    w.focus();
+    w.print();
+}
+
+async function emailReceipt() {
+    const to = document.getElementById("rcTo").value.trim();
+    const response = await registerCall(`/admin/payments/${receiptPaymentId}/receipt`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(to ? {to} : {}),
+    });
+    if (!response) return; // registerCall surfaces a 400 (no address) / 503 (no mail)
+    const result = await response.json();
+    say(`Receipt #${receiptPaymentId} emailed to ${result.sentTo}.`);
 }
 
 async function reversePayment(membershipId, p) {
@@ -1146,6 +1207,9 @@ function wireRenewals() {
     on("paySave", submitPayment);
     on("payCancel", () => closeDialog("paymentForm"));
     on("mdClose", () => closeDialog("membershipDetail"));
+    on("rcPrint", printReceipt);
+    on("rcEmail", emailReceipt);
+    on("rcClose", () => closeDialog("receiptDialog"));
     on("hmCreate", createHouseholdMembership);
     document.getElementById("renewalsSection").hidden = false;
 }

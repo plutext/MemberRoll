@@ -159,8 +159,9 @@ public class StripeWebhookResource {
         String notes = notesText.toString();
         if (allocations.isEmpty()) throw new UnprocessableEvent("event allocates no money");
 
+        long paymentId;
         try {
-            jdbi.useTransaction(handle -> {
+            paymentId = jdbi.inTransaction(handle -> {
                 if (!memberships.exists(handle, membershipId)) {
                     throw new UnprocessableEvent("no such membership #" + membershipId);
                 }
@@ -170,6 +171,7 @@ public class StripeWebhookResource {
                     memberships.recompute(handle, touched, receivedDate);
                 }
                 if (tokenId != null) RenewalTokenStore.markUsed(handle, tokenId);
+                return inserted.paymentId();
             });
         } catch (RuntimeException e) {
             if (e instanceof UnprocessableEvent u) throw u;
@@ -181,38 +183,29 @@ public class StripeWebhookResource {
             throw e; // a real failure (e.g. database down) — non-2xx, Stripe retries
         }
 
-        sendReceipt(session, membershipId, membershipCents, journalCents, donationCents, amountTotal);
+        sendReceipt(session, paymentId);
         return ok("recorded");
     }
 
-    private void sendReceipt(JsonObject session, long membershipId,
-                             int membershipCents, int journalCents, int donationCents, int amountTotal) {
+    /**
+     * The receipt rides after the commit, best-effort (its failure never fails
+     * the webhook). Composed by the shared CR-012 renderer from the RECORDED
+     * payment — only the recipient is Stripe-specific (the Checkout email the
+     * payer typed, which the register never holds for an online payment).
+     */
+    private void sendReceipt(JsonObject session, long paymentId) {
         try {
             JsonObject customer = session.getJsonObject("customer_details");
             String email = customer == null ? null : customer.getString("email", null);
             if (email == null) return;
-            MembershipStore.Detail d = memberships.get(membershipId).orElse(null);
-            if (d == null) return;
-            StringBuilder text = new StringBuilder("Thank you — we've received your payment.\n\n");
-            if (membershipCents > 0) {
-                text.append("Membership ").append(d.periodName()).append(" (").append(d.typeName())
-                        .append("): ").append(PayResource.dollars(membershipCents)).append('\n');
-            }
-            if (journalCents > 0) text.append("Journal add-on: ")
-                    .append(PayResource.dollars(journalCents)).append('\n');
-            if (donationCents > 0) text.append("Donation: ")
-                    .append(PayResource.dollars(donationCents)).append('\n');
-            text.append("Total: ").append(PayResource.dollars(amountTotal)).append("\n\n");
-            if ("ACTIVE".equals(d.status())) {
-                text.append("Your membership is now active — you are financial for ")
-                        .append(d.periodName()).append(".\n");
-            }
-            text.append('\n').append(Mail.societyName()).append('\n');
+            Receipts.Receipt receipt = jdbi.withHandle(handle ->
+                    PaymentStore.find(handle, paymentId).map(p -> Receipts.render(handle, p)).orElse(null));
+            if (receipt == null) return;
             // async: SMTP must not delay the 200 past Stripe's webhook timeout
-            Mail.sendAsync(email, Mail.societyName() + " — payment receipt", text.toString());
+            Mail.sendAsync(email, Receipts.subject(receipt), receipt.text());
         } catch (Exception e) {
             // the payment is recorded; the receipt is best-effort
-            LOG.log(Level.WARNING, "receipt email failed for membership #" + membershipId, e);
+            LOG.log(Level.WARNING, "receipt email failed for payment #" + paymentId, e);
         }
     }
 

@@ -27,6 +27,7 @@ import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.Context;
@@ -143,6 +144,61 @@ public class AdminPaymentsResource {
                 .add("payments", rows).add("total", page.total()).build().toString()).build();
     }
 
+    // ---- receipts (CR-012) --------------------------------------------------
+
+    /**
+     * The composed receipt as JSON (header/line/total fields, the canonical
+     * {@code text}, and {@code defaultTo}). Renders from the recorded payment,
+     * so it is the same document the email and print paths produce. 404 for an
+     * unknown payment. Stateless — nothing is written, re-fetch re-composes.
+     */
+    @GET
+    @Path("{id}/receipt")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response receipt(@PathParam("id") long id) {
+        return jdbi.withHandle(handle -> {
+            PaymentStore.Payment p = PaymentStore.find(handle, id).orElse(null);
+            if (p == null) return notFound("no such payment #" + id);
+            Receipts.Receipt receipt = Receipts.render(handle, p);
+            String defaultTo = Receipts.defaultRecipient(handle, p).orElse(null);
+            return Response.ok(Receipts.toJson(receipt, defaultTo).toString()).build();
+        });
+    }
+
+    /**
+     * Email the receipt. Body {@code {to?}}; absent {@code to} uses the default
+     * address, or 400 when there is none. 503 when mail is not configured (an
+     * explicit refusal mirroring checkout's, never a silent no-op). 404 for an
+     * unknown payment. Stateless — re-sending re-composes and writes nothing.
+     */
+    @POST
+    @Path("{id}/receipt")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response emailReceipt(@PathParam("id") long id, String body) {
+        JsonObject request = body == null || body.isBlank()
+                ? JsonValue.EMPTY_JSON_OBJECT : Payloads.read(body);
+        if (request == null) return badRequest("body must be a JSON object");
+        String to = Payloads.optString(request, "to");
+        return jdbi.withHandle(handle -> {
+            PaymentStore.Payment p = PaymentStore.find(handle, id).orElse(null);
+            if (p == null) return notFound("no such payment #" + id);
+            if (!Mail.enabled()) {
+                return serviceUnavailable("email is not configured on this server"
+                        + " — print the receipt or configure SMTP");
+            }
+            Receipts.Receipt receipt = Receipts.render(handle, p);
+            String recipient = to != null ? to : Receipts.defaultRecipient(handle, p).orElse(null);
+            if (recipient == null) {
+                return badRequest("no email on file for this payment — supply \"to\"");
+            }
+            // async: SMTP must never hold a Tomcat thread past the response
+            Mail.sendAsync(recipient, Receipts.subject(receipt), receipt.text());
+            return Response.accepted(Json.createObjectBuilder()
+                    .add("sentTo", recipient).build().toString()).build();
+        });
+    }
+
     // ---- helpers ------------------------------------------------------------
 
     private List<PaymentStore.AllocationInput> parseAllocations(JsonObject request) {
@@ -191,6 +247,16 @@ public class AdminPaymentsResource {
 
     private static Response conflict(String message) {
         return Response.status(Response.Status.CONFLICT)
+                .entity(Json.createObjectBuilder().add("error", message).build().toString()).build();
+    }
+
+    private static Response notFound(String message) {
+        return Response.status(Response.Status.NOT_FOUND)
+                .entity(Json.createObjectBuilder().add("error", message).build().toString()).build();
+    }
+
+    private static Response serviceUnavailable(String message) {
+        return Response.status(Response.Status.SERVICE_UNAVAILABLE)
                 .entity(Json.createObjectBuilder().add("error", message).build().toString()).build();
     }
 }

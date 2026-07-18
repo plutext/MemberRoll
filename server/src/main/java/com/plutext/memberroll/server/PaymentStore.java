@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Payments and their allocations (CR-003). Insert-only bookkeeping: there is
@@ -148,6 +149,24 @@ final class PaymentStore {
     /** Payments that touch a given membership (for its detail view and the Reverse button). */
     List<Payment> listForMembership(long membershipId) {
         return list(membershipId, null, null, Integer.MAX_VALUE, 0).payments();
+    }
+
+    /** One payment by id, allocations nested — the receipt renderer's source row (CR-012). */
+    static Optional<Payment> find(Handle handle, long id) {
+        Optional<Payment> base = handle.createQuery(
+                "SELECT p.payment_id, p.received_date, p.amount_cents, p.payment_method,"
+                + " p.payer_person_id, p.bank_reference, p.recorded_by, p.recorded_at, p.notes"
+                + " FROM payment p WHERE p.payment_id = :id")
+                .bind("id", id)
+                .map((rs, ctx) -> new Payment(rs.getLong("payment_id"),
+                        rs.getDate("received_date").toLocalDate(),
+                        rs.getInt("amount_cents"), rs.getString("payment_method"),
+                        (Long) rs.getObject("payer_person_id"), rs.getString("bank_reference"),
+                        rs.getString("recorded_by"),
+                        rs.getTimestamp("recorded_at").toInstant().toString(),
+                        rs.getString("notes"), new ArrayList<>()))
+                .findOne();
+        return base.map(p -> attachAllocations(handle, List.of(p)).get(0));
     }
 
     private static void bindFilters(org.jdbi.v3.core.statement.Query q,
