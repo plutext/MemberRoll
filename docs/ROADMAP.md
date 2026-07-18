@@ -90,10 +90,11 @@ data too) → **Committed**.
 | 004 | Stripe | Verified · committed | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
 | 005 | Segment email | Verified · committed | Templates, merge fields, segment sends with embedded magic links, send log; communication preferences: admin preferences UI (default EMAIL, manual POST exceptions) and sends honouring it |
 | 006 | Member self-serve | Implemented (2026-07-18, verified) | Keycloak-linked "my membership" page, pay from there; register-push account provisioning; retired the NotesResource placeholder |
-| 007 | Public application form | Planned | New-member APPLIED workflow with admin approval |
+| 007 | Public application form | Planned (pre-proposal notes 2026-07-18) | New-member APPLIED workflow with committee approval — constitutional constraints (clause 3: committee decision, 28-day payment window, no money at application) recorded in the CR doc ahead of the proposal; entrance-fee question deferred |
 | 008 | Production hardening | Planned | Prod DB provisioning, Stripe live keys, SPF/DKIM/from-address, backup coverage, deploy docs |
 | 009 | UI polish (out-of-band) | Verified · committed | Pico CSS baseline across all static pages, dialog-based forms, person picker, status badges — orthogonal to the sequence. Implementation order decided 2026-07-18: 009 lands before 004, so the public pay page starts on the new baseline |
 | 010 | Admin "new member" page (out-of-band) | Verified · committed | One-flow walk-in signup: person → household (person as primary contact) → membership type → second-person dialog for HOUSEHOLD; composite atomic endpoint; first consumer of membership_type min/max people. After 009; independent of 004 |
+| 011 | Constitutional register compliance (out-of-band) | Proposed | Gaps from the 2026-07-18 constitution review, one stage each: register-of-members export (clause 4), clause 4(5) suppression flag, under-18 AGM exclusion (clause 34), documented manual suspension procedure (clause 7). Independent of 007/008 |
 
 Ordering principle: admin value first — after CR-003 the app already
 replaces the spreadsheet-and-bank-statement process with zero
@@ -107,7 +108,19 @@ more effective carrying a pay-now link.
 - Exact membership-year boundaries and renewal-open date (the site
   implies a 1 July rule and lists "2025/2026" fees; confirm the period
   start/end and the current year's prices with the society).
+  *Partially answered by the constitution (read 2026-07-18): the
+  financial year is 1 September – 31 August (clauses 5(2)(a), 44), and
+  the "1 July rule" is clause 5(2)(c)'s discretionary last-2-months
+  rule — prices still to confirm.*
 - Whether the society passes the Stripe fee on to the payer.
+- **Entrance fee — DEFERRED (2026-07-18).** Constitution clause 5(1)
+  prescribes a $20 entrance fee for approved applicants ("or another
+  amount determined by the committee") on top of the annual
+  subscription. Unknown whether one currently applies; if it does,
+  CR-007's approval flow must bill entrance + subscription and the
+  payment model needs a shape for it. Deferred until the society
+  confirms — recorded as an outstanding issue in
+  [CR-007](change-requests/007-public-application-form.md).
 
 Answered 2026-07-18: the Keycloak↔Person linking rule and the fate of
 the self-claimed `member` role — see the decision above and CR-006
