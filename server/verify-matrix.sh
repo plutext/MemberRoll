@@ -1183,6 +1183,103 @@ else
   echo "note: psql not found — skipping CR-012 receipt cases (fixtures need psql)"
 fi
 
+# --- committee register (CR-013) --------------------------------------------
+# Person-only fixtures (Com$$), so this block runs without psql — only the
+# singular-office index check (row 13) needs it. The AGM roll closes ALL open
+# appointments before inserting the slate, so each run supersedes any prior
+# committee and re-runs converge. B carries a primary email for the CR-007
+# contacts seam (row 14).
+CM="Com$$"
+AGM1=2026-08-01
+AGM2=2027-08-01
+# the committee is a global singleton (its AGM close-all touches every open
+# appointment, not just this run's), so clear any prior run's rows first — the
+# honest fixture for a singleton register. Uses the API, no psql needed.
+for aid in $(curl -s "$API/admin/committee?includeEnded=true" -H "Authorization: Bearer $ADMIN" | jsq "' '.join(str(a['id']) for a in j['committee'])"); do
+  code -X DELETE "$API/admin/committee/appointments/$aid" -H "Authorization: Bearer $ADMIN" >/dev/null
+done
+JPOST $API/admin/people "{\"givenName\":\"Alan\",\"familyName\":\"$CM\"}" >/dev/null; CA=$(body | jsq "j['id']")
+JPOST $API/admin/people "{\"givenName\":\"Bea\",\"familyName\":\"$CM\",\"emails\":[{\"email\":\"sec.$$@example.com\",\"isPrimary\":true}]}" >/dev/null; CB=$(body | jsq "j['id']")
+JPOST $API/admin/people "{\"givenName\":\"Cy\",\"familyName\":\"$CM\"}" >/dev/null; CC=$(body | jsq "j['id']")
+JPOST $API/admin/people "{\"givenName\":\"Di\",\"familyName\":\"$CM\"}" >/dev/null; CD=$(body | jsq "j['id']")
+JPOST $API/admin/people "{\"givenName\":\"Ed\",\"familyName\":\"$CM\"}" >/dev/null; CE=$(body | jsq "j['id']")
+
+# row 1: current-committee GET role gate (guest/user 403, noaud 401)
+check "CR13-01 committee guest 403"    "403" "$(code $API/admin/committee)"
+check "CR13-01b committee user 403"    "403" "$(code $API/admin/committee -H "Authorization: Bearer $USER")"
+check "CR13-01c committee noaud 401"   "401" "$(code $API/admin/committee -H "Authorization: Bearer $NOAUD")"
+check "CR13-01d contacts guest 403"    "403" "$(code $API/admin/committee/contacts)"
+# row 2: AGM roll role gate
+check "CR13-02 agm guest 403"          "403" "$(code -X POST $API/admin/committee/agm)"
+check "CR13-02b agm user 403"          "403" "$(code -X POST $API/admin/committee/agm -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
+
+# row 3: the AGM roll — A president, B secretary, C+D ordinary
+check "CR13-03 agm roll 201"           "201" "$(JPOST $API/admin/committee/agm "{\"agmDate\":\"$AGM1\",\"minuteRef\":\"AGM $$ item 5\",\"appointments\":[{\"personId\":$CA,\"office\":\"PRESIDENT\"},{\"personId\":$CB,\"office\":\"SECRETARY\"},{\"personId\":$CC,\"office\":\"ORDINARY\"},{\"personId\":$CD,\"office\":\"ORDINARY\"}]}")"
+check "CR13-03b committee has 4"       "4" "$(body | jsq "len(j['committee'])")"
+check "CR13-03c ordered pres first"    "PRESIDENT" "$(body | jsq "j['committee'][0]['office']")"
+check "CR13-03d then secretary"        "SECRETARY" "$(body | jsq "j['committee'][1]['office']")"
+check "CR13-03e then ordinary"         "ORDINARY" "$(body | jsq "j['committee'][2]['office']")"
+
+# row 4: GET current — A president, since = AGM date, ended null
+CGET=$(curl -s "$API/admin/committee" -H "Authorization: Bearer $ADMIN")
+check "CR13-04 A office PRESIDENT"     "PRESIDENT" "$(echo "$CGET" | jsq "next(a['office'] for a in j['committee'] if a['personId']==$CA)")"
+check "CR13-04b A since AGM date"      "$AGM1" "$(echo "$CGET" | jsq "next(a['startedDate'] for a in j['committee'] if a['personId']==$CA)")"
+check "CR13-04c A ended null"          "None" "$(echo "$CGET" | jsq "next(a['endedDate'] for a in j['committee'] if a['personId']==$CA)")"
+
+# row 5: two presidents → 400, nothing written (prior committee intact)
+check "CR13-05 two presidents 400"     "400" "$(JPOST $API/admin/committee/agm "{\"agmDate\":\"$AGM1\",\"appointments\":[{\"personId\":$CA,\"office\":\"PRESIDENT\"},{\"personId\":$CB,\"office\":\"PRESIDENT\"}]}")"
+check "CR13-05b A still president"     "PRESIDENT" "$(curl -s "$API/admin/committee" -H "Authorization: Bearer $ADMIN" | jsq "next(a['office'] for a in j['committee'] if a['personId']==$CA)")"
+
+# row 6: one person given both president and vice-president → 400
+check "CR13-06 pres+vicepres 400"      "400" "$(JPOST $API/admin/committee/agm "{\"agmDate\":\"$AGM1\",\"appointments\":[{\"personId\":$CA,\"office\":\"PRESIDENT\"},{\"personId\":$CA,\"office\":\"VICE_PRESIDENT\"}]}")"
+
+# row 7: a second AGM — A vice-president, B secretary again, C president. Prior
+# terms carry ended_date = AGM2; A now spans two terms in the history.
+check "CR13-07 second agm 201"         "201" "$(JPOST $API/admin/committee/agm "{\"agmDate\":\"$AGM2\",\"appointments\":[{\"personId\":$CC,\"office\":\"PRESIDENT\"},{\"personId\":$CA,\"office\":\"VICE_PRESIDENT\"},{\"personId\":$CB,\"office\":\"SECRETARY\"}]}")"
+check "CR13-07b current now 3"         "3" "$(body | jsq "len(j['committee'])")"
+HALL=$(curl -s "$API/admin/committee?includeEnded=true" -H "Authorization: Bearer $ADMIN")
+check "CR13-07c A prior term ended"    "$AGM2" "$(echo "$HALL" | jsq "next(a['endedDate'] for a in j['committee'] if a['personId']==$CA and a['office']=='PRESIDENT')")"
+check "CR13-07d A has two terms"       "2" "$(echo "$HALL" | jsq "sum(1 for a in j['committee'] if a['personId']==$CA)")"
+
+# row 8: casual vacancy — A gets treasurer while vice-president (cl. 14(2): two offices)
+check "CR13-08 second office 201"      "201" "$(JPOST $API/admin/committee/appointments "{\"personId\":$CA,\"office\":\"TREASURER\",\"startedDate\":\"2027-09-01\"}")"
+CAT=$(body | jsq "j['appointment']['id']")
+check "CR13-08b A holds 2 current"     "2" "$(curl -s "$API/admin/committee" -H "Authorization: Bearer $ADMIN" | jsq "sum(1 for a in j['committee'] if a['personId']==$CA)")"
+
+# row 9: a second secretary (B already secretary) → 409 (singular office taken)
+check "CR13-09 second secretary 409"   "409" "$(JPOST $API/admin/committee/appointments "{\"personId\":$CD,\"office\":\"SECRETARY\",\"startedDate\":\"2027-09-01\"}")"
+
+# row 10: resignation — PUT endedDate closes the treasurer term
+check "CR13-10 end term 200"           "200" "$(JPUT $API/admin/committee/appointments/$CAT "{\"endedDate\":\"2027-10-01\"}")"
+check "CR13-10b treasurer gone current" "0" "$(curl -s "$API/admin/committee" -H "Authorization: Bearer $ADMIN" | jsq "sum(1 for a in j['committee'] if a['id']==$CAT)")"
+check "CR13-10c treasurer in history"  "2027-10-01" "$(curl -s "$API/admin/committee?includeEnded=true" -H "Authorization: Bearer $ADMIN" | jsq "next(a['endedDate'] for a in j['committee'] if a['id']==$CAT)")"
+
+# row 11: a non-member appointee → 201 with a warnings entry (soft guard, not blocked)
+check "CR13-11 non-member appt 201"    "201" "$(JPOST $API/admin/committee/appointments "{\"personId\":$CE,\"office\":\"ORDINARY\",\"startedDate\":\"2027-09-01\"}")"
+check "CR13-11b warns not a member"    "true" "$(body | jsq "str(len(j['warnings'])>0).lower()")"
+CET=$(body | jsq "j['appointment']['id']")
+
+# row 12: DELETE a mistaken row → gone from current and history; unknown → 404
+check "CR13-12 delete appt 200"        "200" "$(code -X DELETE $API/admin/committee/appointments/$CET -H "Authorization: Bearer $ADMIN")"
+check "CR13-12b gone from history"     "0" "$(curl -s "$API/admin/committee?includeEnded=true" -H "Authorization: Bearer $ADMIN" | jsq "sum(1 for a in j['committee'] if a['id']==$CET)")"
+check "CR13-12c delete unknown 404"    "404" "$(code -X DELETE $API/admin/committee/appointments/999999 -H "Authorization: Bearer $ADMIN")"
+check "CR13-12d put unknown 404"       "404" "$(JPUT $API/admin/committee/appointments/999999 "{\"endedDate\":\"2027-10-01\"}")"
+
+# row 13: the singular-office partial unique index (psql)
+if [ "$PSQL_OK" = 1 ]; then
+  check "CR13-13 singular index present" "1" "$(psqlq "SELECT count(*) FROM pg_indexes WHERE indexname='committee_appointment_singular_office'")"
+  # C is the current president (row 7); a hand-inserted second open president is
+  # rejected by the index
+  check "CR13-13b second open president rejected" "yes" "$(PGPASSWORD=memberroll psql -h localhost -p "${POSTGRES_PORT:-5433}" -U memberroll -d memberroll -tAc "INSERT INTO committee_appointment (person_id, office, started_date, recorded_by) VALUES ($CD,'PRESIDENT',current_date,'psql-test')" 2>&1 | grep -q 'duplicate key' && echo yes || echo no)"
+else
+  echo "note: psql not found — skipping CR13-13 (singular-office index check)"
+fi
+
+# row 14: the CR-007 contacts seam — current secretary (B) primary email
+CT=$(curl -s "$API/admin/committee/contacts" -H "Authorization: Bearer $ADMIN")
+check "CR13-14 secretary email = B"    "sec.$$@example.com" "$(echo "$CT" | jsq "j['secretary']['email']")"
+check "CR13-14b members carry offices" "true" "$(echo "$CT" | jsq "str(any(m['office']=='SECRETARY' for m in j['members'])).lower()")"
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.js)"
@@ -1194,6 +1291,7 @@ check "33c admin import page 200"      "200" "$(code http://localhost:${PORT:-18
 check "33d admin css served"           "200" "$(code http://localhost:${PORT:-18080}/server/admin/admin.css)"
 check "33e admin new-member page 200"  "200" "$(code http://localhost:${PORT:-18080}/server/admin/new-member.html)"
 check "33f admin email page 200"        "200" "$(code http://localhost:${PORT:-18080}/server/admin/email.html)"
+check "33g admin committee page 200"    "200" "$(code http://localhost:${PORT:-18080}/server/admin/committee.html)"
 check "34 auth.js served"              "200" "$(code http://localhost:${PORT:-18080}/server/shared/auth.js)"
 
 echo

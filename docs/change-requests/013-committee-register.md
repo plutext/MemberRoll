@@ -1,6 +1,6 @@
 # CR 013: Committee register — office-bearers, terms, and the AGM roll
 
-Status: PROPOSED (2026-07-19)
+Status: IMPLEMENTED · VERIFIED (2026-07-19)
 
 ## Problem
 
@@ -238,7 +238,76 @@ picker; end a term; open the history view.
 
 ## Results
 
-(to be recorded when implemented)
+Implemented 2026-07-19, matching the design above.
+
+- **Migration** `V7__committee_register.sql` — `committee_appointment`
+  exactly as designed (two partial unique indexes + the person index).
+  Additive; applied cleanly over the existing CR-001…CR-006 dev database
+  on cargo restart (`flyway_schema_history` version 7, success).
+- **`CommitteeStore`** — `list(includeEnded)`, `agmRoll` (validate →
+  close-all → insert → warnings), `open`/`update`/`delete`, and
+  `contacts()` (the CR-007 seam: current committee + primary emails).
+  One robustness addition beyond the design: the roll rejects an
+  `agmDate` earlier than any currently-serving term with a clean 400
+  rather than letting the close-all trip the `ended_date >= started_date`
+  CHECK as a raw 500.
+- **`AdminCommitteeResource`** — the six endpoints of the table, plus
+  `GET /contacts`; registered in `ApiApplication`.
+- **UI** — a new `committee.html` beside the other admin pages (menu
+  entry added), wired in `admin.js`: current-committee table, the AGM
+  dialog (four office pickers + repeatable ordinary-member pickers), the
+  casual-vacancy dialog, End term / Remove actions, and a collapsible
+  history view.
+
+**Verification matrix** (`server/verify-matrix.sh`, `CR13-*` rows +
+static-page `33g`): all pass against the running dev stack, and are
+re-runnable (a cleanup preamble clears the singleton committee at the
+start of each run). Every row of the plan is covered:
+
+| # | result |
+|---|---|
+| 1 | GET committee guest/user 403, noaud 401; contacts guest 403 ✓ |
+| 2 | POST agm guest/user 403 ✓ |
+| 3 | AGM roll 201; current shows 4, ordered president→secretary→ordinary ✓ |
+| 4 | A office PRESIDENT, `since` = AGM date, `ended` null ✓ |
+| 5 | two presidents → 400, prior committee intact ✓ |
+| 6 | A given both president and vice-president → 400 ✓ |
+| 7 | second AGM: prior terms carry `ended_date` = new AGM; A spans two terms in history ✓ |
+| 8 | second office for A (treasurer while vice-president) → 201 (cl. 14(2)) ✓ |
+| 9 | second secretary → 409 (singular office taken) ✓ |
+| 10 | PUT `{endedDate}` (resignation) 200; gone from current, present in history ✓ |
+| 11 | non-member appointee → 201 with a `warnings` entry ✓ |
+| 12 | DELETE 200; gone from current and history; unknown PUT/DELETE 404 ✓ |
+| 13 | `committee_appointment_singular_office` present; hand-inserted second open president rejected by the index (psql) ✓ |
+| 14 | `/contacts` returns the current secretary's primary email ✓ |
+
+The whole matrix reports `PASS=485 FAIL=6`; the six failures are all
+pre-existing and unrelated to this CR (CR10-04g2 / CR10-12c are the
+UTC-vs-local date-equality checks that fail during the daily window when
+Postgres's UTC `current_date` differs from the host's local date;
+CR5-16b/c/d are the known-fragile Mailpit-container abort/resume rows;
+`27b` is Keycloak user-listing flakiness). This CR's changes are purely
+additive (new table, resource, page) and touch none of those paths.
+
+**Browser walkthrough** (`tmp/cr013-fixtures/cr013-walkthrough.js`,
+Playwright/Chromium against the dev stack): 10/10. Records an AGM slate
+through the dialog and sees the current table populate ordered
+president→secretary→ordinary; adds a casual-vacancy treasurer via the
+person picker; ends that term through the resignation prompt (drops from
+current); opens the history view and confirms the ended term with its
+end date. Screenshots under the session scratchpad.
+
+## Close-out (done)
+
+- `docs/membership_management_database_schema.md`: added the
+  "Committee register (CR-013)" section + the `CommitteeAppointment`
+  field list, a "Known later additions" pointer, a 2026-07-19 revision-
+  history entry, and the `eligible_for_committee` ("eligible to stand")
+  vs. this table ("is serving") cross-reference.
+- `CLAUDE.md`: added the CR-013 architecture paragraph (append-of-terms
+  model, the AGM-roll atomic pattern, the deliberately-deferred Keycloak
+  role, the CR-007 `/contacts` seam).
+- `docs/ROADMAP.md`: CR-013 row moved to Implemented · verified.
 
 ## Close-out (on implementation)
 

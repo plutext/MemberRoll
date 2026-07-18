@@ -276,6 +276,58 @@ benefits, but does not vote, hold statutory-member status, or stand for
 committee — `insertMembershipPerson` sets those three flags true only
 for MEMBER.
 
+`MembershipPerson.eligible_for_committee` marks whether a statutory
+member is *eligible to stand* for committee. Whether they are actually
+*serving* on the committee — and in which office, over which term — is a
+separate fact recorded in `CommitteeAppointment` below.
+
+## Committee register (CR-013)
+
+The society's committee (constitution cl. 14–19) is a statutory record
+the app must keep. A committee position is a **term-bounded appointment
+of a person to an office, AGM to AGM** (cl. 16) — the same
+current-is-null temporal shape as `HouseholdPerson`: a currently-serving
+term has a null `ended_date`, and leaving/returning across years is
+simply more rows, so multi-term history falls out for free.
+
+```text
+CommitteeAppointment
+  committee_appointment_id
+  person_id                -- keyed on person, not membership_person: an
+                           -- appointment spans years and periods
+  office                   -- PRESIDENT | VICE_PRESIDENT | SECRETARY | TREASURER | ORDINARY
+  started_date             -- the AGM (or casual-vacancy date) the term begins
+  ended_date               -- NULL = currently serving; set to the next AGM date
+  elected_date             -- when elected/appointed (usually = started_date)
+  minute_ref               -- optional pointer into the society's minutes
+  notes
+  recorded_by / recorded_at
+```
+
+- **Current committee = `ended_date IS NULL`.** A partial unique index on
+  `(person_id, office)` forbids a duplicate open office for one person; a
+  second partial unique index on `office WHERE office <> 'ORDINARY'`
+  makes the four singular offices single-holder (ordinary seats are
+  unbounded).
+- **Office is a per-term fact** — a person can be treasurer one year and
+  president the next; each term is its own row carrying its own office.
+- **Two offices, one person** (cl. 14(2)) is naturally two open rows;
+  the pres/vice-pres exclusion is an application-layer check (a two-row
+  cross-condition an index cannot express), as is the soft "is a current
+  statutory member" guard (warned, not blocked — the committee, not the
+  app, is the authority on eligibility, like CR-006's one-email-per-
+  household rule).
+- **Corrections are edits, not reversals** (deliberately unlike
+  payments): this is administrative reference data, not a financial
+  ledger, so a mis-typed office is fixed in place and a bogus row
+  removed. There is no "negative appointment"; the term history that
+  matters comes from real started/ended dates.
+- **No Keycloak `committee` role** — committee-ness is a governance fact
+  in Postgres; a role earns its keep only when a surface exists that only
+  committee members may use (there is none yet). If one arrives, the role
+  is *derived* from this register at provision time (the CR-006 pattern),
+  never a second source of truth.
+
 ## Addresses and contact details
 
 Do not store all contact information directly on the membership record. Contact details belong primarily to people and households.
@@ -548,9 +600,10 @@ token hash, membership, expiry, used_at), the email send log (CR-005),
 `person.keycloak_subject` nullable+unique for member self-serve
 (arrived with CR-006 as migration V6; the companion "one email address
 in at most one household" rule is deliberately application-level
-validation in provisioning, not a constraint), and publication tables
-if `PublicationPreference` graduates beyond the JOURNAL allocation
-type.
+validation in provisioning, not a constraint), the committee register
+(`CommitteeAppointment`, CR-013 migration V7 — see "Committee register"
+above), and publication tables if `PublicationPreference` graduates
+beyond the JOURNAL allocation type.
 
 ## Revision history
 
@@ -590,3 +643,10 @@ statutory/voting/committee rights (`MembershipPerson.is_statutory_member`
 OTHER receive membership benefits but do not vote. Item 12 above ("both
 adults vote") was asserted without a recorded rationale and is
 superseded by this entry — see "Formal member status" above.
+
+**2026-07-19** — added `CommitteeAppointment` (CR-013, migration V7):
+office-bearers and ordinary committee members as term-bounded
+appointments (AGM to AGM), the current-is-null idiom of `HouseholdPerson`.
+Cross-references `MembershipPerson.eligible_for_committee` ("eligible to
+stand") against this table's "is serving". No change to existing tables.
+See "Committee register" above.

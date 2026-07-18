@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — committee</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
+
+<section id="committeeSection" hidden>
+    <h2>Committee</h2>
+    <p class="muted">The society's office-bearers and ordinary committee members
+        (constitution cl. 14–17). A committee position is a term-bounded
+        appointment, AGM to AGM: recording an AGM slate ends every current
+        appointment and opens the new ones. Corrections are edits, not reversals —
+        fix a mis-typed office in place, or remove a bogus row.</p>
+    <button id="agmOpen">Record AGM committee…</button>
+    <button id="apptOpen" class="secondary">Add appointment…</button>
+
+    <h3>Current committee</h3>
+    <table id="committee">
+        <thead>
+        <tr><th>Office</th><th>Member</th><th>Since</th><th>Minute</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <div id="committeeEmpty" class="muted" hidden>No current committee — record an AGM slate to begin.</div>
+
+    <h3>History</h3>
+    <p class="muted">Past terms — who held what, from when to when.</p>
+    <button id="historyToggle" class="secondary">Show past terms</button>
+    <table id="committeeHistory" hidden>
+        <thead>
+        <tr><th>Office</th><th>Member</th><th>From</th><th>To</th><th>Minute</th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <!-- casual vacancy / omission: open one appointment -->
+    <dialog id="apptForm">
+        <article>
+            <header><h3>Add committee appointment</h3></header>
+            <p class="muted">A mid-year appointment (a casual vacancy, cl. 17) — it
+                will be closed at the next AGM roll like any other.</p>
+            <label>Office
+                <select id="apptOffice">
+                    <option value="PRESIDENT">President</option>
+                    <option value="VICE_PRESIDENT">Vice-president</option>
+                    <option value="SECRETARY">Secretary</option>
+                    <option value="TREASURER">Treasurer</option>
+                    <option value="ORDINARY" selected>Ordinary member</option>
+                </select></label>
+            <label>Person
+                <input id="apptPerson" type="search" autocomplete="off"
+                       placeholder="search people by name or email"></label>
+            <ul id="apptPersonResults" class="picker-results" hidden></ul>
+            <label>Started date <input id="apptStarted" type="date"></label>
+            <label>Elected date (defaults to started) <input id="apptElected" type="date"></label>
+            <label>Minute reference <input id="apptMinute" placeholder="e.g. committee 2026-03 item 4"></label>
+            <label>Notes <input id="apptNotes"></label>
+            <footer>
+                <button id="apptCancel" type="button" class="secondary">Cancel</button>
+                <button id="apptSave">Add appointment</button>
+            </footer>
+        </article>
+    </dialog>
+
+    <!-- the AGM roll: elected slate → close all + open new, one transaction -->
+    <dialog id="agmForm">
+        <article>
+            <header><h3>Record AGM committee</h3></header>
+            <p class="muted">Enter the elected slate. Each office is optional — an
+                unfilled office is recorded as a gap (with a warning), not blocked.
+                Recording ends every current appointment as at the AGM date.</p>
+            <label>AGM date <input id="agmDate" type="date"></label>
+            <label>Minute reference <input id="agmMinute" placeholder="e.g. AGM 2026 item 5"></label>
+            <label>President
+                <input id="agmPresident" type="search" autocomplete="off"
+                       placeholder="search people by name or email"></label>
+            <ul id="agmPresidentResults" class="picker-results" hidden></ul>
+            <label>Vice-president
+                <input id="agmVicePresident" type="search" autocomplete="off"
+                       placeholder="search people by name or email"></label>
+            <ul id="agmVicePresidentResults" class="picker-results" hidden></ul>
+            <label>Secretary
+                <input id="agmSecretary" type="search" autocomplete="off"
+                       placeholder="search people by name or email"></label>
+            <ul id="agmSecretaryResults" class="picker-results" hidden></ul>
+            <label>Treasurer
+                <input id="agmTreasurer" type="search" autocomplete="off"
+                       placeholder="search people by name or email"></label>
+            <ul id="agmTreasurerResults" class="picker-results" hidden></ul>
+            <h4>Ordinary committee members</h4>
+            <div id="agmOrdinary"></div>
+            <button id="agmAddOrdinary" type="button" class="secondary">Add ordinary member</button>
+            <footer>
+                <button id="agmCancel" type="button" class="secondary">Cancel</button>
+                <button id="agmSave">Record committee</button>
+            </footer>
+        </article>
+    </dialog>
+</section>
+</main>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

@@ -1924,6 +1924,212 @@ function emFillSelects() {
     }
 }
 
+// ---- committee register (CR-013) --------------------------------------------
+
+const OFFICE_LABELS = {
+    PRESIDENT: "President", VICE_PRESIDENT: "Vice-president",
+    SECRETARY: "Secretary", TREASURER: "Treasurer", ORDINARY: "Ordinary member",
+};
+// the four fixed office pickers in the AGM dialog (ordinary members are added
+// dynamically); ids match the <input>/<ul id="{id}Results"> pairs in committee.html
+const AGM_SINGULAR = [
+    ["agmPresident", "PRESIDENT"], ["agmVicePresident", "VICE_PRESIDENT"],
+    ["agmSecretary", "SECRETARY"], ["agmTreasurer", "TREASURER"],
+];
+let agmOrdinalSeq = 0; // unique-id counter for the repeatable ordinary rows
+
+async function renderCommittee() {
+    const response = await registerCall("/admin/committee");
+    if (!response) return;
+    const rows = (await response.json()).committee;
+    const body = document.querySelector("#committee tbody");
+    body.innerHTML = "";
+    for (const a of rows) {
+        const row = body.insertRow();
+        row.insertCell().textContent = OFFICE_LABELS[a.office] || a.office;
+        row.insertCell().textContent = `${a.personName} (#${a.personId})`;
+        row.insertCell().textContent = a.startedDate;
+        row.insertCell().textContent = a.minuteRef || "";
+        const cell = row.insertCell();
+        const end = document.createElement("button");
+        end.textContent = "End term…";
+        end.className = "secondary";
+        end.style.marginRight = ".4rem";
+        end.onclick = () => endTerm(a);
+        cell.appendChild(end);
+        const remove = document.createElement("button");
+        remove.textContent = "Remove";
+        remove.className = "secondary";
+        remove.onclick = () => removeAppointment(a);
+        cell.appendChild(remove);
+    }
+    document.getElementById("committee").hidden = rows.length === 0;
+    document.getElementById("committeeEmpty").hidden = rows.length !== 0;
+}
+
+// resignation / casual vacancy: close one term (PUT sets ended_date)
+async function endTerm(a) {
+    const date = prompt(`End ${OFFICE_LABELS[a.office]} term for ${a.personName} — date (YYYY-MM-DD):`, today());
+    if (!date) return;
+    const response = await registerCall(`/admin/committee/appointments/${a.id}`, {
+        method: "PUT", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({endedDate: date}),
+    });
+    if (!response) return;
+    say(`Ended ${a.personName}'s ${OFFICE_LABELS[a.office]} term (${date}). Still visible under History.`);
+    renderCommittee();
+}
+
+// remove a mistaken row entirely (DELETE) — unlike End term, it leaves no history
+async function removeAppointment(a) {
+    if (!confirm(`Remove ${a.personName}'s ${OFFICE_LABELS[a.office]} appointment entirely? `
+            + "Use this only for a mistaken row — a real term should be ended, not removed.")) return;
+    const response = await registerCall(`/admin/committee/appointments/${a.id}`, {method: "DELETE"});
+    if (!response) return;
+    say(`Removed appointment #${a.id}.`);
+    renderCommittee();
+    if (!document.getElementById("committeeHistory").hidden) renderHistory();
+}
+
+function openApptForm() {
+    document.getElementById("apptOffice").value = "ORDINARY";
+    resetPicker("apptPerson");
+    document.getElementById("apptStarted").value = today();
+    document.getElementById("apptElected").value = "";
+    document.getElementById("apptMinute").value = "";
+    document.getElementById("apptNotes").value = "";
+    openDialog("apptForm");
+}
+
+async function saveAppointment() {
+    const personId = pickedPersonId("apptPerson");
+    if (!personId) return say("Choose a person — search by name or email.", true);
+    const started = document.getElementById("apptStarted").value;
+    if (!started) return say("A started date is required.", true);
+    const response = await registerCall("/admin/committee/appointments", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            personId,
+            office: document.getElementById("apptOffice").value,
+            startedDate: started,
+            electedDate: document.getElementById("apptElected").value || null,
+            minuteRef: document.getElementById("apptMinute").value.trim() || null,
+            notes: document.getElementById("apptNotes").value.trim() || null,
+        }),
+    });
+    if (!response) return;
+    const result = await response.json();
+    say(`Added appointment #${result.appointment.id}.`
+        + (result.warnings.length ? " " + result.warnings.join("; ") : ""));
+    closeDialog("apptForm");
+    renderCommittee();
+}
+
+function openAgmForm() {
+    document.getElementById("agmDate").value = today();
+    document.getElementById("agmMinute").value = "";
+    for (const [id] of AGM_SINGULAR) resetPicker(id);
+    document.getElementById("agmOrdinary").innerHTML = "";
+    addAgmOrdinaryRow();
+    openDialog("agmForm");
+}
+
+// one repeatable ordinary-member picker: a fresh input + its results <ul>, wired
+// with the same type-ahead as every other picker, plus a remove button
+function addAgmOrdinaryRow() {
+    const seq = agmOrdinalSeq++;
+    const inputId = `agmOrd${seq}`;
+    const wrap = document.createElement("div");
+    wrap.className = "agm-ordinary-row";
+    const input = document.createElement("input");
+    input.id = inputId;
+    input.type = "search";
+    input.autocomplete = "off";
+    input.placeholder = "search people by name or email";
+    const list = document.createElement("ul");
+    list.id = inputId + "Results";
+    list.className = "picker-results";
+    list.hidden = true;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "secondary";
+    remove.textContent = "Remove";
+    remove.onclick = () => wrap.remove();
+    wrap.append(input, list, remove);
+    document.getElementById("agmOrdinary").appendChild(wrap);
+    wirePersonPicker(inputId);
+}
+
+async function saveAgm() {
+    const agmDate = document.getElementById("agmDate").value;
+    if (!agmDate) return say("An AGM date is required.", true);
+    const appointments = [];
+    for (const [id, office] of AGM_SINGULAR) {
+        const personId = pickedPersonId(id);
+        if (personId) appointments.push({personId, office});
+    }
+    for (const wrap of document.querySelectorAll("#agmOrdinary .agm-ordinary-row")) {
+        const personId = pickedPersonId(wrap.querySelector("input").id);
+        if (personId) appointments.push({personId, office: "ORDINARY"});
+    }
+    if (!confirm(`Record this committee as at ${agmDate}? This ends every current appointment.`)) return;
+    const response = await registerCall("/admin/committee/agm", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            agmDate,
+            minuteRef: document.getElementById("agmMinute").value.trim() || null,
+            appointments,
+        }),
+    });
+    if (!response) return;
+    const result = await response.json();
+    say(`Recorded AGM committee (${result.committee.length} appointment(s)).`
+        + (result.warnings.length ? " Warnings: " + result.warnings.join("; ") : ""),
+        result.warnings.length > 0);
+    closeDialog("agmForm");
+    renderCommittee();
+    if (!document.getElementById("committeeHistory").hidden) renderHistory();
+}
+
+async function renderHistory() {
+    const response = await registerCall("/admin/committee?includeEnded=true");
+    if (!response) return;
+    const rows = (await response.json()).committee;
+    const body = document.querySelector("#committeeHistory tbody");
+    body.innerHTML = "";
+    for (const a of rows) {
+        const row = body.insertRow();
+        row.insertCell().textContent = OFFICE_LABELS[a.office] || a.office;
+        row.insertCell().textContent = `${a.personName} (#${a.personId})`;
+        row.insertCell().textContent = a.startedDate;
+        row.insertCell().textContent = a.endedDate || "— current";
+        row.insertCell().textContent = a.minuteRef || "";
+    }
+}
+
+function toggleHistory() {
+    const table = document.getElementById("committeeHistory");
+    const btn = document.getElementById("historyToggle");
+    const show = table.hidden;
+    table.hidden = !show;
+    btn.textContent = show ? "Hide past terms" : "Show past terms";
+    if (show) renderHistory();
+}
+
+function wireCommittee() {
+    document.getElementById("agmOpen").onclick = openAgmForm;
+    document.getElementById("agmCancel").onclick = () => closeDialog("agmForm");
+    document.getElementById("agmSave").onclick = saveAgm;
+    document.getElementById("agmAddOrdinary").onclick = addAgmOrdinaryRow;
+    for (const [id] of AGM_SINGULAR) wirePersonPicker(id);
+    document.getElementById("apptOpen").onclick = openApptForm;
+    document.getElementById("apptCancel").onclick = () => closeDialog("apptForm");
+    document.getElementById("apptSave").onclick = saveAppointment;
+    wirePersonPicker("apptPerson");
+    document.getElementById("historyToggle").onclick = toggleHistory;
+    document.getElementById("committeeSection").hidden = false;
+}
+
 // ---- menu + per-page wiring -------------------------------------------------
 
 // the admin panel is split across pages that share this script; each page
@@ -1932,6 +2138,7 @@ const MENU = [
     {href: "index.html", label: "Register & renewals"},
     {href: "new-member.html", label: "New member"},
     {href: "email.html", label: "Email"},
+    {href: "committee.html", label: "Committee"},
     {href: "import.html", label: "Import members"},
     {href: "users.html", label: "Users"},
 ];
@@ -1980,6 +2187,10 @@ async function wireUsers() {
                 await loadEmail();
                 await loadFooter();
                 await renderSends();
+            }
+            if (document.getElementById("committeeSection")) {
+                wireCommittee();
+                await renderCommittee();
             }
             // CR-010 success-screen deep links: index.html?household=<id> and
             // ?membership=<id>&period=<id> open straight to that detail dialog

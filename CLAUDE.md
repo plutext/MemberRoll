@@ -32,7 +32,7 @@ STRIPE_WEBHOOK_SECRET=whsec_devmatrix SMTP_HOST=localhost SMTP_PORT=18026 \
   MAIL_FROM=noreply@memberroll.dev MAIL_REPLY_TO=treasurer@memberroll.dev \
   MEMBERROLL_SOCIETY_NAME="MemberRoll Dev Society" mvn -pl server cargo:run
 
-server/verify-matrix.sh         # the role x endpoint matrix (453 checks offline / +1 with a
+server/verify-matrix.sh         # the role x endpoint matrix (491 checks offline / +1 with a
                                 # Stripe key) against the running dev stack (ports via
                                 # PORT / KEYCLOAK_PORT); extend it alongside new endpoints —
                                 # it must stay green. The CR-005 abort/resume rows stop and
@@ -215,6 +215,35 @@ against the admin page) and **Email** (prefilled `defaultTo`, disabled
 with a hint when the GET's `mailEnabled` is false — the CR-005 banner
 pattern). One transactional mail via `Mail.sendAsync`, NOT the CR-005
 segment machinery.
+CR-013 added the committee register: `committee_appointment` (V7) records
+office-bearers and ordinary members as **term-bounded appointments, AGM
+to AGM** — the current-is-null idiom of `household_person` (a serving term
+has null `ended_date`; office is a per-term column, so multi-term history
+falls out for free). Keyed on `person_id`, not `membership_person` (an
+appointment spans periods). `CommitteeStore.agmRoll` is the primary flow
+and mirrors the CR-003 rollover under the CR-010 atomic discipline: in
+ONE `jdbi.inTransaction` it closes every open appointment
+(`ended_date = agmDate`) then inserts the new slate, and every rejection
+(a duplicate singular office, a person given both president and
+vice-president, an unknown person, an `agmDate` before a currently-serving
+term) is a thrown `IllegalArgumentException`/`ConflictException`, never an
+early-return `Response`, so a bad line rolls the whole roll back. A
+missing office or a non-member appointee is a returned `warnings` entry,
+not a block — the committee, not the app, is the authority on eligibility
+(the soft-guard pattern, like CR-006's one-email-per-household). Two
+partial unique indexes back it: `(person_id, office) WHERE ended_date IS
+NULL` (no duplicate open office per person) and `office WHERE ended_date
+IS NULL AND office <> 'ORDINARY'` (the four singular offices are
+single-holder). **Corrections are edits/removals, not reversals**
+(deliberately unlike payments — administrative reference data, not a
+ledger): `AdminCommitteeResource` PUT fixes an appointment in place,
+DELETE drops a bogus row. There is **deliberately no Keycloak `committee`
+role** (no app surface only committee members may use; a role would be
+dead weight and a drift risk — derive it from this register if such a
+surface ever exists). `GET /api/admin/committee/contacts` is the seam
+CR-007 will consume — current committee members' primary emails and the
+current secretary specifically, for routing the application-referral
+notice.
 
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
