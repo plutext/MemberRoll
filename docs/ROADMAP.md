@@ -34,6 +34,7 @@ decisions and the planned change-request sequence; individual CRs in
 | 2026-07-17 | **The 1 July rule is MembershipPeriod configuration** (`late_joining_cutoff`), not code. |
 | 2026-07-17 | **Email is synchronous SMTP relay**, per-recipient sends with merge fields and a send log. No queue at this scale (~100–1000 recipients). |
 | 2026-07-18 | **Communication preferences default to EMAIL.** Only a handful of members receive *Yandoo*/*Boongaroon* by post, so no preference row = email; the exceptions are set manually to POST through an admin preferences UI (CR-005 — the `communication_preference` table shipped empty in CR-001 and nothing manages it before then). No re-import of the member list for this: the post members are entered by hand. |
+| 2026-07-18 | **Segment email addresses MEMBER people only** (CR-005): renewal/newsletter emails go to a household's current `relationship_type` MEMBER people (deduped when they share an address), never PARTNER/DEPENDANT/OTHER — the formal member is who the society corresponds with, mirroring the voting-rights correction below. |
 | 2026-07-18 | **Voting rights, corrected**: only the household member recorded with `relationship_type` MEMBER is a formal, statutory voting member. PARTNER/DEPENDANT/OTHER receive membership benefits (covered by the membership, counted for the household's occupancy) but do not vote, hold statutory-member status, or stand for committee. Also settles the CR-010 question of whether a PARTNER/DEPENDANT/OTHER second person counts against a membership type's `maximum_people`: it does not — only a second MEMBER does, since `maximum_people` caps formal members, not household occupants. |
 
 ## In scope
@@ -86,7 +87,7 @@ data too) → **Committed**.
 | 002 | Import | Verified · committed | CSV import with preview/dedup; synthetic dev fixture shaped like the real list |
 | 003 | Renewals and manual payments | Verified · committed | Period rollover, cash/cheque/transfer payment entry, financial-status filters, CSV exports |
 | 004 | Stripe | Verified | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
-| 005 | Segment email | Planned | Templates, merge fields, segment sends with embedded magic links, send log; communication preferences: admin preferences UI (default EMAIL, manual POST exceptions) and sends honouring it |
+| 005 | Segment email | Proposed | Templates, merge fields, segment sends with embedded magic links, send log; communication preferences: admin preferences UI (default EMAIL, manual POST exceptions) and sends honouring it |
 | 006 | Member self-serve | Planned | Keycloak-linked "my membership" page, pay from there |
 | 007 | Public application form | Planned | New-member APPLIED workflow with admin approval |
 | 008 | Production hardening | Planned | Prod DB provisioning, Stripe live keys, SPF/DKIM/from-address, backup coverage, deploy docs |
