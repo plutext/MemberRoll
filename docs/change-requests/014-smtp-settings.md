@@ -188,6 +188,57 @@ UI; Save → banner flips to "settings saved on this page"; reload →
 password placeholder "(unchanged)"; Use server defaults → banner back
 to "server environment".
 
+## Implementation notes (read before building)
+
+Two hazards singled out from review of this design, then the mechanics.
+
+1. **The password must not leak — including through the test
+   endpoint's error string.** Never in GET/PUT/DELETE responses (only
+   `passwordSet`), never logged. The subtle one: `POST .../test`
+   returns the SMTP exception message verbatim, and some jakarta.mail
+   failures chain exceptions whose text can include session state.
+   Before returning, assert the composed error string does not contain
+   the candidate/stored password (and add the matrix row: a test-send
+   with a wrong password against an auth-requiring target must return
+   an error that names the auth failure but not the secret). Same
+   check for anything `Mail` logs on the PAGE path.
+2. **The ENV path stays byte-for-byte compatible.** With no
+   `smtp_settings` row, `resolve()` must reproduce today's behaviour
+   exactly: same property names, `SMTP_STARTTLS` sets
+   `mail.smtp.starttls.enable` ONLY (no `.required` — dev Mailpit has
+   no STARTTLS), blank-is-unset env semantics, port default 25,
+   `MAIL_FROM` default `noreply@localhost`. The proof is the existing
+   matrix staying green with an empty `app_setting` table — treat any
+   pre-existing row's failure as a bug in the refactor, not the row.
+   `starttls.required=true` is set only when a PAGE row says
+   `STARTTLS`.
+
+Mechanics and house patterns:
+
+- `Db.jdbi()` is the static accessor `Mail.resolve()` uses; wrap the
+  read in try/catch → fall back to ENV (logged, WARNING once per
+  failure not per call is fine). `Mail` stays a static utility —
+  don't introduce DI.
+- Don't cache the jakarta.mail `Session` or the `Settings` record —
+  per-use resolution is a design decision (mid-sequence pickup for
+  CR-005 resume), not an oversight.
+- `Mail.enabled()` = `resolve().source != NONE`; every existing 503 /
+  `mailEnabled` gate then just works — no caller changes.
+- New files: `AdminMailSettingsResource` (register in
+  `ApiApplication`), `admin/mail-settings.html` + `admin.js` wiring +
+  the menu entry on every admin page that carries the menu.
+- Matrix rows `CR14-*` go in `server/verify-matrix.sh`; each mutating
+  row cleans up (end state: no `smtp_settings` row) so the matrix
+  stays re-runnable and later rows (CR-005/012 Mailpit deliveries)
+  still ride ENV. Rows 8–10 (precedence via dead port, DELETE
+  restore, page-From end-to-end) MUST run in that order and restore
+  ENV before any other mail-asserting row runs.
+- Playwright walkthrough per the house recipe (NODE_PATH to the
+  npx-cached playwright; restart cargo after Java changes — and
+  remember `mvn clean` under a running cargo serves 404s).
+- Record results in this doc (numbers, not adjectives), then the
+  close-out list below.
+
 ## Close-out (on implementation)
 
 - `CLAUDE.md`: architecture paragraph (resolution order, the one-row
