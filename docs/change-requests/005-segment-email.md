@@ -351,6 +351,23 @@ Browser walkthrough (dev stack + Mailpit UI):
 No auth/Caddy/compose changes → deploy Local smoke not triggered by
 this CR (SPF/DKIM and production from-address remain CR-008).
 
+## Notes for the implementing session
+
+- **Build the CR5-* matrix rows alongside each endpoint, not as a
+  batch at the end.** The rows that stop/start the Mailpit container
+  (#16–18: abort, resume, one-RUNNING-send) have fiddly choreography —
+  the send must be mid-flight when Mailpit dies, and the resume
+  assertion depends on Mailpit's message count from the *earlier*
+  rows — and that is much easier to get right while the endpoint's
+  behaviour is fresh than to retrofit.
+- **Do a headless-browser (Playwright) pass on the compose form, not
+  just the API matrix.** CR-010 precedent: its worst UI bug (a
+  `<dialog>` auto-opening on page load and stealing modal focus) was
+  invisible to the API matrix and only caught in a headless browser.
+  The equivalent risks here: the Send button's enabled-only-after-a-
+  matching-preview rule, the footer textarea prefill vs the
+  save-as-default checkbox, and preview-list rendering.
+
 ## Open questions — answered 2026-07-18 (Jason), design amended in place
 
 - **Who in a household receives the renewal notice**: current
