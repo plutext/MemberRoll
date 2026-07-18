@@ -44,6 +44,21 @@ allowlist), `KEYCLOAK_AUDIENCE=memberroll-server`, `KEYCLOAK_ADMIN_URL`
 `MEMBERROLL_DB_URL=jdbc:postgresql://localhost:5433/memberroll` /
 `MEMBERROLL_DB_USER` / `MEMBERROLL_DB_PASSWORD` (dev default `memberroll`).
 
+Payments + mail (CR-004) — all optional: with none of them set the app
+still starts and runs manual-payments-only (checkout and webhook answer
+503, mail sends are logged no-ops). A production deployment that wants
+online payment sets all of these (live keys and the dashboard webhook
+registration are CR-008):
+
+| var | dev value | purpose |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | `sk_test_…` (sandbox) | Checkout session creation; unset → checkout 503 |
+| `STRIPE_WEBHOOK_SECRET` | the `whsec_…` from `stripe listen` (offline matrix: `whsec_devmatrix`) | webhook signature verification — the endpoint's entire auth; unset → webhook 503 |
+| `PUBLIC_BASE_URL` | defaults to `http://localhost:18080/server` | base for pay links and Checkout return URLs; leaving it unset in production means emailed links point at localhost (a loud WARN is logged) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_STARTTLS` | `localhost` / `18026` (Mailpit), no auth | receipt + lost-link email; `SMTP_HOST` unset disables mail |
+| `MAIL_FROM` | `noreply@memberroll.dev` | From address (SPF/DKIM for it is CR-008) |
+| `MEMBERROLL_SOCIETY_NAME` | `memberroll dev` | email + pay-page branding (the single-tenant rule: no society name in code) |
+
 ## The webapps
 
 - <http://localhost:18080/server/web/> — the user page: log in (or
