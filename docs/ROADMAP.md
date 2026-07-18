@@ -30,10 +30,11 @@ decisions and the planned change-request sequence; individual CRs in
 | 2026-07-17 | **JDBI 3 + hand-written SQL + Flyway**, no ORM. The schema is insert-only and the valuable queries are reporting-shaped joins — the opposite of Hibernate's load-mutate-flush model — and volunteer maintainers can read SQL. Flyway migrations are the single source of schema truth. |
 | 2026-07-17 | **Pay without login = tokenized magic links.** Renewal emails carry a long random single-membership token; the public page it opens shows the amount due and starts a Stripe Checkout session. Stripe-hosted payment page (card data never touches the server, PCI SAQ A); webhook records the Payment and activates the membership. Login (Keycloak) stays for admins and opt-in member self-serve, never as the payment gate. Unauthenticated visitors are never shown membership status directly — the "lost my link" page emails the link to a matching address instead. |
 | 2026-07-17 | **Manual payments are first-class**: bank transfer (today's main channel), cash, and cheque are recorded by an admin with an audit trail (who recorded, when). |
-| 2026-07-17 | **Voting rights**: per the society, both adults in a Household membership are statutory voting members. `MembershipPerson` still records status per person (children, non-voting associates stay representable). |
+| 2026-07-17 | ~~**Voting rights**: per the society, both adults in a Household membership are statutory voting members.~~ Superseded 2026-07-18 below — this was asserted without a recorded rationale. |
 | 2026-07-17 | **The 1 July rule is MembershipPeriod configuration** (`late_joining_cutoff`), not code. |
 | 2026-07-17 | **Email is synchronous SMTP relay**, per-recipient sends with merge fields and a send log. No queue at this scale (~100–1000 recipients). |
 | 2026-07-18 | **Communication preferences default to EMAIL.** Only a handful of members receive *Yandoo*/*Boongaroon* by post, so no preference row = email; the exceptions are set manually to POST through an admin preferences UI (CR-005 — the `communication_preference` table shipped empty in CR-001 and nothing manages it before then). No re-import of the member list for this: the post members are entered by hand. |
+| 2026-07-18 | **Voting rights, corrected**: only the household member recorded with `relationship_type` MEMBER is a formal, statutory voting member. PARTNER/DEPENDANT/OTHER receive membership benefits (covered by the membership, counted for the household's occupancy) but do not vote, hold statutory-member status, or stand for committee. Also settles the CR-010 question of whether a PARTNER/DEPENDANT/OTHER second person counts against a membership type's `maximum_people`: it does not — only a second MEMBER does, since `maximum_people` caps formal members, not household occupants. |
 
 ## In scope
 
@@ -90,7 +91,7 @@ data too) → **Committed**.
 | 007 | Public application form | Planned | New-member APPLIED workflow with admin approval |
 | 008 | Production hardening | Planned | Prod DB provisioning, Stripe live keys, SPF/DKIM/from-address, backup coverage, deploy docs |
 | 009 | UI polish (out-of-band) | Proposed | Pico CSS baseline across all static pages, dialog-based forms, person picker, status badges — orthogonal to the sequence. Implementation order decided 2026-07-18: 009 lands before 004, so the public pay page starts on the new baseline |
-| 010 | Admin "new member" page (out-of-band) | Proposed | One-flow walk-in signup: person → household (person as primary contact) → membership type → second-person dialog for HOUSEHOLD; composite atomic endpoint; first consumer of membership_type min/max people. After 009; independent of 004 |
+| 010 | Admin "new member" page (out-of-band) | Verified | One-flow walk-in signup: person → household (person as primary contact) → membership type → second-person dialog for HOUSEHOLD; composite atomic endpoint; first consumer of membership_type min/max people. After 009; independent of 004 |
 
 Ordering principle: admin value first — after CR-003 the app already
 replaces the spreadsheet-and-bank-statement process with zero

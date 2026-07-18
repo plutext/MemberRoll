@@ -13,9 +13,10 @@ Keycloak sign-in page. The panel is for **admins** — if your account
 doesn't have the admin role you're sent to the member page instead. Your
 username and roles show at the top; **Log out** is beside them.
 
-Everything below is under the admin panel's three areas: **Users**,
-**Register** (people, households, import), and **Renewals** (periods,
-memberships, payments, exports).
+Everything below is under the admin panel's areas: **Users**,
+**Register** (people, households, import), **New member** (a walk-in or
+paper-form signup in one step), and **Renewals** (periods, memberships,
+payments, exports).
 
 ## The register
 
@@ -46,6 +47,30 @@ contact**.
   household and pick another current member).
 - From an open household you can also start a **New membership** for a
   period (see [Signing up a household mid-year](#signing-up-a-household-mid-year)).
+
+### New member (walk-ins and paper forms)
+
+**New member**, its own page, is the fast path for the commonest data-entry
+job — someone joins today with a form or in person — without hopping
+between People, Households and Renewals in the right order:
+
+1. Enter the person's details. If a similar name or email already exists
+   you'll see a "possible existing match" note — advisory only, it doesn't
+   block you.
+2. Pick the period and membership type; the price shows. Give the
+   household a name, or leave it as the suggested "*Family name*
+   household".
+3. For a type that covers more than one person (e.g. Household), a dialog
+   asks for the second person (name, and their relationship — Partner by
+   default). You can skip it — a household with only one person entered
+   still gets created, with a note reminding you to add the partner later
+   from the household's Members screen; they won't be added to *this*
+   membership retroactively, only to any future one.
+4. **Create member** makes the person, the household (with them as
+   primary contact) and the membership together, or not at all — a
+   mistake partway through creates nothing. The result screen links to
+   the household and the membership (where you can record a payment, or
+   copy a pay link if Stripe is configured).
 
 ### Importing members from a spreadsheet
 
@@ -242,8 +267,11 @@ The **export** buttons download a CSV for the selected period:
 
 ### Signing up a household mid-year
 
-To add a returning or brand-new member outside of rollover, open the
-household (**Register → Households → Members**) and use **New membership**:
+For a **brand-new** member, use **New member** (above) instead — it
+creates the person, household and membership together. This section is
+for a household that **already exists** (a returning member outside of
+rollover, or one already in the register): open the household
+(**Register → Households → Members**) and use **New membership**:
 pick the period and the membership type, then **Create membership**. It's
 created Unpaid (or $0 Paid for a life/honorary type), with the household's
 current members copied onto it. Record their payment from the members table

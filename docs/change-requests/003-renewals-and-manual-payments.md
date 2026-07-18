@@ -87,8 +87,10 @@ period:
 - `membership_person` rows from the household's **current**
   composition (`left_household_date IS NULL`, not deceased) — the new
   year reflects who is in the household now, exactly as the import
-  does: MEMBER/PARTNER get statutory/voting/committee true, DEPENDANT/
-  OTHER false; `membership_role` = the relationship type.
+  does: MEMBER gets statutory/voting/committee true, every other
+  relationship (PARTNER/DEPENDANT/OTHER) false (corrected 2026-07-18 —
+  see ROADMAP.md "Voting rights, corrected"); `membership_role` = the
+  relationship type.
 
 Skipped (reported, not errors): households that already have a
 membership in the target period (early manual renewals — the CR-001

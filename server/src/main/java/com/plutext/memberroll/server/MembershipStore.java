@@ -275,15 +275,17 @@ final class MembershipStore {
     }
 
     void insertMembershipPerson(Handle handle, long membershipId, long personId, String relationship) {
-        // both adults in a household vote (the society's decision): MEMBER and
-        // PARTNER carry statutory/voting/committee rights, dependants do not
-        boolean adult = "MEMBER".equals(relationship) || "PARTNER".equals(relationship);
+        // only the relationship_type MEMBER is a formal, statutory voting
+        // member (corrected 2026-07-18 — see membership_management_database_schema.md
+        // "Formal member status"); PARTNER/DEPENDANT/OTHER receive membership
+        // benefits but do not vote
+        boolean votingMember = "MEMBER".equals(relationship);
         handle.createUpdate(
                 "INSERT INTO membership_person (membership_id, person_id, membership_role,"
                 + " is_statutory_member, has_voting_rights, eligible_for_committee, start_date)"
-                + " VALUES (:mid, :pid, :role, :adult, :adult, :adult, current_date)")
+                + " VALUES (:mid, :pid, :role, :voting, :voting, :voting, current_date)")
                 .bind("mid", membershipId).bind("pid", personId).bind("role", relationship)
-                .bind("adult", adult).execute();
+                .bind("voting", votingMember).execute();
     }
 
     /** Copy the household's CURRENT composition (present, not deceased) as membership_person rows. */
@@ -332,6 +334,18 @@ final class MembershipStore {
         copyCurrentComposition(handle, id, householdId);
         boolean late = bounds.cutoff() != null && today.isAfter(bounds.cutoff());
         return new CreateOutcome(id, statusValue, due, late);
+    }
+
+    /** People-count bounds for a membership type (CR-010); NULL bounds mean unchecked. */
+    record TypeBounds(long typeId, String name, Integer minimumPeople, Integer maximumPeople) {}
+
+    static Optional<TypeBounds> typeBounds(Handle handle, long typeId) {
+        return handle.createQuery("SELECT membership_type_id, name, minimum_people, maximum_people"
+                + " FROM membership_type WHERE membership_type_id = :id")
+                .bind("id", typeId)
+                .map((rs, ctx) -> new TypeBounds(rs.getLong("membership_type_id"), rs.getString("name"),
+                        (Integer) rs.getObject("minimum_people"), (Integer) rs.getObject("maximum_people")))
+                .findOne();
     }
 
     boolean exists(Handle handle, long id) {

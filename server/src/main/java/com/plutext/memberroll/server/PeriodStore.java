@@ -44,7 +44,13 @@ import java.util.Optional;
  */
 final class PeriodStore {
 
-    record Price(long typeId, String typeName, int amountCents) {}
+    /**
+     * {@code minimumPeople}/{@code maximumPeople} ride along from {@code
+     * membership_type} (CR-010) so the new-member wizard can mirror the
+     * server's people-count rule client-side without a separate
+     * type-management endpoint (there is deliberately none).
+     */
+    record Price(long typeId, String typeName, int amountCents, Integer minimumPeople, Integer maximumPeople) {}
     /** {@code journalPriceCents} null = the journal add-on is not offered that period (CR-004). */
     record Period(long id, String name, LocalDate startDate, LocalDate endDate,
                   LocalDate renewalOpenDate, LocalDate lateJoiningCutoff, Integer journalPriceCents,
@@ -72,6 +78,12 @@ final class PeriodStore {
 
     Optional<Period> get(long id) {
         return jdbi.withHandle(handle -> get(handle, id));
+    }
+
+    /** Existence check without the price-list/status-count joins {@link #get} carries (CR-010). */
+    static boolean exists(Handle handle, long id) {
+        return handle.createQuery("SELECT count(*) FROM membership_period WHERE membership_period_id = :id")
+                .bind("id", id).mapTo(Integer.class).one() > 0;
     }
 
     static Optional<Period> get(Handle handle, long id) {
@@ -196,13 +208,15 @@ final class PeriodStore {
 
     private static Period hydrate(Handle handle, Period p) {
         List<Price> prices = handle.createQuery(
-                "SELECT tp.membership_type_id, mt.name, tp.amount_cents"
+                "SELECT tp.membership_type_id, mt.name, tp.amount_cents,"
+                + " mt.minimum_people, mt.maximum_people"
                 + " FROM membership_type_price tp JOIN membership_type mt"
                 + "   ON mt.membership_type_id = tp.membership_type_id"
                 + " WHERE tp.membership_period_id = :period ORDER BY mt.name")
                 .bind("period", p.id())
                 .map((rs, ctx) -> new Price(rs.getLong("membership_type_id"),
-                        rs.getString("name"), rs.getInt("amount_cents"))).list();
+                        rs.getString("name"), rs.getInt("amount_cents"),
+                        (Integer) rs.getObject("minimum_people"), (Integer) rs.getObject("maximum_people"))).list();
         Map<String, Integer> counts = new LinkedHashMap<>();
         handle.createQuery("SELECT status, count(*) AS n FROM membership"
                 + " WHERE membership_period_id = :period GROUP BY status ORDER BY status")

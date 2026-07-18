@@ -99,6 +99,39 @@ env-configured SMTP sender (receipts + lost-link; real templates are
 CR-005), `web/pay.html`/`pay.js` is the public page (no auth.js — the
 token IS the authorisation), and all of it is optional config: no Stripe
 env → checkout/webhook answer 503, the app still starts.
+CR-010 added the admin "new member" fast path: `AdminNewMemberResource`
+(`POST /api/admin/new-member`) composes `PersonStore`/`HouseholdStore`/
+`MembershipStore.createForHousehold` in one `jdbi.inTransaction` — every
+failure path is a thrown `IllegalArgumentException`/`ConflictException`,
+never an early-return `Response`, or JDBI would commit a half-created
+member instead of rolling it back. `PersonStore.create`,
+`HouseholdStore.create` and `HouseholdStore.addPerson` gained
+Handle-taking overloads for this (the CR-003 signature-move pattern);
+existing no-Handle callers delegate to them unchanged.
+`MembershipStore.typeBounds` and `PeriodStore.Price`'s new
+`minimumPeople`/`maximumPeople` fields expose `membership_type`'s
+people-count columns (unused before this CR) so `admin/new-member.html`'s
+wizard can mirror the server's rule client-side, without a dedicated
+type-management endpoint (there is deliberately none): `maximumPeople`
+counts only `relationship_type` MEMBER people (a PARTNER/DEPENDANT/OTHER
+second person never counts against it — see the voting-rights paragraph
+below), `minimumPeople` stays a total-headcount warning. The
+second-person dialog must only pop from the `#nmType` change *event*,
+never from initial page population — HOUSEHOLD sorts first
+alphabetically and is therefore the type select's default on every
+load, and popping a native `<dialog>` there steals modal focus (backing
+inputs go inert) before the admin has typed anything.
+
+**Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
+"both adults vote" note had no recorded rationale and was wrong):
+`MembershipStore.insertMembershipPerson` sets
+`is_statutory_member`/`has_voting_rights`/`eligible_for_committee` true
+only for `relationship_type` MEMBER; PARTNER/DEPENDANT/OTHER are covered
+by the membership but never vote. This one method backs CR-002's import,
+CR-003's rollover, and CR-010's new-member endpoint, so the rule is
+uniform everywhere a membership's composition is copied — see
+`docs/membership_management_database_schema.md` "Formal member status"
+and `docs/ROADMAP.md` "Voting rights, corrected" for the record.
 `NoteStore`'s per-owner JSON files under `MEMBERROLL_DATA` remain the
 worked example for single-owner blobs, slated for retirement.
 Production topology (server/deploy/): Caddy is the sole ingress and TLS

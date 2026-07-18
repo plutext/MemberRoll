@@ -1,6 +1,6 @@
 # CR 010: Admin "new member" page — person, household and membership in one flow
 
-Status: PROPOSED
+Status: VERIFIED
 
 Out-of-band CR (like 009): admin UX, no dependency on the 004–008
 feature sequence. Builds on CR-009's dialog/person-picker baseline, so
@@ -55,10 +55,11 @@ compose, the resource owns the transaction):
 3. `MembershipStore.createForHousehold(...)` — **the existing CR-003
    method, unchanged**: snapshots `amount_due_cents` from the period
    price, copies the current household composition into
-   `membership_person` (MEMBER/PARTNER → statutory/voting/committee
-   true, per the society's both-adults-vote decision), PENDING_PAYMENT
-   (ACTIVE when zero-due, e.g. LIFE), and the past-`late_joining_cutoff`
-   warning ("consider the next period") passes through to the response.
+   `membership_person` (MEMBER → statutory/voting/committee true, every
+   other relationship false — corrected 2026-07-18, see ROADMAP.md
+   "Voting rights, corrected"), PENDING_PAYMENT (ACTIVE when zero-due,
+   e.g. LIFE), and the past-`late_joining_cutoff` warning ("consider the
+   next period") passes through to the response.
 
 Any failure rolls the whole thing back — no half-created member, which
 is the reason this is a composite endpoint and not the UI replaying the
@@ -76,16 +77,26 @@ endpoints keep their behaviour (the current matrix guards them).
 CR-001 with nothing reading them. This endpoint is their first
 consumer:
 
-- people count > `maximum_people` → **400** (a SINGLE membership with
-  a second person is a data error, and the seed data gets SINGLE
-  `maximum_people = 1`);
-- people count < `minimum_people` → **warning, not error** (a
-  HOUSEHOLD membership entered with one person because the partner's
-  details aren't to hand is real life; the household detail's
-  add-member flow completes it later — note membership_person is NOT
-  retro-copied, matching CR-003 rollover semantics, so the warning
-  tells the admin to add the partner before creating the membership
-  if they want them on the voting register);
+- **formal-member count** (primary person, always MEMBER, plus the
+  second person only if their relationship is also MEMBER)
+  > `maximum_people` → **400** (two independent formal members sharing
+  one SINGLE fee is a data error, and the seed data gets SINGLE
+  `maximum_people = 1`). A second person recorded as PARTNER/DEPENDANT/
+  OTHER does **not** count against this — they receive membership
+  benefits without being a second formal member (2026-07-18 correction,
+  same voting-rights change as above: `maximum_people` caps formal
+  members, not household occupants — so a SINGLE membership may still
+  record a non-voting partner);
+- **total people count** (primary + second person, any relationship)
+  < `minimum_people` → **warning, not error** (a HOUSEHOLD membership
+  entered with one person because the partner's details aren't to hand
+  is real life; the household detail's add-member flow completes it
+  later — note membership_person is NOT retro-copied, matching CR-003
+  rollover semantics, so the warning tells the admin to add the second
+  person before creating the membership if they want the household
+  fully represented). This check stays headcount-based regardless of
+  relationship — it is about household occupancy justifying the
+  HOUSEHOLD fee, not about voting;
 - NULL bounds → no check (LIFE, OTHER types unconstrained).
 
 **No migration**: the check reads whatever the columns hold, and NULL
@@ -160,8 +171,9 @@ psql). Unique per-run family names as usual.
 | 2 | testuser | POST /api/admin/new-member | 403 |
 | 3 | test-cli-noaud | POST /api/admin/new-member | 401 |
 | 4 | testadmin | SINGLE, person only | 201; psql: person + contacts, household (primary contact, default name "<family> household"), household_person MEMBER joined today, membership PENDING_PAYMENT amount_due = period SINGLE price, membership_person statutory/voting true |
-| 5 | testadmin | HOUSEHOLD, person + secondPerson (PARTNER) | 201; psql: two people, two household_person rows, ONE membership, both membership_person rows voting true |
-| 6 | testadmin | SINGLE **with** secondPerson | 400 (maximum_people); psql: nothing created |
+| 5 | testadmin | HOUSEHOLD, person + secondPerson (PARTNER) | 201; psql: two people, two household_person rows, ONE membership; only the MEMBER's membership_person row is voting (PARTNER is not — corrected 2026-07-18) |
+| 6 | testadmin | SINGLE **with** secondPerson relationship **MEMBER** | 400 (maximum_people counts formal members only); psql: nothing created |
+| 6b | testadmin | SINGLE **with** secondPerson relationship PARTNER (default) | 201 — a non-voting second person doesn't count against `maximum_people`; psql: PARTNER's membership_person row not voting |
 | 7 | testadmin | HOUSEHOLD, person only | 201 + minimum_people warning |
 | 8 | testadmin | secondPerson relationship DEPENDANT | 201; second membership_person voting false |
 | 9 | testadmin | missing familyName on secondPerson | 400; psql: **no rows created at all** (atomicity — person 1 rolled back too) |
@@ -194,7 +206,108 @@ Browser walkthrough:
 
 ## Results
 
-(to be filled in after implementation)
+Implemented as designed, with three adjustments discovered during
+verification (all below). Scripted matrix: `server/verify-matrix.sh`
+rows CR10-01..15 (plus CR10-06p and the CR10 static-page row), run
+against the dev stack with `STRIPE_WEBHOOK_SECRET`/`SMTP_HOST`/
+`SMTP_PORT`/`MAIL_FROM` set (per the README) — **313/313 green**,
+including the full pre-existing matrix (regression: the `PersonStore`/
+`HouseholdStore` Handle-taking refactor did not change any existing
+endpoint's behaviour, and Adjustment 3's voting-rights correction was
+re-verified across the CR-002/003/010 rows that exercise it).
+
+Server: `AdminNewMemberResource` (`POST /api/admin/new-member`) composes
+`PersonStore`/`HouseholdStore`/`MembershipStore.createForHousehold` in one
+`jdbi.inTransaction`. `PersonStore.create`, `HouseholdStore.create` and
+`HouseholdStore.addPerson` gained Handle-taking overloads (existing
+no-Handle methods now delegate to them) — the CR-003 signature-move
+pattern. `MembershipStore.typeBounds` reads `minimum_people`/
+`maximum_people`; `PeriodStore.Price` and the periods JSON gained
+`minimumPeople`/`maximumPeople` so the browser wizard can mirror the
+server's people-count rule without a type-management API. The dev seed
+data (`V2__reference_data.sql`) already carried SINGLE (1,1) / HOUSEHOLD
+(2,NULL) — no fixture psql `UPDATE` was needed, contrary to the design's
+assumption.
+
+**Adjustment 1 — every validation failure throws inside the transaction,
+none returns early.** The first draft caught `ConflictException` inside
+the `jdbi.inTransaction` lambda and mapped it straight to a 409
+`Response`, which is a normal return, not an exception — JDBI would have
+committed the just-inserted person/household despite the 409, breaking
+the atomicity the whole endpoint exists for. Fixed so every failure path
+(400 and 409 alike) is a thrown exception caught outside the
+transaction, matching AdminMembershipsResource's own pattern.
+
+**Adjustment 2 — the second-person dialog must never auto-open on page
+load.** HOUSEHOLD sorts before SINGLE alphabetically, so it is the
+type-select's default on every load; the original code ran the same
+"pop the dialog when the type needs ≥2 people" logic from the initial
+render, which stole native-`<dialog>` modal focus before the admin had
+typed the person's name (background inputs go inert under
+`showModal()`) — caught by a Playwright walkthrough, not the API
+matrix. Fixed by only popping the dialog from the `#nmType` change
+event (a real user action); the initial-load case instead shows the
+same under-minimum warning inline, non-modally.
+
+**Adjustment 3 (2026-07-18, post-verification) — voting rights corrected
+to MEMBER-only, and `maximum_people` re-scoped to match.** The
+2026-07-17 ROADMAP.md decision that "both adults vote" turned out to
+have no recorded rationale behind it (caught when this endpoint's
+SINGLE-vs-PARTNER behaviour was questioned) and was corrected: only
+`relationship_type` MEMBER is a formal, statutory voting member
+(`MembershipStore.insertMembershipPerson`); PARTNER/DEPENDANT/OTHER
+receive membership benefits without voting. That resolved the open
+question of whether a non-MEMBER second person should count against
+`maximum_people` — it should not, since the cap is on formal members,
+not household occupants — so `AdminNewMemberResource` now counts only
+MEMBER-relationship people (primary + second person, if the second
+person's relationship is also MEMBER) against `maximumPeople`, while
+`minimumPeople` stays a total-headcount check (unaffected — it is about
+occupancy, not voting). `admin/admin.js`'s `nmRenderStatus` mirrors the
+same relationship-gated count. See ROADMAP.md "Voting rights,
+corrected" and `membership_management_database_schema.md` "Formal
+member status" for the full record; `docs/change-requests/002-` and
+`003-` were updated to match (their already-shipped import/rollover
+code shares `insertMembershipPerson`, so this changes their runtime
+behaviour too, not only CR-010's).
+
+Browser walkthrough (Playwright, headless Chromium, against the dev
+stack, `testadmin`):
+
+1. SINGLE: person entered, price shown ($45.00), second-person dialog
+   confirmed absent on load despite HOUSEHOLD being the default type;
+   after switching to SINGLE the dialog and warnings cleared; Create →
+   success screen; `index.html?household=<id>` deep link opened the
+   household dialog with the right name; a same-session
+   `index.html?membership=<id>&period=<id>` deep link opened the
+   membership dialog (`SINGLE — Unpaid. Due $45.00`) with the period
+   pre-selected, and Record payment opened the payment form prefilled
+   with the $45.00 balance — "one click away" as designed.
+2. HOUSEHOLD: dialog opened via the "Add second person" button, second
+   person filled and saved, summary line showed
+   "Second person: Helen … (PARTNER)"; Create → membership shows both
+   names, $65.00 due.
+3. HOUSEHOLD, skip second person: warning visible before submit
+   ("HOUSEHOLD normally has at least 2 people…"); Create still
+   succeeded, the same warning echoed back from the server.
+4. Duplicate courtesy check: a family name matching an earlier-created
+   person surfaced "Possible existing match: … (#id)" advisorily;
+   proceeding still worked (no dedup rejection, by design).
+5. SINGLE-with-second-person, relationship-gated (post Adjustment 3): a
+   SINGLE membership with a PARTNER second person raised no conflict and
+   Create stayed enabled; switching that second person's relationship to
+   MEMBER showed "SINGLE allows at most 1 formal member — change the
+   second person's relationship, remove them, or choose a different
+   type." and disabled Create — the client mirrors the server's
+   relationship-gated `maximumPeople` check (`nmRenderStatus`) exactly.
+
+Deep-link caveat noted, not fixed (pre-existing, cross-cutting): if the
+admin's session has expired, following a deep link forces a fresh
+Keycloak PKCE round-trip, and `shared/auth.js`'s fixed
+`redirect_uri = location.origin + location.pathname` drops the query
+string on return — the link lands on the plain page instead of the
+detail dialog. Same limitation as any bookmarked admin URL; out of
+scope here.
 
 ## Follow-ups / amendments
 

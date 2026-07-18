@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — new member</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
+
+<section id="newMemberSection" hidden>
+    <h2>New member</h2>
+    <p class="muted">Enter a walk-in or paper-form member in one step: the
+        person, a household created around them as primary contact, and a
+        membership for the chosen period and type — created together, or not
+        at all.</p>
+
+    <div id="nmForm">
+        <h3>Person</h3>
+        <label>Title <input id="nmTitle"></label>
+        <label>Given name* <input id="nmGiven"></label>
+        <label>Family name* <input id="nmFamily"></label>
+        <label>Preferred name <input id="nmPreferred"></label>
+        <label>Date of birth <input id="nmDob" type="date"></label>
+        <label>Emails (one per line; first is primary)
+            <textarea id="nmEmails" rows="2"></textarea></label>
+        <label>Phones (one per line: number, optionally followed by MOBILE/HOME/WORK)
+            <textarea id="nmPhones" rows="2"></textarea></label>
+        <label>Notes <textarea id="nmNotes" rows="2"></textarea></label>
+        <ul id="nmDupResults" class="dup-results" hidden></ul>
+
+        <h3>Membership</h3>
+        <label>Period <select id="nmPeriod"></select></label>
+        <label>Type <select id="nmType"></select></label>
+        <div id="nmPriceDisplay" class="muted"></div>
+        <label>Household name <input id="nmHouseholdName" placeholder="e.g. Smith household"></label>
+        <div id="nmMinWarning" class="warn-note" hidden></div>
+        <div id="nmConflictWarning" class="warn-note" hidden></div>
+
+        <h3>Second person</h3>
+        <p class="muted">Only for a type that covers more than one person (e.g.
+            HOUSEHOLD) — a dialog offers this automatically once such a type is
+            chosen. Skippable: add the partner later via household detail.</p>
+        <button id="nmAddSecond" type="button" class="secondary">Add second person</button>
+        <div id="nmSecondSummary" class="muted">No second person added yet.</div>
+
+        <h3>Create</h3>
+        <button id="nmCreate">Create member</button>
+    </div>
+
+    <div id="nmSuccess" hidden></div>
+
+    <dialog id="secondPersonForm">
+        <article>
+            <header><h3>Second person</h3></header>
+            <label>Title <input id="spTitle"></label>
+            <label>Given name* <input id="spGiven"></label>
+            <label>Family name* <input id="spFamily"></label>
+            <label>Preferred name <input id="spPreferred"></label>
+            <label>Date of birth <input id="spDob" type="date"></label>
+            <label>Emails (one per line; first is primary)
+                <textarea id="spEmails" rows="2"></textarea></label>
+            <label>Phones (one per line: number, optionally followed by MOBILE/HOME/WORK)
+                <textarea id="spPhones" rows="2"></textarea></label>
+            <label>Notes <textarea id="spNotes" rows="2"></textarea></label>
+            <label>Relationship
+                <select id="spRelationship">
+                    <option>PARTNER</option><option>MEMBER</option>
+                    <option>DEPENDANT</option><option>OTHER</option>
+                </select></label>
+            <footer>
+                <button id="spCancel" type="button" class="secondary">Cancel</button>
+                <button id="spSave">Save</button>
+            </footer>
+        </article>
+    </dialog>
+</section>
+</main>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

@@ -30,8 +30,9 @@ into one **household**. The import creates, per the CR-001 schema:
 - optionally, one `membership` per household for a named
   `membership_period`, typed via `membershipType`, with
   `membership_person` rows for every person in the household —
-  DEPENDANT rows get statutory/voting/committee flags **false**,
-  MEMBER/PARTNER rows true (the society's both-adults-vote decision);
+  MEMBER rows get statutory/voting/committee flags **true**, every other
+  relationship (PARTNER/DEPENDANT/OTHER) **false** (corrected
+  2026-07-18 — see ROADMAP.md "Voting rights, corrected");
 - for rows marked `paid`, one `payment` (+ MEMBERSHIP
   `payment_allocation` for the full `amount_due_cents`).
 

@@ -1087,12 +1087,272 @@ function wireRegister() {
     document.getElementById("registerSection").hidden = false;
 }
 
+// ---- new member (CR-010) -----------------------------------------------------
+
+// the second person's payload once the dialog is saved; null = not added.
+// Skippable per the CR-010 design — a HOUSEHOLD-shaped membership entered
+// with one person is real life (the partner's details aren't always to hand).
+let nmSecondPerson = null;
+
+// the period's price list carries minimum/maximumPeople (CR-010) so this page
+// can mirror the server's people-count rule without a type-management API
+function nmSelectedType() {
+    const period = periodsCache.find(p => p.id === Number(document.getElementById("nmPeriod").value));
+    const typeId = Number(document.getElementById("nmType").value);
+    return period ? period.prices.find(pr => pr.typeId === typeId) : null;
+}
+
+function nmFillPeriods() {
+    const select = document.getElementById("nmPeriod");
+    const todayStr = today();
+    // default: the period covering today, else the newest (periodsCache is
+    // newest-first, per PeriodStore.list())
+    const covering = periodsCache.find(p => p.startDate <= todayStr && todayStr <= p.endDate);
+    const defaultId = covering ? covering.id : (periodsCache[0] && periodsCache[0].id);
+    select.innerHTML = "";
+    for (const p of periodsCache) {
+        const o = document.createElement("option");
+        o.value = p.id;
+        o.textContent = p.name;
+        o.selected = p.id === defaultId;
+        select.appendChild(o);
+    }
+    nmFillTypes();
+}
+
+// populates the type select only — does NOT pop the second-person dialog.
+// Called from initial load and from a period change; popping the dialog here
+// would steal modal focus before the admin has even typed the person's name
+// (HOUSEHOLD sorts first, so it is the page's default type on every load).
+function nmFillTypes() {
+    const period = periodsCache.find(p => p.id === Number(document.getElementById("nmPeriod").value));
+    const select = document.getElementById("nmType");
+    select.innerHTML = "";
+    for (const pr of (period ? period.prices : [])) {
+        const o = document.createElement("option");
+        o.value = pr.typeId;
+        o.textContent = `${pr.type} — ${dollars(pr.amountCents)}`;
+        select.appendChild(o);
+    }
+    nmSyncPriceAndStatus();
+}
+
+function nmSyncPriceAndStatus() {
+    const type = nmSelectedType();
+    document.getElementById("nmPriceDisplay").textContent = type ? `Price: ${dollars(type.amountCents)}` : "";
+    nmRenderStatus();
+}
+
+// bound to #nmType's change event only (a real user action) — the one place
+// the second-person dialog is allowed to pop itself open
+function nmOnTypeChanged() {
+    const type = nmSelectedType();
+    const needsSecond = type && type.minimumPeople != null && type.minimumPeople >= 2;
+    if (needsSecond && !nmSecondPerson) {
+        openSecondPersonForm();
+    } else if (!needsSecond) {
+        // a stale auto-opened dialog from a prior HOUSEHOLD-shaped selection
+        // would otherwise block Create after switching to e.g. SINGLE
+        closeDialog("secondPersonForm");
+    }
+    nmSyncPriceAndStatus();
+}
+
+function nmRenderStatus() {
+    const type = nmSelectedType();
+    const warn = document.getElementById("nmMinWarning");
+    const conflict = document.getElementById("nmConflictWarning");
+    const create = document.getElementById("nmCreate");
+    warn.hidden = true;
+    conflict.hidden = true;
+    create.disabled = false;
+    if (type) {
+        // maximumPeople caps formal (MEMBER) members only — a PARTNER/DEPENDANT/
+        // OTHER second person doesn't count against it (mirrors AdminNewMemberResource)
+        const count = nmSecondPerson ? 2 : 1;
+        const memberCount = 1 + (nmSecondPerson && nmSecondPerson.relationship === "MEMBER" ? 1 : 0);
+        if (type.maximumPeople != null && memberCount > type.maximumPeople) {
+            conflict.textContent = `${type.type} allows at most ${type.maximumPeople} `
+                + `formal ${type.maximumPeople === 1 ? "member" : "members"} — change the second `
+                + "person's relationship, remove them, or choose a different type.";
+            conflict.hidden = false;
+            create.disabled = true;
+        } else if (type.minimumPeople != null && count < type.minimumPeople) {
+            warn.textContent = `${type.type} normally has at least ${type.minimumPeople} people `
+                + "— add the second person now, or later via household detail (they won't be "
+                + "retroactively added to this membership).";
+            warn.hidden = false;
+        }
+    }
+    const summary = document.getElementById("nmSecondSummary");
+    summary.innerHTML = "";
+    if (nmSecondPerson) {
+        summary.append(`Second person: ${nmSecondPerson.givenName} ${nmSecondPerson.familyName} `
+            + `(${nmSecondPerson.relationship}). `);
+        const edit = document.createElement("button");
+        edit.type = "button"; edit.className = "secondary"; edit.textContent = "Edit";
+        edit.onclick = () => openSecondPersonForm();
+        const remove = document.createElement("button");
+        remove.type = "button"; remove.className = "secondary"; remove.textContent = "Remove";
+        remove.onclick = () => { nmSecondPerson = null; nmRenderStatus(); };
+        summary.append(edit, " ", remove);
+    } else {
+        summary.textContent = "No second person added yet.";
+    }
+}
+
+// advisory duplicate check (CR-010): a possible match is never a hard block —
+// emails are legitimately shared (couples) and family names recur in a small town
+async function nmCheckDuplicates() {
+    const family = document.getElementById("nmFamily").value.trim();
+    const firstEmail = (document.getElementById("nmEmails").value.split("\n")[0] || "").trim();
+    const q = firstEmail.includes("@") ? firstEmail : family;
+    const list = document.getElementById("nmDupResults");
+    if (q.length < 2) { list.innerHTML = ""; list.hidden = true; return; }
+    const response = await registerCall(`/admin/people?${new URLSearchParams({q, limit: "5"})}`);
+    if (!response) return;
+    const people = (await response.json()).people;
+    list.innerHTML = "";
+    for (const p of people) {
+        const li = document.createElement("li");
+        li.textContent = `Possible existing match: ${personName(p)} (#${p.id}) — `
+            + "review in Register & renewals before proceeding, if unsure.";
+        list.appendChild(li);
+    }
+    list.hidden = people.length === 0;
+}
+
+function nmPersonPayload(prefix) {
+    const id = (suffix) => document.getElementById(prefix + suffix);
+    const lines = (suffix) => id(suffix).value.split("\n").map(s => s.trim()).filter(Boolean);
+    const value = (suffix) => id(suffix).value.trim() || null;
+    return {
+        title: value("Title"), givenName: value("Given"), familyName: value("Family"),
+        preferredName: value("Preferred"), dateOfBirth: value("Dob"), notes: value("Notes"),
+        emails: lines("Emails").map((email, i) => ({email, isPrimary: i === 0})),
+        phones: lines("Phones").map((line, i) => {
+            const [number, type] = [line.replace(/\s+(MOBILE|HOME|WORK)$/i, "").trim(),
+                (line.match(/\s+(MOBILE|HOME|WORK)$/i) || [])[1]];
+            return {number, type: type ? type.toUpperCase() : null, isPrimary: i === 0};
+        }),
+    };
+}
+
+function openSecondPersonForm() {
+    const sp = nmSecondPerson;
+    document.getElementById("spTitle").value = sp?.title || "";
+    document.getElementById("spGiven").value = sp?.givenName || "";
+    document.getElementById("spFamily").value = sp?.familyName || "";
+    document.getElementById("spPreferred").value = sp?.preferredName || "";
+    document.getElementById("spDob").value = sp?.dateOfBirth || "";
+    document.getElementById("spEmails").value = (sp?.emails || []).map(e => e.email).join("\n");
+    document.getElementById("spPhones").value =
+        (sp?.phones || []).map(ph => ph.number + (ph.type ? " " + ph.type : "")).join("\n");
+    document.getElementById("spNotes").value = sp?.notes || "";
+    document.getElementById("spRelationship").value = sp?.relationship || "PARTNER";
+    openDialog("secondPersonForm");
+}
+
+function saveSecondPerson() {
+    const payload = nmPersonPayload("sp");
+    if (!payload.givenName || !payload.familyName) {
+        return say("Given name and family name are required for the second person.", true);
+    }
+    payload.relationship = document.getElementById("spRelationship").value;
+    nmSecondPerson = payload;
+    closeDialog("secondPersonForm");
+    nmRenderStatus();
+}
+
+function nmResetForm() {
+    document.getElementById("nmSuccess").hidden = true;
+    document.getElementById("nmForm").hidden = false;
+    for (const suffix of ["Title", "Given", "Family", "Preferred", "Dob", "Emails", "Phones", "Notes"]) {
+        document.getElementById("nm" + suffix).value = "";
+    }
+    const hn = document.getElementById("nmHouseholdName");
+    hn.value = "";
+    delete hn.dataset.touched;
+    document.getElementById("nmDupResults").hidden = true;
+    nmSecondPerson = null;
+    nmFillPeriods(); // also renders status + second-person summary
+}
+
+async function nmCreate() {
+    const person = nmPersonPayload("nm");
+    if (!person.givenName || !person.familyName) {
+        return say("Given name and family name are required.", true);
+    }
+    const periodId = Number(document.getElementById("nmPeriod").value);
+    const typeId = Number(document.getElementById("nmType").value);
+    if (!periodId || !typeId) return say("Pick a period and a membership type.", true);
+    const body = {
+        person,
+        householdName: document.getElementById("nmHouseholdName").value.trim() || null,
+        membershipPeriodId: periodId,
+        membershipTypeId: typeId,
+    };
+    if (nmSecondPerson) body.secondPerson = nmSecondPerson;
+    const response = await registerCall("/admin/new-member", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    if (!response) return;
+    nmShowSuccess(await response.json(), periodId);
+}
+
+function nmShowSuccess(result, periodId) {
+    document.getElementById("nmForm").hidden = true;
+    const el = document.getElementById("nmSuccess");
+    el.innerHTML = "";
+    el.hidden = false;
+    const line = (html) => { const p = document.createElement("p"); p.innerHTML = html; el.appendChild(p); };
+    line(`Created household #${result.householdId} and membership #${result.membershipId} — `
+        + `${statusLabel(result.status)}, due ${dollars(result.amountDueCents)}.`);
+    for (const w of result.warnings) line(`<span class="warn-note">${w}</span>`);
+    line(`<a href="index.html?household=${result.householdId}">Open household</a> · `
+        + `<a href="index.html?membership=${result.membershipId}&period=${periodId}">`
+        + "Open membership (renewals — record a payment)</a>");
+    const pay = document.createElement("button");
+    pay.type = "button";
+    pay.textContent = "Copy pay link";
+    pay.onclick = () => copyPayLink(result.membershipId);
+    el.appendChild(pay);
+    const again = document.createElement("button");
+    again.type = "button";
+    again.className = "secondary";
+    again.textContent = "Add another member";
+    again.onclick = nmResetForm;
+    el.appendChild(again);
+}
+
+function wireNewMember() {
+    document.getElementById("nmFamily").onblur = () => {
+        const hn = document.getElementById("nmHouseholdName");
+        if (!hn.dataset.touched) {
+            const family = document.getElementById("nmFamily").value.trim();
+            hn.value = family ? `${family} household` : "";
+        }
+        nmCheckDuplicates();
+    };
+    document.getElementById("nmHouseholdName").oninput = () =>
+        { document.getElementById("nmHouseholdName").dataset.touched = "1"; };
+    document.getElementById("nmEmails").onblur = nmCheckDuplicates;
+    document.getElementById("nmPeriod").onchange = nmFillTypes;
+    document.getElementById("nmType").onchange = nmOnTypeChanged;
+    document.getElementById("nmAddSecond").onclick = () => openSecondPersonForm();
+    document.getElementById("spSave").onclick = saveSecondPerson;
+    document.getElementById("spCancel").onclick = () => closeDialog("secondPersonForm");
+    document.getElementById("nmCreate").onclick = nmCreate;
+    document.getElementById("newMemberSection").hidden = false;
+}
+
 // ---- menu + per-page wiring -------------------------------------------------
 
 // the admin panel is split across pages that share this script; each page
 // carries only its own sections, and the boot wires whatever is present
 const MENU = [
     {href: "index.html", label: "Register & renewals"},
+    {href: "new-member.html", label: "New member"},
     {href: "import.html", label: "Import members"},
     {href: "users.html", label: "Users"},
 ];
@@ -1128,14 +1388,24 @@ async function wireUsers() {
             renderMenu();
             if (document.getElementById("usersSection")) await wireUsers();
             if (document.getElementById("importSection")) { wireImport(); await loadPeriods(); }
+            if (document.getElementById("newMemberSection")) {
+                wireNewMember();
+                await loadPeriods();
+                nmResetForm();
+            }
+            // CR-010 success-screen deep links: index.html?household=<id> and
+            // ?membership=<id>&period=<id> open straight to that detail dialog
+            const params = new URLSearchParams(location.search);
             if (document.getElementById("registerSection")) {
                 wireRegister();
                 await renderPeople();
                 await renderHouseholds();
+                if (params.has("household")) await openHousehold(Number(params.get("household")));
             }
             if (document.getElementById("renewalsSection")) {
                 wireRenewals();
-                await loadPeriods();
+                await loadPeriods(params.has("period") ? Number(params.get("period")) : undefined);
+                if (params.has("membership")) await openMembership(Number(params.get("membership")));
             }
         }
     } catch (e) {

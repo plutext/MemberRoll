@@ -90,23 +90,26 @@ final class PersonStore {
 
     /** Insert person + contact rows; the draft's id is ignored. */
     Person create(Person draft) {
-        return jdbi.inTransaction(handle -> {
-            long id = handle.createUpdate(
-                    "INSERT INTO person (title, given_name, family_name, preferred_name,"
-                    + " date_of_birth, deceased_date, notes)"
-                    + " VALUES (:title, :given, :family, :preferred, :dob, :deceased, :notes)")
-                    .bind("title", draft.title())
-                    .bind("given", draft.givenName())
-                    .bind("family", draft.familyName())
-                    .bind("preferred", draft.preferredName())
-                    .bind("dob", draft.dateOfBirth())
-                    .bind("deceased", draft.deceasedDate())
-                    .bind("notes", draft.notes())
-                    .executeAndReturnGeneratedKeys("person_id")
-                    .mapTo(Long.class).one();
-            insertContacts(handle, id, draft);
-            return get(handle, id).orElseThrow();
-        });
+        return jdbi.inTransaction(handle -> create(handle, draft));
+    }
+
+    /** Handle-taking variant (CR-010): lets a caller compose this into a larger transaction. */
+    Person create(Handle handle, Person draft) {
+        long id = handle.createUpdate(
+                "INSERT INTO person (title, given_name, family_name, preferred_name,"
+                + " date_of_birth, deceased_date, notes)"
+                + " VALUES (:title, :given, :family, :preferred, :dob, :deceased, :notes)")
+                .bind("title", draft.title())
+                .bind("given", draft.givenName())
+                .bind("family", draft.familyName())
+                .bind("preferred", draft.preferredName())
+                .bind("dob", draft.dateOfBirth())
+                .bind("deceased", draft.deceasedDate())
+                .bind("notes", draft.notes())
+                .executeAndReturnGeneratedKeys("person_id")
+                .mapTo(Long.class).one();
+        insertContacts(handle, id, draft);
+        return get(handle, id).orElseThrow();
     }
 
     /** Full-payload update; empty if no such person. */

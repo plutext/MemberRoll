@@ -283,9 +283,12 @@ public class AdminPeriodsResource {
         AdminPeopleResource.addNullable(b, "journalPriceCents", p.journalPriceCents());
         JsonArrayBuilder prices = Json.createArrayBuilder();
         for (PeriodStore.Price price : p.prices()) {
-            prices.add(Json.createObjectBuilder()
+            JsonObjectBuilder pb = Json.createObjectBuilder()
                     .add("typeId", price.typeId()).add("type", price.typeName())
-                    .add("amountCents", price.amountCents()));
+                    .add("amountCents", price.amountCents());
+            AdminPeopleResource.addNullable(pb, "minimumPeople", price.minimumPeople());
+            AdminPeopleResource.addNullable(pb, "maximumPeople", price.maximumPeople());
+            prices.add(pb);
         }
         b.add("prices", prices);
         b.add("countsByStatus", countsJson(p.countsByStatus()));

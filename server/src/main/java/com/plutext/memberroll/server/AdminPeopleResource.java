@@ -123,6 +123,15 @@ public class AdminPeopleResource {
         } catch (Exception e) {
             throw new IllegalArgumentException("body must be a JSON object");
         }
+        return parseObject(o);
+    }
+
+    /**
+     * Same parsing/validation as {@link #parse}, for a caller (CR-010's
+     * composite new-member endpoint) that already has the person fields as a
+     * nested {@link JsonObject} rather than the whole request body.
+     */
+    static PersonStore.Person parseObject(JsonObject o) {
         try {
             String given = o.getString("givenName", "").trim();
             String family = o.getString("familyName", "").trim();

@@ -624,6 +624,114 @@ else
   echo "note: psql not found — skipping CR-004 rows (token seeding and side-effect checks need psql)"
 fi
 
+# --- admin "new member" composite endpoint (CR-010) -------------------------
+# One POST creates person(s) + household + membership atomically (the
+# resource owns a single Handle transaction — any failure rolls back
+# everything, including an already-inserted first person). Reuses the CR-003
+# fixtures' $P2526/$T_SINGLE/$T_HH/$T_LIFE/$TGTID: LIFE was added via psql
+# AFTER $P2526 was seeded by V2, so it has no membership_type_price row there
+# (the CR10-11 "no price" fixture) but IS priced (at 0) in $TGTID (CR3-05,
+# the CR10-12 zero-due fixture).
+check "CR10-01 new-member guest 403"    "403" "$(code -X POST $API/admin/new-member -H 'Content-Type: application/json' -d '{}')"
+check "CR10-02 new-member user 403"     "403" "$(code -X POST $API/admin/new-member -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
+check "CR10-03 new-member noaud 401"    "401" "$(code -X POST $API/admin/new-member -H "Authorization: Bearer $NOAUD" -H 'Content-Type: application/json' -d '{}')"
+
+if [ "$PSQL_OK" = 1 ]; then
+  NM="Nm$$"
+
+  # CR10-04: SINGLE, person only
+  check "CR10-04 SINGLE person only 201" "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Nora\",\"familyName\":\"${NM}A\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}")"
+  NM_A_HH=$(body | jsq "j['householdId']"); NM_A_MEM=$(body | jsq "j['membershipId']")
+  check "CR10-04b status pending"        "PENDING_PAYMENT" "$(body | jsq "j['status']")"
+  check "CR10-04c amount due 4500"       "4500" "$(body | jsq "j['amountDueCents']")"
+  check "CR10-04d one personId"          "1" "$(body | jsq "len(j['personIds'])")"
+  check "CR10-04e household name default" "${NM}A household" "$(psqlq "SELECT household_name FROM household WHERE household_id=$NM_A_HH")"
+  check "CR10-04f primary contact is member" "t" "$(psqlq "SELECT h.primary_contact_person_id = hp.person_id FROM household h JOIN household_person hp ON hp.household_id=h.household_id WHERE h.household_id=$NM_A_HH")"
+  check "CR10-04g household_person MEMBER"     "MEMBER" "$(psqlq "SELECT relationship_type FROM household_person WHERE household_id=$NM_A_HH")"
+  check "CR10-04g2 household_person joined today" "t" "$(psqlq "SELECT joined_household_date=current_date FROM household_person WHERE household_id=$NM_A_HH")"
+  check "CR10-04h membership_person statutory" "t" "$(psqlq "SELECT is_statutory_member FROM membership_person WHERE membership_id=$NM_A_MEM")"
+  check "CR10-04h2 membership_person voting"   "t" "$(psqlq "SELECT has_voting_rights FROM membership_person WHERE membership_id=$NM_A_MEM")"
+
+  # CR10-05: HOUSEHOLD, person + secondPerson (PARTNER) — only MEMBER votes
+  # (corrected 2026-07-18: PARTNER receives membership benefits but does
+  # not vote/hold statutory-member status, see ROADMAP.md "Voting rights,
+  # corrected")
+  check "CR10-05 HOUSEHOLD both 201"     "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Otto\",\"familyName\":\"${NM}B\"},\"secondPerson\":{\"givenName\":\"Pia\",\"familyName\":\"${NM}B\",\"relationship\":\"PARTNER\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_HH}")"
+  NM_B_HH=$(body | jsq "j['householdId']"); NM_B_MEM=$(body | jsq "j['membershipId']")
+  check "CR10-05b two personIds"         "2" "$(body | jsq "len(j['personIds'])")"
+  check "CR10-05c two household_person rows" "2" "$(psqlq "SELECT count(*) FROM household_person WHERE household_id=$NM_B_HH")"
+  check "CR10-05d one membership"        "1" "$(psqlq "SELECT count(*) FROM membership WHERE household_id=$NM_B_HH")"
+  check "CR10-05e only MEMBER votes"     "1" "$(psqlq "SELECT count(*) FROM membership_person WHERE membership_id=$NM_B_MEM AND has_voting_rights")"
+  check "CR10-05f PARTNER not voting"    "f" "$(psqlq "SELECT has_voting_rights FROM membership_person mp JOIN person p ON p.person_id=mp.person_id WHERE mp.membership_id=$NM_B_MEM AND p.given_name='Pia'")"
+
+  # CR10-06: SINGLE with a secondPerson relationship MEMBER -> 400
+  # (maximum_people counts formal/MEMBER people only); nothing created
+  BEFORE=$(psqlq "SELECT count(*) FROM person WHERE family_name='${NM}C'")
+  check "CR10-06 SINGLE+second MEMBER 400" "400" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Quin\",\"familyName\":\"${NM}C\"},\"secondPerson\":{\"givenName\":\"Rex\",\"familyName\":\"${NM}C\",\"relationship\":\"MEMBER\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}")"
+  check "CR10-06b names the type"        "true" "$(body | jsq "str('SINGLE' in j['error']).lower()")"
+  check "CR10-06c nothing created"       "$BEFORE" "$(psqlq "SELECT count(*) FROM person WHERE family_name='${NM}C'")"
+
+  # CR10-06p: SINGLE with a secondPerson relationship PARTNER (the default)
+  # -> 201 — a non-voting second person does NOT count against
+  # maximum_people (2026-07-18 correction: the cap is on formal members,
+  # not household occupants)
+  check "CR10-06p SINGLE+PARTNER 201"    "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Sky\",\"familyName\":\"${NM}P\"},\"secondPerson\":{\"givenName\":\"Robin\",\"familyName\":\"${NM}P\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}")"
+  NM_P_MEM=$(body | jsq "j['membershipId']")
+  check "CR10-06p2 two personIds"        "2" "$(body | jsq "len(j['personIds'])")"
+  check "CR10-06p3 PARTNER not voting"   "f" "$(psqlq "SELECT has_voting_rights FROM membership_person mp JOIN person p ON p.person_id=mp.person_id WHERE mp.membership_id=$NM_P_MEM AND p.given_name='Robin'")"
+
+  # CR10-07: HOUSEHOLD, person only -> 201 + minimum_people warning
+  check "CR10-07 HOUSEHOLD person only 201" "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Sian\",\"familyName\":\"${NM}D\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_HH}")"
+  check "CR10-07b under-minimum warning" "true" "$(body | jsq "str(any('at least 2 people' in w for w in j['warnings'])).lower()")"
+
+  # CR10-08: secondPerson relationship DEPENDANT -> non-voting membership_person
+  check "CR10-08 DEPENDANT second 201"   "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Tam\",\"familyName\":\"${NM}E\"},\"secondPerson\":{\"givenName\":\"Uma\",\"familyName\":\"${NM}E\",\"relationship\":\"DEPENDANT\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_HH}")"
+  NM_E_MEM=$(body | jsq "j['membershipId']")
+  check "CR10-08b dependant not voting"  "f" "$(psqlq "SELECT has_voting_rights FROM membership_person mp JOIN person p ON p.person_id=mp.person_id WHERE mp.membership_id=$NM_E_MEM AND p.given_name='Uma'")"
+
+  # CR10-09: missing familyName on secondPerson -> 400, atomic (person 1 rolled back too)
+  check "CR10-09 bad secondPerson 400"   "400" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Vic\",\"familyName\":\"${NM}F\"},\"secondPerson\":{\"givenName\":\"NoSurname\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_HH}")"
+  check "CR10-09b nothing created at all" "0" "$(psqlq "SELECT count(*) FROM person WHERE family_name='${NM}F'")"
+
+  # CR10-10: unknown period/type ids -> 400 naming the field
+  check "CR10-10 unknown period 400"     "400" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Wes\",\"familyName\":\"${NM}G\"},\"membershipPeriodId\":999999,\"membershipTypeId\":$T_SINGLE}")"
+  check "CR10-10b names periodId"        "true" "$(body | jsq "str('membershipPeriodId' in j['error']).lower()")"
+  check "CR10-10c unknown type 400"      "400" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Xia\",\"familyName\":\"${NM}H\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":999999}")"
+  check "CR10-10d names typeId"          "true" "$(body | jsq "str('membershipTypeId' in j['error']).lower()")"
+
+  # CR10-11: type with no price for the period
+  check "CR10-11 no price for period 400" "400" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Yun\",\"familyName\":\"${NM}I\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_LIFE}")"
+
+  # CR10-12: zero-due type (LIFE, priced in TGTID) -> 201, ACTIVE, no payment row
+  check "CR10-12 LIFE zero-due 201"      "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Zane\",\"familyName\":\"${NM}J\"},\"membershipPeriodId\":$TGTID,\"membershipTypeId\":$T_LIFE}")"
+  check "CR10-12b status ACTIVE"         "ACTIVE" "$(body | jsq "j['status']")"
+  NM_J_MEM=$(body | jsq "j['membershipId']")
+  check "CR10-12c approved today"        "t" "$(psqlq "SELECT approved_date = current_date FROM membership WHERE membership_id=$NM_J_MEM")"
+  check "CR10-12d no payment row"        "0" "$(psqlq "SELECT count(*) FROM payment_allocation WHERE membership_id=$NM_J_MEM")"
+
+  # CR10-13: an engineered period whose late_joining_cutoff is always
+  # yesterday (relative to today, not a hardcoded seed date like $P2526's —
+  # that made this check pass or fail on wall-clock timing rather than
+  # testing the feature on its own terms). Via the periods API (like
+  # CR3-05's TGT period) rather than psql, since psql -tAc can't cleanly
+  # capture a bare INSERT...RETURNING id (the command-tag line rides along).
+  check "CR10-13setup cutoff period 201" "201" "$(JPOST $API/admin/periods "{\"name\":\"NmCutoff$$\",\"startDate\":\"$(date -d '-400 days' +%F)\",\"endDate\":\"$(date -d '+300 days' +%F)\",\"lateJoiningCutoff\":\"$(date -d '-1 day' +%F)\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}")"
+  CUTOFF_PERIOD=$(body | jsq "j['id']")
+  check "CR10-13 late-joining create 201" "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Amy\",\"familyName\":\"${NM}K\"},\"membershipPeriodId\":$CUTOFF_PERIOD,\"membershipTypeId\":$T_SINGLE}")"
+  check "CR10-13b late-joining warning"  "true" "$(body | jsq "str(any('late-joining' in w for w in j['warnings'])).lower()")"
+
+  # CR10-14: explicit householdName used verbatim
+  check "CR10-14 explicit name 201"      "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Bo\",\"familyName\":\"${NM}L\"},\"householdName\":\"The $NM Lounge\",\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}")"
+  NM_L_HH=$(body | jsq "j['householdId']")
+  check "CR10-14b name verbatim"         "The $NM Lounge" "$(psqlq "SELECT household_name FROM household WHERE household_id=$NM_L_HH")"
+
+  # CR10-15: re-run of CR10-04's exact body -> 201 again, no dedup rejection
+  check "CR10-15 re-run same body 201"   "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Nora\",\"familyName\":\"${NM}A\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}")"
+  check "CR10-15b second household created" "2" "$(psqlq "SELECT count(*) FROM household h JOIN household_person hp ON hp.household_id=h.household_id JOIN person p ON p.person_id=hp.person_id WHERE p.given_name='Nora' AND p.family_name='${NM}A'")"
+else
+  echo "note: psql not found — skipping CR-010 data cases (household/membership_person assertions need psql)"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.js)"
@@ -633,6 +741,7 @@ check "33 admin page 200"              "200" "$(code http://localhost:${PORT:-18
 check "33b admin users page 200"       "200" "$(code http://localhost:${PORT:-18080}/server/admin/users.html)"
 check "33c admin import page 200"      "200" "$(code http://localhost:${PORT:-18080}/server/admin/import.html)"
 check "33d admin css served"           "200" "$(code http://localhost:${PORT:-18080}/server/admin/admin.css)"
+check "33e admin new-member page 200"  "200" "$(code http://localhost:${PORT:-18080}/server/admin/new-member.html)"
 check "34 auth.js served"              "200" "$(code http://localhost:${PORT:-18080}/server/shared/auth.js)"
 
 echo

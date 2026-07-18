@@ -267,11 +267,14 @@ MembershipPerson
 
 This also allows household members who are children, non-voting associates, or publication recipients to be distinguished from formal voting members.
 
-For the Yass & District Historical Society the constitutional question
-is settled (2026-07-17): **both adults in a Household membership are
-statutory voting members** — the rollover defaults both flags true for
-adult household members; children and associates are flagged
-individually.
+For the Yass & District Historical Society: **only the person recorded
+with `relationship_type` MEMBER is a formal, statutory voting member**
+(2026-07-18 — corrects an earlier 2026-07-17 note that asserted "both
+adults vote" without a recorded rationale). A PARTNER, DEPENDANT or
+OTHER household member is covered by the membership and receives its
+benefits, but does not vote, hold statutory-member status, or stand for
+committee — `insertMembershipPerson` sets those three flags true only
+for MEMBER.
 
 ## Addresses and contact details
 
@@ -573,3 +576,10 @@ CR-001; amendments applied in place:
 12. `MembershipPerson` field lists unified on `start_date`/`end_date`;
     noted the society's decision that both adults in a Household
     membership are statutory voting members.
+
+**2026-07-18** — correction: only `relationship_type` MEMBER carries
+statutory/voting/committee rights (`MembershipPerson.is_statutory_member`
+/ `has_voting_rights` / `eligible_for_committee`); PARTNER, DEPENDANT and
+OTHER receive membership benefits but do not vote. Item 12 above ("both
+adults vote") was asserted without a recorded rationale and is
+superseded by this entry — see "Formal member status" above.

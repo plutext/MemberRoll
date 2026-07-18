@@ -20,8 +20,9 @@ designed as a whole) but grow their APIs in CR-003; publications wait
 for CR-004/005.
 
 Decisions inherited from [docs/ROADMAP.md](../ROADMAP.md): Postgres,
-JDBI 3 + hand-written SQL + Flyway, no ORM, single-tenant, both adults
-in a Household membership are statutory voting members.
+JDBI 3 + hand-written SQL + Flyway, no ORM, single-tenant, only the
+`relationship_type` MEMBER is a statutory voting member of a household
+membership (corrected 2026-07-18 — see ROADMAP.md).
 
 ## Approach
 

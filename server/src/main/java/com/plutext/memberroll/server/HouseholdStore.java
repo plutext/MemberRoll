@@ -92,21 +92,24 @@ final class HouseholdStore {
      * empty if the person does not exist.
      */
     Optional<Household> create(String name, long primaryContactPersonId) {
-        return jdbi.inTransaction(handle -> {
-            if (!personExists(handle, primaryContactPersonId)) return Optional.empty();
-            long id = handle.createUpdate(
-                    "INSERT INTO household (household_name, primary_contact_person_id)"
-                    + " VALUES (:name, :contact)")
-                    .bind("name", name).bind("contact", primaryContactPersonId)
-                    .executeAndReturnGeneratedKeys("household_id")
-                    .mapTo(Long.class).one();
-            handle.createUpdate(
-                    "INSERT INTO household_person (household_id, person_id, relationship_type, joined_household_date)"
-                    + " VALUES (:household, :person, 'MEMBER', current_date)")
-                    .bind("household", id).bind("person", primaryContactPersonId)
-                    .execute();
-            return get(handle, id);
-        });
+        return jdbi.inTransaction(handle -> create(handle, name, primaryContactPersonId));
+    }
+
+    /** Handle-taking variant (CR-010): lets a caller compose this into a larger transaction. */
+    Optional<Household> create(Handle handle, String name, long primaryContactPersonId) {
+        if (!personExists(handle, primaryContactPersonId)) return Optional.empty();
+        long id = handle.createUpdate(
+                "INSERT INTO household (household_name, primary_contact_person_id)"
+                + " VALUES (:name, :contact)")
+                .bind("name", name).bind("contact", primaryContactPersonId)
+                .executeAndReturnGeneratedKeys("household_id")
+                .mapTo(Long.class).one();
+        handle.createUpdate(
+                "INSERT INTO household_person (household_id, person_id, relationship_type, joined_household_date)"
+                + " VALUES (:household, :person, 'MEMBER', current_date)")
+                .bind("household", id).bind("person", primaryContactPersonId)
+                .execute();
+        return get(handle, id);
     }
 
     /**
@@ -132,21 +135,24 @@ final class HouseholdStore {
     }
 
     AddResult addPerson(long householdId, long personId, String relationshipType) {
-        return jdbi.inTransaction(handle -> {
-            if (handle.createQuery("SELECT count(*) FROM household WHERE household_id = :id")
-                    .bind("id", householdId).mapTo(Integer.class).one() == 0) {
-                return AddResult.HOUSEHOLD_NOT_FOUND;
-            }
-            if (!personExists(handle, personId)) return AddResult.PERSON_NOT_FOUND;
-            if (isCurrentMember(handle, householdId, personId)) return AddResult.ALREADY_MEMBER;
-            handle.createUpdate(
-                    "INSERT INTO household_person (household_id, person_id, relationship_type, joined_household_date)"
-                    + " VALUES (:household, :person, :type, current_date)")
-                    .bind("household", householdId).bind("person", personId)
-                    .bind("type", relationshipType)
-                    .execute();
-            return AddResult.ADDED;
-        });
+        return jdbi.inTransaction(handle -> addPerson(handle, householdId, personId, relationshipType));
+    }
+
+    /** Handle-taking variant (CR-010): lets a caller compose this into a larger transaction. */
+    AddResult addPerson(Handle handle, long householdId, long personId, String relationshipType) {
+        if (handle.createQuery("SELECT count(*) FROM household WHERE household_id = :id")
+                .bind("id", householdId).mapTo(Integer.class).one() == 0) {
+            return AddResult.HOUSEHOLD_NOT_FOUND;
+        }
+        if (!personExists(handle, personId)) return AddResult.PERSON_NOT_FOUND;
+        if (isCurrentMember(handle, householdId, personId)) return AddResult.ALREADY_MEMBER;
+        handle.createUpdate(
+                "INSERT INTO household_person (household_id, person_id, relationship_type, joined_household_date)"
+                + " VALUES (:household, :person, :type, current_date)")
+                .bind("household", householdId).bind("person", personId)
+                .bind("type", relationshipType)
+                .execute();
+        return AddResult.ADDED;
     }
 
     RemoveResult removePerson(long householdId, long personId) {
