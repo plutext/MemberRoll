@@ -45,8 +45,9 @@ import java.util.Optional;
 final class PeriodStore {
 
     record Price(long typeId, String typeName, int amountCents) {}
+    /** {@code journalPriceCents} null = the journal add-on is not offered that period (CR-004). */
     record Period(long id, String name, LocalDate startDate, LocalDate endDate,
-                  LocalDate renewalOpenDate, LocalDate lateJoiningCutoff,
+                  LocalDate renewalOpenDate, LocalDate lateJoiningCutoff, Integer journalPriceCents,
                   List<Price> prices, Map<String, Integer> countsByStatus) {}
 
     private final Jdbi jdbi;
@@ -60,7 +61,7 @@ final class PeriodStore {
         return jdbi.withHandle(handle -> {
             List<Period> bases = handle.createQuery(
                     "SELECT membership_period_id, name, start_date, end_date,"
-                    + " renewal_open_date, late_joining_cutoff FROM membership_period"
+                    + " renewal_open_date, late_joining_cutoff, journal_price_cents FROM membership_period"
                     + " ORDER BY start_date DESC, membership_period_id DESC")
                     .map((rs, ctx) -> mapPeriod(rs)).list();
             List<Period> full = new ArrayList<>(bases.size());
@@ -76,7 +77,7 @@ final class PeriodStore {
     static Optional<Period> get(Handle handle, long id) {
         return handle.createQuery(
                 "SELECT membership_period_id, name, start_date, end_date,"
-                + " renewal_open_date, late_joining_cutoff FROM membership_period"
+                + " renewal_open_date, late_joining_cutoff, journal_price_cents FROM membership_period"
                 + " WHERE membership_period_id = :id")
                 .bind("id", id)
                 .map((rs, ctx) -> mapPeriod(rs))
@@ -92,7 +93,8 @@ final class PeriodStore {
      * typed in, so a gap is caught here, not at the next rollover.
      */
     Period create(Handle handle, String name, LocalDate start, LocalDate end,
-                  LocalDate renewalOpen, LocalDate lateCutoff, Map<String, Integer> pricesByType) {
+                  LocalDate renewalOpen, LocalDate lateCutoff, Integer journalPriceCents,
+                  Map<String, Integer> pricesByType) {
         if (handle.createQuery("SELECT count(*) FROM membership_period WHERE name = :name")
                 .bind("name", name).mapTo(Integer.class).one() > 0) {
             throw new ConflictException("a period named '" + name + "' already exists");
@@ -100,10 +102,11 @@ final class PeriodStore {
         Map<String, Long> types = loadTypeIds(handle);
         requirePriceForEveryType(types, pricesByType);
         long id = handle.createUpdate(
-                "INSERT INTO membership_period (name, start_date, end_date, renewal_open_date, late_joining_cutoff)"
-                + " VALUES (:name, :start, :end, :open, :cutoff)")
+                "INSERT INTO membership_period (name, start_date, end_date, renewal_open_date,"
+                + " late_joining_cutoff, journal_price_cents)"
+                + " VALUES (:name, :start, :end, :open, :cutoff, :journal)")
                 .bind("name", name).bind("start", start).bind("end", end)
-                .bind("open", renewalOpen).bind("cutoff", lateCutoff)
+                .bind("open", renewalOpen).bind("cutoff", lateCutoff).bind("journal", journalPriceCents)
                 .executeAndReturnGeneratedKeys("membership_period_id").mapTo(Long.class).one();
         types.forEach((typeName, typeId) ->
                 insertPrice(handle, typeId, id, pricesByType.get(typeName)));
@@ -119,14 +122,15 @@ final class PeriodStore {
      * (part-paid memberships stay frozen; repricing under money is drift).
      */
     Optional<Period> update(Handle handle, long id, LocalDate start, LocalDate end,
-                            LocalDate renewalOpen, LocalDate lateCutoff,
+                            LocalDate renewalOpen, LocalDate lateCutoff, Integer journalPriceCents,
                             Map<String, Integer> pricesByType, boolean repriceUnpaid) {
         int updated = handle.createUpdate(
                 "UPDATE membership_period SET start_date = :start, end_date = :end,"
-                + " renewal_open_date = :open, late_joining_cutoff = :cutoff"
+                + " renewal_open_date = :open, late_joining_cutoff = :cutoff,"
+                + " journal_price_cents = :journal"
                 + " WHERE membership_period_id = :id")
                 .bind("id", id).bind("start", start).bind("end", end)
-                .bind("open", renewalOpen).bind("cutoff", lateCutoff)
+                .bind("open", renewalOpen).bind("cutoff", lateCutoff).bind("journal", journalPriceCents)
                 .execute();
         if (updated == 0) return Optional.empty();
         Map<String, Long> types = loadTypeIds(handle);
@@ -206,7 +210,7 @@ final class PeriodStore {
                 .map((rs, ctx) -> Map.entry(rs.getString("status"), rs.getInt("n")))
                 .forEach(e -> counts.put(e.getKey(), e.getValue()));
         return new Period(p.id(), p.name(), p.startDate(), p.endDate(),
-                p.renewalOpenDate(), p.lateJoiningCutoff(), prices, counts);
+                p.renewalOpenDate(), p.lateJoiningCutoff(), p.journalPriceCents(), prices, counts);
     }
 
     private static Period mapPeriod(ResultSet rs) {
@@ -214,6 +218,7 @@ final class PeriodStore {
             return new Period(rs.getLong("membership_period_id"), rs.getString("name"),
                     localDate(rs, "start_date"), localDate(rs, "end_date"),
                     localDate(rs, "renewal_open_date"), localDate(rs, "late_joining_cutoff"),
+                    (Integer) rs.getObject("journal_price_cents"),
                     List.of(), Map.of());
         } catch (SQLException e) {
             throw new IllegalStateException(e);

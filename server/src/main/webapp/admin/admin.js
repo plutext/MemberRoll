@@ -34,6 +34,21 @@ Auth.onFresh401 = (text) => {
 function say(text, isError) {
     message.textContent = text;
     message.className = isError ? "error" : "";
+    // a native modal greys out and inerts the page behind it — including the
+    // header line above. Mirror the message into the topmost open dialog, or
+    // a 409 on Save reads as "nothing happened".
+    const open = document.querySelectorAll("dialog[open]");
+    const dialog = open.length ? open[open.length - 1] : null;
+    if (dialog) {
+        let box = dialog.querySelector(".dialog-message");
+        if (!box) {
+            box = document.createElement("div");
+            box.className = "dialog-message";
+            (dialog.querySelector("article") || dialog).prepend(box);
+        }
+        box.textContent = text;
+        box.classList.toggle("error", !!isError);
+    }
 }
 
 // the edit forms and detail panels are <dialog> elements — open them as
@@ -43,6 +58,12 @@ function say(text, isError) {
 // place, and showModal() on an already-open dialog throws.
 function openDialog(id) {
     const d = document.getElementById(id);
+    // don't let a previous visit's error greet the next open
+    const box = d.querySelector(".dialog-message");
+    if (box) {
+        box.textContent = "";
+        box.classList.remove("error");
+    }
     if (!d.open) d.showModal();
 }
 function closeDialog(id) {
@@ -616,7 +637,24 @@ function renderPeriodSummary() {
     const el = document.getElementById("periodSummary");
     if (!p) { el.textContent = "No period. Create one to begin."; return; }
     const prices = p.prices.map(pr => `${pr.type} ${dollars(pr.amountCents)}`).join(", ");
-    el.textContent = `${p.name}: ${p.startDate} → ${p.endDate}. Prices: ${prices || "—"}.`;
+    el.textContent = `${p.name}: ${p.startDate} → ${p.endDate}. Prices: ${prices || "—"}.`
+        + (p.journalPriceCents != null ? ` Journal add-on ${dollars(p.journalPriceCents)}.` : "");
+    document.getElementById("journalPrice").value =
+        p.journalPriceCents != null ? (p.journalPriceCents / 100).toFixed(2) : "";
+}
+
+async function saveJournalPrice() {
+    const id = selectedPeriodId();
+    if (!id) return;
+    const raw = document.getElementById("journalPrice").value.trim();
+    const response = await registerCall(`/admin/periods/${id}`, {
+        method: "PUT", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({journalPriceCents: raw === "" ? null : toCents(raw)}),
+    });
+    if (!response) return;
+    say(raw === "" ? "Journal add-on no longer offered this period."
+        : `Journal add-on price saved (${dollars(toCents(raw))}).`);
+    await loadPeriods(id);
 }
 
 async function renderMemberships() {
@@ -692,6 +730,22 @@ function renderMembershipActions(m) {
     if (m.status === "PENDING_PAYMENT") btn("Lapse", () => transition(m.id, {status: "LAPSED"}));
     if (m.status === "LAPSED") btn("Undo lapse", () => transition(m.id, {status: "PENDING_PAYMENT"}));
     if (m.status !== "CEASED") btn("Cease…", () => ceaseMembership(m.id));
+    if (m.status !== "CEASED") btn("Copy pay link", () => copyPayLink(m.id));
+}
+
+// mint a magic pay link (CR-004) for pasting into a manual email; each click
+// mints a fresh token — older unexpired links keep working
+async function copyPayLink(id) {
+    const response = await registerCall(`/admin/memberships/${id}/pay-link`, {method: "POST"});
+    if (!response) return;
+    const link = await response.json();
+    try {
+        await navigator.clipboard.writeText(link.url);
+        say(`Pay link copied to clipboard (valid until ${link.expiresAt.slice(0, 10)}): ${link.url}`);
+    } catch (e) {
+        // clipboard needs a secure context (absent on http://LAN-IP) — show it instead
+        say(`Pay link (copy manually, valid until ${link.expiresAt.slice(0, 10)}): ${link.url}`);
+    }
 }
 
 async function transition(id, body) {
@@ -735,8 +789,11 @@ async function reversePayment(membershipId, p) {
             + "This records an equal-and-opposite payment.")) return;
     const body = {
         receivedDate: today(),
+        // reversing a webhook STRIPE payment records negative STRIPE — the
+        // sanctioned refund-recording shape (CR-004), keeping per-method
+        // totals reconcilable against the Stripe dashboard
         amountCents: -p.amountCents,
-        method: p.method === "STRIPE" ? "OTHER" : p.method, // STRIPE is never hand-entered
+        method: p.method,
         notes: `reversal of payment #${p.id}`,
         allocations: p.allocations.map(a =>
             ({type: a.type, membershipId: a.membershipId, amountCents: -a.amountCents})),
@@ -819,6 +876,8 @@ function openPeriodForm() {
     document.getElementById("npEnd").value = base ? plusYear(base.endDate) : "";
     document.getElementById("npRenewalOpen").value = base ? plusYear(base.renewalOpenDate) : "";
     document.getElementById("npCutoff").value = base ? plusYear(base.lateJoiningCutoff) : "";
+    document.getElementById("npJournal").value =
+        base && base.journalPriceCents != null ? (base.journalPriceCents / 100).toFixed(2) : "";
     const priceByType = new Map((base ? base.prices : []).map(pr => [pr.type, pr.amountCents]));
     const container = document.getElementById("npPrices");
     container.innerHTML = "";
@@ -856,6 +915,8 @@ async function savePeriod() {
             name, startDate, endDate,
             renewalOpenDate: document.getElementById("npRenewalOpen").value || null,
             lateJoiningCutoff: document.getElementById("npCutoff").value || null,
+            journalPriceCents: document.getElementById("npJournal").value.trim() === ""
+                ? null : toCents(document.getElementById("npJournal").value),
             prices,
         }),
     });
@@ -975,6 +1036,7 @@ function wireRenewals() {
         document.getElementById("rolloverReport").innerHTML = "";
     };
     on("periodNew", openPeriodForm);
+    on("journalPriceSave", saveJournalPrice);
     on("npSave", savePeriod);
     on("npCancel", () => closeDialog("periodForm"));
     on("rolloverPreview", rolloverPreview);

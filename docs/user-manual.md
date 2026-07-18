@@ -138,8 +138,9 @@ Open a membership with **Manage**, then **Record payment**. The form is
 pre-filled with the outstanding **balance** as the membership amount:
 
 - Set the **Received date**, **Method** (`BANK_TRANSFER`, `CASH`, `CHEQUE`
-  or `OTHER` — card payments arrive automatically once online payment is
-  live and are never keyed in here), and an optional bank **reference**.
+  or `OTHER` — card payments arrive automatically via the online pay page
+  and are never keyed in here; `STRIPE` in this form is only for recording
+  a refund, see below), and an optional bank **reference**.
 - To split a single transfer — e.g. "$75 = $65 membership + $10 donation" —
   use **Add allocation line** for the extra part (donation or journal). The
   allocation lines must add up to the total paid.
@@ -156,6 +157,37 @@ button beside the payment: it records an equal-and-opposite entry (and notes
 which payment it reverses). Both entries stay in the record with who entered
 them and when, and the membership's status re-derives automatically — so a
 reversed payment can drop a membership back to **Unpaid**.
+
+### Online card payment — pay links
+
+Members can pay by card without any login: you send them a **pay link**
+(a long single-membership web address), the page it opens shows what's
+due, and payment happens on Stripe's hosted page — card details never
+touch this app.
+
+- **Getting a link**: open a membership with **Manage** and click
+  **Copy pay link**. Paste it into an email to the member. Each click
+  makes a fresh link; links you sent earlier keep working until the
+  membership year ends. (The renewal-email feature will later send these
+  automatically.)
+- **What the member sees**: household, year, amount due and paid. If a
+  **journal add-on price** is set on the period (the field next to the
+  period selector), the page offers the journal as a tick-box; there's
+  also an optional donation amount. After paying they land back on the
+  page, which confirms "you are financial for …", and they receive a
+  receipt email. The membership flips to **Paid** here automatically —
+  nothing to key in.
+- **Lost links**: someone whose link expired can enter their email
+  address on the pay page; if it matches a member, the link is emailed
+  to them. The page never reveals membership details to visitors without
+  a valid link.
+- **Refunds**: make the refund itself in the Stripe dashboard, then
+  record it here as a payment with method `STRIPE` and a **negative**
+  amount. (Positive `STRIPE` entries are refused — real card payments
+  only ever arrive via Stripe's confirmation.)
+- If a member pays online after you've already keyed in their bank
+  transfer, both are recorded and the membership shows overpaid — refund
+  one of them as above.
 
 ### Lapsing and ceasing
 

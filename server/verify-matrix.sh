@@ -417,7 +417,217 @@ else
   echo "note: psql not found — skipping CR-003 data cases (LIFE type + rollover fixtures need psql)"
 fi
 
+# --- Stripe pay links + webhook + lost-link (CR-004) -------------------------
+# Offline by design: tokens come from the mint endpoint (or are seeded via
+# psql for the expired case), and webhook signatures are SELF-SIGNED — the
+# signature is HMAC-SHA256 over "t.payload" with STRIPE_WEBHOOK_SECRET, which
+# this script holds (default matches the documented dev cargo invocation).
+# Checkout-session rows need the network and a real test key: they run when
+# STRIPE_SECRET_KEY is set and report SKIP otherwise. Webhook rows likewise
+# SKIP when the server has no STRIPE_WEBHOOK_SECRET (probe below); mail rows
+# SKIP when Mailpit isn't reachable.
+WH_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_devmatrix}
+MAILPIT=http://localhost:${MAILPIT_UI_PORT:-18025}
+
+sha() { python3 -c "import hashlib,sys;print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" "$1"; }
+whsign() { # payload [timestamp] → prints "t=..,v1=.."
+  local ts=${2:-$(date +%s)}
+  local sig
+  sig=$(python3 -c "import hmac,hashlib,sys;print(hmac.new(sys.argv[1].encode(),sys.argv[2].encode(),hashlib.sha256).hexdigest())" "$WH_SECRET" "$ts.$1")
+  echo "t=$ts,v1=$sig"
+}
+whpost() { # payload signature-header
+  code -X POST $API/stripe/webhook -H "Stripe-Signature: $2" -H 'Content-Type: application/json' --data-binary "$1"
+}
+whevent() { # session-json-fragment → full event json (created = now)
+  echo "{\"id\":\"evt_cr4$$\",\"type\":\"checkout.session.completed\",\"created\":$(date +%s),\"data\":{\"object\":$1}}"
+}
+mailpit_text() { # to-address → text body of the newest matching message (polls briefly)
+  local id=""
+  for _ in 1 2 3 4 5 6; do
+    id=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$1%22" | jsq "j['messages'][0]['ID']")
+    [ -n "$id" ] && break
+    sleep 0.5
+  done
+  [ -n "$id" ] && curl -s "$MAILPIT/api/v1/message/$id" | jsq "j['Text']"
+}
+
+if [ "$PSQL_OK" = 1 ]; then
+  PY="Pay$$"
+  # fixtures: three households in the seeded (current) period
+  JPOST $API/admin/people "{\"givenName\":\"Peta\",\"familyName\":\"$PY\",\"emails\":[{\"email\":\"receipt.$$@example.com\",\"isPrimary\":true}]}" >/dev/null; PP1=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$PY HH\",\"primaryContactPersonId\":$PP1}" >/dev/null; PHH=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$PHH,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; MP=$(body | jsq "j['id']")
+  JPOST $API/admin/people "{\"givenName\":\"Quinn\",\"familyName\":\"$PY\"}" >/dev/null; PP2=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$PY HH2\",\"primaryContactPersonId\":$PP2}" >/dev/null; PHH2=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$PHH2,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; MP2=$(body | jsq "j['id']")
+
+  # reset the seeded period's journal price so re-runs start from "not offered"
+  JPUT "$API/admin/periods/$P2526" '{"journalPriceCents":null}' >/dev/null
+
+  # CR4-01/02: admin mints pay links; each mint is a FRESH token (only hashes
+  # are stored, so an earlier token cannot be re-presented) and older
+  # unexpired links stay valid
+  check "CR4-01 mint pay-link 200"       "200" "$(code -X POST $API/admin/memberships/$MP/pay-link -H "Authorization: Bearer $ADMIN")"
+  URL1=$(body | jsq "j['url']"); TK1=${URL1##*t=}
+  check "CR4-01b url points at pay page" "true" "$(python3 -c "print(str('/web/pay.html?t=' in '$URL1').lower())")"
+  # expires the day after end_date in the SERVER's zone; psql may render the
+  # timestamptz in another zone, so allow either calendar date
+  check "CR4-01c hash row, expires at period end" "t" "$(psqlq "SELECT (rt.expires_at::date BETWEEN m.end_date AND m.end_date + 1) FROM renewal_token rt JOIN membership m ON m.membership_id=rt.membership_id WHERE rt.token_hash='$(sha "$TK1")'")"
+  check "CR4-02 second mint 200"         "200" "$(code -X POST $API/admin/memberships/$MP/pay-link -H "Authorization: Bearer $ADMIN")"
+  URL2=$(body | jsq "j['url']"); TK2=${URL2##*t=}
+  check "CR4-02b fresh token each mint"  "false" "$(python3 -c "print(str('$TK1'=='$TK2').lower())")"
+  check "CR4-02c older link still live"  "200" "$(code $API/pay/$TK1)"
+  check "CR4-03 mint absent membership 404" "404" "$(code -X POST $API/admin/memberships/999999/pay-link -H "Authorization: Bearer $ADMIN")"
+  check "CR4-04 mint guest 403"          "403" "$(code -X POST $API/admin/memberships/$MP/pay-link)"
+  check "CR4-04b mint user 403"          "403" "$(code -X POST $API/admin/memberships/$MP/pay-link -H "Authorization: Bearer $USER")"
+  check "CR4-04c mint noaud 401"         "401" "$(code -X POST $API/admin/memberships/$MP/pay-link -H "Authorization: Bearer $NOAUD")"
+
+  # CR4-05: the guest pay view
+  check "CR4-05 guest pay view 200"      "200" "$(code $API/pay/$TK2)"
+  check "CR4-05b status pending"         "PENDING_PAYMENT" "$(body | jsq "j['status']")"
+  check "CR4-05c due 4500 paid 0"        "4500|0" "$(body | jsq "str(j['dueCents'])+'|'+str(j['paidCents'])")"
+  check "CR4-05d journal not offered"    "None" "$(body | jsq "j['journalPriceCents']")"
+  check "CR4-06 unknown token 404"       "404" "$(code $API/pay/nosuchtoken$$)"
+  NOTFOUND_BODY=$(body)
+  # expired token: seeded directly — the API can only mint live ones
+  EXPTOK="expired$$expired$$expired$$expired$$expi"
+  psqlq "INSERT INTO renewal_token (membership_id, token_hash, expires_at) VALUES ($MP, '$(sha "$EXPTOK")', now() - interval '1 day')" >/dev/null
+  check "CR4-07 expired token 404"       "404" "$(code $API/pay/$EXPTOK)"
+  check "CR4-07b same body as unknown"   "$NOTFOUND_BODY" "$(body)"
+
+  # CR4-08: journal add-on price is per-period config
+  check "CR4-08 set journal price 200"   "200" "$(JPUT "$API/admin/periods/$P2526" '{"journalPriceCents":1000}')"
+  check "CR4-08b period GET carries it"  "1000" "$(body | jsq "j['journalPriceCents']")"
+  check "CR4-08c pay view now offers it" "1000" "$(curl -s $API/pay/$TK2 | jsq "j['journalPriceCents']")"
+  check "CR4-08d negative price 400"     "400" "$(JPUT "$API/admin/periods/$P2526" '{"journalPriceCents":-5}')"
+
+  # CR4-09..11: checkout-session creation (needs a real Stripe test key)
+  if [ -n "${STRIPE_SECRET_KEY:-}" ]; then
+    check "CR4-09 checkout 200"          "200" "$(code -X POST $API/pay/$TK2/checkout -H 'Content-Type: application/json' -d '{"journal":true,"donationCents":500}')"
+    check "CR4-09b url is stripe"        "true" "$(body | jsq "str(j['url'].startswith('https://checkout.stripe.com')).lower()")"
+  else
+    echo "SKIP CR4-09 checkout-session rows (STRIPE_SECRET_KEY not set in this shell)"
+    # the flip side is testable exactly when the SERVER also has no key: a
+    # clear 503, never a startup failure (manual-payments-only is a valid
+    # deployment). If the server HAS a key, this probe just made a session.
+    CK=$(code -X POST $API/pay/$TK2/checkout -H 'Content-Type: application/json' -d '{}')
+    if [ "$CK" = "503" ]; then
+      check "CR4-09u checkout unconfigured 503" "503" "$CK"
+    else
+      echo "note: the server HAS a Stripe key (checkout answered $CK) — export STRIPE_SECRET_KEY here too to run the CR4-09 rows"
+    fi
+  fi
+
+  # webhook rows: a SIGNED probe of an ignorable event type distinguishes all
+  # three server states — 200 = configured with OUR secret (run the rows),
+  # 400 = configured with a DIFFERENT secret (self-signed rows would all
+  # bogusly fail), 503 = no secret at all
+  WH_PING='{"type":"matrix.ping"}'
+  WH_PROBE=$(whpost "$WH_PING" "$(whsign "$WH_PING")")
+  if [ "$WH_PROBE" = "200" ]; then
+    TK2ID=$(psqlq "SELECT renewal_token_id FROM renewal_token WHERE token_hash='$(sha "$TK2")'")
+    PI="pi_cr4$$"
+    SESSION="{\"id\":\"cs_cr4$$\",\"payment_status\":\"paid\",\"payment_intent\":\"$PI\",\"amount_total\":4500,\"customer_details\":{\"email\":\"receipt.$$@example.com\"},\"metadata\":{\"membershipId\":\"$MP\",\"tokenId\":\"$TK2ID\",\"membershipCents\":\"4500\",\"journalCents\":\"0\",\"donationCents\":\"0\"}}"
+    EVENT=$(whevent "$SESSION")
+    SIG=$(whsign "$EVENT")
+    check "CR4-12 webhook records 200"   "200" "$(whpost "$EVENT" "$SIG")"
+    check "CR4-12b payment row STRIPE"   "STRIPE|4500|stripe-webhook" "$(psqlq "SELECT payment_method||'|'||amount_cents||'|'||recorded_by FROM payment WHERE external_transaction_id='$PI'")"
+    check "CR4-12c allocation MEMBERSHIP" "MEMBERSHIP|4500" "$(psqlq "SELECT pa.allocation_type||'|'||pa.amount_cents FROM payment_allocation pa JOIN payment p ON p.payment_id=pa.payment_id WHERE p.external_transaction_id='$PI'")"
+    check "CR4-12d membership ACTIVE"    "ACTIVE" "$(psqlq "SELECT status FROM membership WHERE membership_id=$MP")"
+    check "CR4-12e token used_at set"    "1" "$(psqlq "SELECT count(*) FROM renewal_token WHERE renewal_token_id=$TK2ID AND used_at IS NOT NULL")"
+    check "CR4-12f pay view paid up"     "0" "$(curl -s $API/pay/$TK2 | jsq "j['balanceCents']")"
+    check "CR4-13 redelivery no-op 200"  "200" "$(whpost "$EVENT" "$SIG")"
+    check "CR4-13b still one payment"    "1" "$(psqlq "SELECT count(*) FROM payment WHERE external_transaction_id='$PI'")"
+    check "CR4-14 bad signature 400"     "400" "$(whpost "$EVENT" "t=$(date +%s),v1=0000000000000000000000000000000000000000000000000000000000000000")"
+    check "CR4-15 stale timestamp 400"   "400" "$(whpost "$EVENT" "$(whsign "$EVENT" $(($(date +%s) - 4000)))")"
+    # build each mutated event ONCE — whevent stamps created=$(date +%s), so
+    # re-evaluating it for the signature can straddle a second and self-flake
+    WRONGTYPE=$(echo "$EVENT" | sed 's/checkout.session.completed/payment_intent.created/')
+    check "CR4-16 wrong event type 200 ignored" "200" "$(whpost "$WRONGTYPE" "$(whsign "$WRONGTYPE")")"
+    UNPAID=$(whevent "$(echo "$SESSION" | sed 's/\"paid\"/\"unpaid\"/')")
+    check "CR4-16b unpaid session ignored" "200" "$(whpost "$UNPAID" "$(whsign "$UNPAID")")"
+    # verified but unprocessable: names a membership that doesn't exist
+    BADSESSION="{\"id\":\"cs_bad$$\",\"payment_status\":\"paid\",\"payment_intent\":\"pi_bad$$\",\"amount_total\":100,\"metadata\":{\"membershipId\":\"999999\",\"membershipCents\":\"100\",\"journalCents\":\"0\",\"donationCents\":\"0\"}}"
+    BADEVENT=$(whevent "$BADSESSION")
+    check "CR4-17 unknown membership 200" "200" "$(whpost "$BADEVENT" "$(whsign "$BADEVENT")")"
+    check "CR4-17b nothing recorded"     "0" "$(psqlq "SELECT count(*) FROM payment WHERE external_transaction_id='pi_bad$$'")"
+    # verified but truncated metadata (a money key missing) is unprocessable,
+    # never silently zeroed — real money must not land as an OTHER 'mismatch'
+    TRUNCSESSION="{\"id\":\"cs_tr$$\",\"payment_status\":\"paid\",\"payment_intent\":\"pi_tr$$\",\"amount_total\":100,\"metadata\":{\"membershipId\":\"$MP\",\"membershipCents\":\"100\"}}"
+    TRUNCEVENT=$(whevent "$TRUNCSESSION")
+    check "CR4-17c truncated metadata 200/no-op" "200|0" "$(whpost "$TRUNCEVENT" "$(whsign "$TRUNCEVENT")")|$(psqlq "SELECT count(*) FROM payment WHERE external_transaction_id='pi_tr$$'")"
+    # journal + donation breakdown lands as three allocations
+    PI2="pi2_cr4$$"
+    S2="{\"id\":\"cs2_cr4$$\",\"payment_status\":\"paid\",\"payment_intent\":\"$PI2\",\"amount_total\":6000,\"metadata\":{\"membershipId\":\"$MP2\",\"membershipCents\":\"4500\",\"journalCents\":\"1000\",\"donationCents\":\"500\"}}"
+    E2=$(whevent "$S2")
+    check "CR4-18 journal+donation 200"  "200" "$(whpost "$E2" "$(whsign "$E2")")"
+    check "CR4-18b three allocations sum" "3|6000" "$(psqlq "SELECT count(*)||'|'||sum(pa.amount_cents) FROM payment_allocation pa JOIN payment p ON p.payment_id=pa.payment_id WHERE p.external_transaction_id='$PI2'")"
+    check "CR4-18c MP2 ACTIVE"           "ACTIVE" "$(psqlq "SELECT status FROM membership WHERE membership_id=$MP2")"
+    U3=$(curl -s -X POST $API/admin/memberships/$MP2/pay-link -H "Authorization: Bearer $ADMIN" | jsq "j['url']"); TK3=${U3##*t=}
+    check "CR4-18d journal now hidden on pay view" "None" "$(curl -s "$API/pay/$TK3" | jsq "j['journalPriceCents']")"
+    # a refunded journal (negative correction) makes the add-on purchasable again
+    check "CR4-18e journal refund 201"   "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":-1000,\"method\":\"STRIPE\",\"notes\":\"journal refund\",\"allocations\":[{\"type\":\"JOURNAL\",\"membershipId\":$MP2,\"amountCents\":-1000}]}")"
+    check "CR4-18f journal offered again" "1000" "$(curl -s "$API/pay/$TK3" | jsq "j['journalPriceCents']")"
+    # receipt email (best-effort, but the dev stack has Mailpit)
+    if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
+      RECEIPT=$(mailpit_text "receipt.$$@example.com")
+      check "CR4-19 receipt in Mailpit"  "true" "$(python3 -c "import sys;print(str('financial for 2025-2026' in sys.argv[1]).lower())" "${RECEIPT:-none}")"
+    else
+      echo "SKIP CR4-19 receipt row (Mailpit not reachable at $MAILPIT)"
+    fi
+  elif [ "$WH_PROBE" = "400" ]; then
+    echo "SKIP CR4-12..19 webhook rows (the server's STRIPE_WEBHOOK_SECRET differs from this shell's"
+    echo "     — export the SAME value cargo uses: the whsec_ from 'stripe listen', or whsec_devmatrix for offline dev)"
+  else
+    echo "SKIP CR4-12..19 webhook rows (server answered $WH_PROBE — start cargo with STRIPE_WEBHOOK_SECRET=$WH_SECRET)"
+  fi
+
+  # lost-link (mail rows need Mailpit; the 202 contract holds regardless)
+  JPOST $API/admin/people "{\"givenName\":\"Lucy\",\"familyName\":\"$PY\",\"emails\":[{\"email\":\"lost.$$@example.com\",\"isPrimary\":true}]}" >/dev/null; PP3=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$PY Lost\",\"primaryContactPersonId\":$PP3}" >/dev/null; PHH3=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$PHH3,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null
+  check "CR4-20 lost-link 202"           "202" "$(code -X POST $API/pay/lost-link -H 'Content-Type: application/json' -d "{\"email\":\"Lost.$$@Example.COM\"}")"
+  LL_BODY=$(body)
+  check "CR4-21 unknown email same 202"  "202" "$(code -X POST $API/pay/lost-link -H 'Content-Type: application/json' -d "{\"email\":\"nobody.$$@example.com\"}")"
+  check "CR4-21b identical body"         "$LL_BODY" "$(body)"
+  check "CR4-21c garbage body still 202" "202" "$(code -X POST $API/pay/lost-link -H 'Content-Type: application/json' -d 'not json')"
+  if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
+    LOST=$(mailpit_text "lost.$$@example.com")
+    check "CR4-20b mail has pay link"    "1" "$(python3 -c "import sys;print(sys.argv[1].count('/web/pay.html?t='))" "${LOST:-none}")"
+    check "CR4-20c mail shows balance"   "true" "$(python3 -c "import sys;print(str('\$45.00' in sys.argv[1]).lower())" "${LOST:-none}")"
+    check "CR4-21d no mail for unknown"  "" "$(curl -s "$MAILPIT/api/v1/search?query=to:%22nobody.$$@example.com%22" | jsq "j['messages'][0]['ID']")"
+    # one address matching two people: each household's link listed once
+    JPOST $API/admin/people "{\"givenName\":\"Sam\",\"familyName\":\"$PY\",\"emails\":[{\"email\":\"shared.$$@example.com\"}]}" >/dev/null; PS1=$(body | jsq "j['id']")
+    JPOST $API/admin/people "{\"givenName\":\"Toni\",\"familyName\":\"$PY\",\"emails\":[{\"email\":\"shared.$$@example.com\"}]}" >/dev/null; PS2=$(body | jsq "j['id']")
+    JPOST $API/admin/households "{\"householdName\":\"$PY S1\",\"primaryContactPersonId\":$PS1}" >/dev/null; SH1=$(body | jsq "j['id']")
+    JPOST $API/admin/households "{\"householdName\":\"$PY S2\",\"primaryContactPersonId\":$PS2}" >/dev/null; SH2=$(body | jsq "j['id']")
+    JPOST $API/admin/memberships "{\"householdId\":$SH1,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null
+    JPOST $API/admin/memberships "{\"householdId\":$SH2,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null
+    check "CR4-22 shared email 202"      "202" "$(code -X POST $API/pay/lost-link -H 'Content-Type: application/json' -d "{\"email\":\"shared.$$@example.com\"}")"
+    SHARED=$(mailpit_text "shared.$$@example.com")
+    check "CR4-22b two links, one each"  "2" "$(python3 -c "import sys;print(sys.argv[1].count('/web/pay.html?t='))" "${SHARED:-none}")"
+  else
+    echo "SKIP CR4-20b/c/21d/22 mail-content rows (Mailpit not reachable at $MAILPIT)"
+  fi
+
+  # CR4-23/24: the CR-003 amendment — hand-entered STRIPE must be ALL-negative
+  check "CR4-23 positive STRIPE 400"     "400" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":4500,\"method\":\"STRIPE\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MP,\"amountCents\":4500}]}")"
+  check "CR4-23b mixed-sign STRIPE 400"  "400" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":-100,\"method\":\"STRIPE\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MP,\"amountCents\":4500},{\"type\":\"OTHER\",\"amountCents\":-4600}]}")"
+  check "CR4-23c zero amount 400"        "400" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":0,\"method\":\"CASH\",\"allocations\":[{\"type\":\"OTHER\",\"amountCents\":0}]}")"
+  # only meaningful when the webhook rows ran (MP must be ACTIVE via STRIPE)
+  if [ "$WH_PROBE" = "200" ]; then
+    check "CR4-24 negative STRIPE refund 201" "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":-4500,\"method\":\"STRIPE\",\"notes\":\"dashboard refund\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MP,\"amountCents\":-4500}]}")"
+    check "CR4-24b membership demoted"   "PENDING_PAYMENT" "$(psqlq "SELECT status FROM membership WHERE membership_id=$MP")"
+  fi
+else
+  echo "note: psql not found — skipping CR-004 rows (token seeding and side-effect checks need psql)"
+fi
+
 # --- static pages ---------------------------------------------------------------
+check "CR4-25 pay page served"         "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.html)"
+check "CR4-25b pay.js served"          "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.js)"
+
 check "32 web page 200"                "200" "$(code http://localhost:${PORT:-18080}/server/web/)"
 check "33 admin page 200"              "200" "$(code http://localhost:${PORT:-18080}/server/admin/)"
 check "33b admin users page 200"       "200" "$(code http://localhost:${PORT:-18080}/server/admin/users.html)"

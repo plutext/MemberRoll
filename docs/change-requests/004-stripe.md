@@ -1,6 +1,8 @@
 # CR 004: Stripe — magic-link pay page, Checkout, webhook, receipt email
 
-Status: PROPOSED
+Status: VERIFIED (2026-07-18) — full matrix 266/266 including the
+Stripe-sandbox checkout rows, plus Jason's six-step browser walkthrough
+against Stripe sandbox + `stripe listen` (see Results).
 
 Implementation order note: CR-009 (UI polish) lands first, so the
 public pay page is built on the Pico baseline from day one rather than
@@ -56,10 +58,18 @@ ALTER TABLE membership_period ADD COLUMN journal_price_cents integer
 - **Not single-use**: an abandoned Checkout must not burn the link, and
   a paid-up page ("thanks, you're financial") is the friendly landing
   for re-clicks. `used_at` is bookkeeping, not a gate; `expires_at`
-  (default: the membership's period `end_date`) is the gate. One live
-  token per membership: the mint endpoint returns the existing
-  unexpired token rather than minting again (idempotent, so CR-005 can
-  call it per-email safely).
+  (the day after the membership's `end_date`, so paying on the last day
+  works — floored at 30 days out, so a link minted for a just-ended
+  period isn't dead on arrival) is the gate.
+- **Amended at implementation — mint is fresh-per-call, not idempotent**:
+  the original text wanted one live token per membership with an
+  idempotent mint, but that is unimplementable under hash-only storage
+  (a stored sha256 cannot be turned back into the token to re-present
+  it). Each mint therefore issues a fresh token and older unexpired
+  tokens simply stay valid until expiry. Every property the idempotency
+  was for survives: CR-005 can mint per-email safely (each email gets a
+  live link, previously emailed links keep working), and a re-clicked
+  link never dead-ends. The only cost is extra `renewal_token` rows.
 - **Journal price is per-period config** (`journal_price_cents`,
   NULL = add-on not offered), alongside the per-period membership
   prices, editable via the existing period endpoints. CR-003's
@@ -129,7 +139,7 @@ come from the webhook.
 
 | method | path | behaviour |
 |---|---|---|
-| POST | `/api/admin/memberships/{id}/pay-link` | mint (or return the existing live) token → `{url, expiresAt}` where url = `PUBLIC_BASE_URL` + `/web/pay.html?t=` + token. This is how the treasurer gets a link to paste into a manual email today, and the primitive CR-005's merge fields will call |
+| POST | `/api/admin/memberships/{id}/pay-link` | mint a fresh token (see amendment above) → `{url, expiresAt}` where url = `PUBLIC_BASE_URL` + `/web/pay.html?t=` + token. This is how the treasurer gets a link to paste into a manual email today ("Copy pay link" in the membership dialog), and the primitive CR-005's merge fields will call |
 
 Period create/update (`AdminPeriodsResource`) accepts the new optional
 `journalPriceCents`; period GET returns it.
@@ -303,11 +313,141 @@ config is untouched.
 
 ## Results
 
-(to be filled in after implementation)
+Implemented 2026-07-18. Deviations from the proposal, all recorded above
+in place: fresh-token-per-mint instead of idempotent mint (hash-only
+storage makes idempotent re-presentation impossible); token expiry is
+the day AFTER `end_date` so a last-day payment works; stripe-java
+29.2.0 is used for Checkout-session creation and webhook signature
+verification only — the webhook body itself is parsed with jakarta.json,
+so nothing couples to the SDK's pinned API version.
+
+### Scripted matrix
+
+`server/verify-matrix.sh` extended with the CR4-* rows (the proposal's
+rows 1–24, renumbered during implementation; run `grep CR4- verify-matrix.sh`
+for the exact set). Offline run (no Stripe key; checkout rows SKIP),
+2026-07-18: `PASS=265 FAIL=0`. Full run with a Stripe sandbox key and
+`stripe listen` (checkout-session rows included — real session created,
+URL on checkout.stripe.com), same day, run by Jason:
+
+```
+PASS=266 FAIL=0
+```
+
+Note for re-runs: the matrix shell's `STRIPE_WEBHOOK_SECRET` must match
+the server's (the webhook rows self-sign) — the script now probes with
+a signed no-op event and SKIPs with an explanatory note on mismatch
+rather than failing bogusly.
+
+Everything from the proposal's table is covered except rows 10–12
+(checkout-session creation against real Stripe): those run automatically
+when `STRIPE_SECRET_KEY` is set and were SKIPped in this run (no test
+key in the dev environment); their offline flip side — checkout → 503
+when unconfigured — passed (CR4-09u). Highlights verified:
+
+- mint/pay-view/expiry: fresh token per mint, both live (CR4-01/02);
+  unknown and expired tokens 404 with byte-identical bodies (CR4-06/07);
+  guest/user/noaud on the mint endpoint 403/403/401 (CR4-04).
+- journal add-on: per-period price via PUT (CR4-08), surfaces on the pay
+  view, hides again once a JOURNAL allocation exists (CR4-18d).
+- webhook: self-signed `checkout.session.completed` records a STRIPE
+  payment with `external_transaction_id`, activates the membership, sets
+  `used_at` (CR4-12); byte-identical redelivery no-ops via the rule-12
+  unique index (CR4-13); bad signature and stale timestamp 400 with
+  nothing recorded (CR4-14/15); other event types and unpaid sessions
+  ignored (CR4-16); unknown-membership metadata → logged, 200, nothing
+  recorded (CR4-17); journal+donation lands as three allocations summing
+  to `amount_total` (CR4-18).
+- receipt email in Mailpit with "financial for 2025-2026" (CR4-19).
+- lost-link: 202 with identical body for match/no-match/garbage
+  (CR4-20/21); mail carries the pay URL and balance; no mail for an
+  unknown address; an address shared by two people gets both households'
+  links in one mail (CR4-22).
+- CR-003 amendment: positive STRIPE hand-entry 400; negative STRIPE
+  (dashboard-refund recording) 201 and the membership demotes (CR4-23/24).
+
+### Post-implementation review round
+
+A multi-angle code review of the diff surfaced 10 findings; all were
+fixed and the matrix re-run (the +5 rows over the first run are the new
+regression checks). The fixes, several of which amend the design above:
+
+- **Webhook robustness**: absent-vs-JSON-null handling for
+  `payment_intent` / `amount_total` / `data` / `created` (each previously
+  a 500 → Stripe-retry-loop on a signature-valid but odd event);
+  `amount_total ≤ 0` and a missing session id are now explicit
+  unprocessable-200s; a missing *money* metadata key (truncation) is
+  unprocessable rather than silently zeroed (CR4-17c) — only `tokenId`,
+  pure bookkeeping, stays optional. Duplicate detection now keys on
+  SQLSTATE 23505 alone (constraint-name string matching would break
+  under Postgres message localization).
+- **STRIPE hand-entry**: the negative-amount rule now applies per
+  allocation line, not just the total (a negative-total entry could
+  otherwise smuggle in a positive MEMBERSHIP allocation — CR4-23b), a
+  zero amount is a clean 400 (CR4-23c), and V4 adds the structural CHECK
+  `payment_method <> 'STRIPE' OR amount_cents < 0 OR
+  external_transaction_id IS NOT NULL` so no future entry point can mint
+  webhook-invisible STRIPE money. The admin panel's Reverse button no
+  longer coerces STRIPE→OTHER when reversing a webhook payment.
+- **Journal add-on**: "already bought" is now SUM > 0, not
+  EXISTS(positive line), so a refunded journal becomes purchasable again
+  (CR4-18e/f).
+- **Tokens**: mint's expiry is `GREATEST(end_date + 1, now() + 30 days)`
+  — a link minted for a just-ended period is no longer dead on arrival.
+- **Lost-link**: also matches next-period memberships whose
+  `renewal_open_date` has arrived (rollover season is exactly when the
+  form is needed); the lookup/mint/send now runs on a mail thread after
+  the 202 (response latency no longer an enumeration oracle) behind a
+  10-minute per-address cooldown (no email-bombing / unbounded token
+  minting); the query moved into `RenewalTokenStore` sharing
+  `MembershipStore.PAID_SQL`, the single rule-6 paid-ness definition.
+- **Mail**: 10-second connect/read/write SMTP timeouts (jakarta.mail
+  defaults are infinite — a half-open relay would pin Tomcat threads),
+  and the webhook queues the receipt asynchronously so SMTP can never
+  push the 200 past Stripe's webhook timeout.
+- **Guest checkout**: malformed `donationCents` now 400s instead of
+  500ing; `PUBLIC_BASE_URL` unset logs a loud one-time warning (emailed
+  links would otherwise silently point at localhost in production).
+
+### Browser walkthrough
+
+Completed by Jason 2026-07-18 against a Stripe sandbox with
+`stripe listen` (procedure: [004-stripe-walkthrough.md](004-stripe-walkthrough.md)).
+All six steps behaved: journal price + Copy pay link; Checkout with the
+4242 test card (redirect back, page flipped to paid within the poll
+window); membership Paid with three allocations and the receipt in
+Mailpit; cancel path left the form intact with nothing recorded;
+lost-link email with a working link; dashboard refund recorded via
+Reverse (negative STRIPE) dropping the membership back to Unpaid.
+
+Two findings during the walkthrough, both fixed in this CR:
+
+- Errors raised inside modal dialogs (e.g. the 409 for a duplicate
+  period name) were written to the header message line, which the
+  dialog backdrop hides — `say()` now mirrors messages into the open
+  dialog (admin.js/admin.css).
+- The lost-link email initially omitted the member's next-period
+  membership: the seeded `renewal_open_date` placeholder (1 Aug) was
+  later than the society's actual 1-July rule, so the renewal window
+  hadn't opened. Data fix (set renewal_open_date to 1 July), not a code
+  fix — but it surfaced that there is no UI to edit an existing
+  period's dates (see follow-ups). Steps that don't touch Stripe were exercised at the API
+level by the matrix; the pay page's states (form / paid-up / ceased /
+lost-link) are driven by the same `GET /api/pay/{token}` responses the
+matrix asserts. Run the walkthrough before flipping this CR to VERIFIED.
 
 ## Follow-ups / amendments
 
 - CR-005 consumes the pay-link mint endpoint for merge fields and
   replaces the hardcoded email templates with real ones + send log.
+  Note the amended mint semantics: every call is a fresh token (older
+  links stay valid) — fine for per-email minting.
 - CR-008 registers the production webhook endpoint, swaps in live
-  keys, and covers SPF/DKIM for the from-address.
+  keys, and covers SPF/DKIM for the from-address. Production env to set:
+  `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PUBLIC_BASE_URL`,
+  `SMTP_*`, `MAIL_FROM`, `MEMBERROLL_SOCIETY_NAME`.
+- Admin UI cannot edit an existing period's dates (renewal-open,
+  cutoff) — surfaced by the walkthrough's renewal_open_date fix needing
+  psql. Small addition; fits CR-010's admin polish.
+- Confirm the real 2026-2027 `renewal_open_date` (1 July per the
+  society's joining rule) when the production period is created.

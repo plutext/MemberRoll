@@ -63,8 +63,8 @@ final class PaymentStore {
      * memberships the caller must {@link MembershipStore#recompute}.
      */
     InsertResult insert(Handle handle, LocalDate receivedDate, int amountCents, String method,
-                        Long payerPersonId, String bankReference, String notes, String recordedBy,
-                        List<AllocationInput> allocations) {
+                        Long payerPersonId, String bankReference, String externalTransactionId,
+                        String notes, String recordedBy, List<AllocationInput> allocations) {
         if (allocations.isEmpty()) throw new IllegalArgumentException("at least one allocation is required");
         long sum = 0;
         for (AllocationInput a : allocations) {
@@ -79,10 +79,11 @@ final class PaymentStore {
         }
         long paymentId = handle.createUpdate(
                 "INSERT INTO payment (received_date, amount_cents, payment_method, payer_person_id,"
-                + " bank_reference, recorded_by, notes)"
-                + " VALUES (:d, :amt, :method, :payer, :ref, :by, :notes)")
+                + " bank_reference, external_transaction_id, recorded_by, notes)"
+                + " VALUES (:d, :amt, :method, :payer, :ref, :ext, :by, :notes)")
                 .bind("d", receivedDate).bind("amt", amountCents).bind("method", method)
-                .bind("payer", payerPersonId).bind("ref", bankReference).bind("by", recordedBy)
+                .bind("payer", payerPersonId).bind("ref", bankReference)
+                .bind("ext", externalTransactionId).bind("by", recordedBy)
                 .bind("notes", notes)
                 .executeAndReturnGeneratedKeys("payment_id").mapTo(Long.class).one();
         LinkedHashSet<Long> touched = new LinkedHashSet<>();

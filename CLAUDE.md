@@ -22,10 +22,17 @@ placeholder app content, made to be replaced.
 ```bash
 mvn clean package              # build server/target/server.war
 mvn -pl server cargo:run       # dev Tomcat 10.1: http://localhost:18080/server/api/health (Ctrl-C stops)
-(cd server && docker compose up -d)   # dev Keycloak :18081 + Postgres :5433 (project name "memberroll")
+(cd server && docker compose up -d)   # dev Keycloak :18081 + Postgres :5433 + Mailpit :18025 UI/:18026 SMTP
+                                      # (project name "memberroll")
 (cd server && docker compose down)    # discard dev state; next up re-imports realm, Flyway re-creates schema
 
-server/verify-matrix.sh         # the role x endpoint matrix (205 checks) against the running
+# for the CR-004 rows of the matrix, start cargo with the dev Stripe/mail env
+# (STRIPE_SECRET_KEY optional — without it checkout answers 503, all else works):
+STRIPE_WEBHOOK_SECRET=whsec_devmatrix SMTP_HOST=localhost SMTP_PORT=18026 \
+  MAIL_FROM=noreply@memberroll.dev mvn -pl server cargo:run
+
+server/verify-matrix.sh         # the role x endpoint matrix (266 checks with a Stripe key,
+                                # 265 offline) against the running
                                 # dev stack (ports via PORT / KEYCLOAK_PORT); extend it
                                 # alongside new endpoints — it must stay green
 
@@ -76,6 +83,22 @@ methods take an explicit `Handle` and the resource owns the transaction,
 so a payment insert and the per-membership status recompute (paid-ness
 derives from `payment_allocation`, rule 6) commit atomically. Corrections
 are negative payments, never edits.
+CR-004 added online payment without login: `RenewalTokenStore` mints
+magic-link tokens (256-bit random, only the sha256 stored — so each mint
+is a FRESH token and older unexpired links stay valid; expiry is the gate,
+`used_at` is bookkeeping), the guest-reachable `PayResource` serves the
+pay view / creates Stripe Checkout sessions (line items computed
+server-side) / handles lost-link (always 202, no enumeration), and
+`StripeWebhookResource` records payments (signature over the raw bytes is
+its entire auth; one transaction; redeliveries hit the
+`external_transaction_id` partial unique index and no-op; unprocessable
+events are logged and answered 200). Positive STRIPE payments come only
+from the webhook — the admin payments endpoint accepts STRIPE only with a
+negative amount (recording a dashboard refund). `Mail` is the minimal
+env-configured SMTP sender (receipts + lost-link; real templates are
+CR-005), `web/pay.html`/`pay.js` is the public page (no auth.js — the
+token IS the authorisation), and all of it is optional config: no Stripe
+env → checkout/webhook answer 503, the app still starts.
 `NoteStore`'s per-owner JSON files under `MEMBERROLL_DATA` remain the
 worked example for single-owner blobs, slated for retirement.
 Production topology (server/deploy/): Caddy is the sole ingress and TLS

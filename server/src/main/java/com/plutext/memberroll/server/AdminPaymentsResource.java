@@ -46,15 +46,16 @@ import java.util.Set;
  * mistake is corrected by an equal-and-opposite (negative) payment, never an
  * edit or delete — hence no PUT/DELETE here. Recording a payment recomputes
  * every membership it touches in the same transaction, so ACTIVE always
- * follows from allocations covering the fee (schema rule 6). STRIPE payments
- * are never hand-entered (they arrive via CR-004's webhook), so the method is
- * limited to the channels a treasurer actually keys in.
+ * follows from allocations covering the fee (schema rule 6). Positive STRIPE
+ * payments only ever arrive via CR-004's webhook; the one hand-entered STRIPE
+ * shape is a NEGATIVE amount — recording a refund made in the Stripe
+ * dashboard (refunds move money there, never here).
  */
 @Path("admin/payments")
 @RolesAllowed("admin")
 public class AdminPaymentsResource {
 
-    private static final Set<String> METHODS = Set.of("CASH", "CHEQUE", "BANK_TRANSFER", "OTHER");
+    private static final Set<String> METHODS = Set.of("CASH", "CHEQUE", "BANK_TRANSFER", "STRIPE", "OTHER");
     private static final Set<String> ALLOCATION_TYPES = Set.of("MEMBERSHIP", "JOURNAL", "DONATION", "OTHER");
 
     private final Jdbi jdbi = Db.jdbi();
@@ -72,6 +73,7 @@ public class AdminPaymentsResource {
         try {
             LocalDate receivedDate = Payloads.reqDate(request, "receivedDate");
             int amountCents = Payloads.reqInt(request, "amountCents");
+            if (amountCents == 0) return badRequest("amountCents must be non-zero");
             String method = Payloads.optString(request, "method");
             if (method == null || !METHODS.contains(method)) {
                 return badRequest("method must be one of " + METHODS);
@@ -80,6 +82,14 @@ public class AdminPaymentsResource {
             String bankReference = Payloads.optString(request, "bankReference");
             String notes = Payloads.optString(request, "notes");
             List<PaymentStore.AllocationInput> allocations = parseAllocations(request);
+            // every LINE must be negative, not just the total — a negative-total
+            // STRIPE entry must not smuggle in a positive MEMBERSHIP allocation
+            // that never came through the webhook
+            if ("STRIPE".equals(method)
+                    && (amountCents > 0 || allocations.stream().anyMatch(a -> a.amountCents() > 0))) {
+                return badRequest("positive STRIPE amounts arrive via the webhook only;"
+                        + " hand-entered STRIPE must be all-negative (recording a dashboard refund)");
+            }
 
             JsonObject result = jdbi.inTransaction(handle -> {
                 // membership FKs must resolve to a clean 400, not a raw SQL error
@@ -89,7 +99,7 @@ public class AdminPaymentsResource {
                     }
                 }
                 PaymentStore.InsertResult inserted = payments.insert(handle, receivedDate, amountCents,
-                        method, payerPersonId, bankReference, notes, recordedBy, allocations);
+                        method, payerPersonId, bankReference, null, notes, recordedBy, allocations);
                 for (long membershipId : inserted.touchedMembershipIds()) {
                     memberships.recompute(handle, membershipId, receivedDate);
                 }

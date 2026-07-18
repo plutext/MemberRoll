@@ -38,6 +38,11 @@ nav#menu a.active { background: var(--pico-primary-background); color: var(--pic
 #status.warn { background: var(--pico-del-color); color: #fff; }
 #message { min-height: 1.4rem; color: var(--pico-ins-color); }
 #message.error { color: var(--pico-del-color); white-space: pre-wrap; }
+/* #message's mirror inside an open modal (say() creates it): the backdrop
+   hides the header line, so errors must appear in the dialog itself */
+.dialog-message { color: var(--pico-ins-color); }
+.dialog-message:empty { display: none; }
+.dialog-message.error { color: var(--pico-del-color); white-space: pre-wrap; }
 
 .muted { color: var(--pico-muted-color); }
 .warn-note { color: var(--pico-del-color); margin: .3rem 0; }

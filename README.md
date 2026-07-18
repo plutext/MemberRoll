@@ -13,8 +13,19 @@ Dev loop:
 
 ```bash
 mvn clean package
-(cd server && docker compose up -d)   # Keycloak :18081 + Postgres :5433
+(cd server && docker compose up -d)   # Keycloak :18081 + Postgres :5433 + Mailpit :18025 (UI) / :18026 (SMTP)
 mvn -pl server cargo:run              # Tomcat :18080 → http://localhost:18080/server/web/
+```
+
+For the CR-004 pieces (pay links, webhook, receipt/lost-link mail) start
+cargo with the dev config instead:
+
+```bash
+STRIPE_WEBHOOK_SECRET=whsec_devmatrix \
+SMTP_HOST=localhost SMTP_PORT=18026 MAIL_FROM=noreply@memberroll.dev \
+    mvn -pl server cargo:run
+# add STRIPE_SECRET_KEY=sk_test_… (and `stripe listen`) for real Checkout sessions;
+# without it the app still runs — the checkout endpoint answers 503, all else works
 ```
 
 Fresh start (wipe the dev database and Keycloak state back to a clean slate):

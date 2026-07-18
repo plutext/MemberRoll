@@ -49,3 +49,12 @@ services:
       - "${KEYCLOAK_PORT:-18081}:8080"
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
+
+  # Mail catcher for dev (CR-004 receipts + lost-link; CR-005 will lean on
+  # it harder): SMTP on 18026, browse sent mail at http://localhost:18025.
+  # Same no-volume dev semantics — `down` discards the mailbox.
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "${MAILPIT_UI_PORT:-18025}:8025"
+      - "${MAILPIT_SMTP_PORT:-18026}:1025"

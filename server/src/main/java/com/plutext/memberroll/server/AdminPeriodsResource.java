@@ -86,9 +86,10 @@ public class AdminPeriodsResource {
             LocalDate end = Payloads.reqDate(request, "endDate");
             LocalDate renewalOpen = Payloads.optDate(request, "renewalOpenDate");
             LocalDate cutoff = Payloads.optDate(request, "lateJoiningCutoff");
+            Integer journalPrice = parseJournalPrice(request);
             Map<String, Integer> prices = parsePrices(request);
             PeriodStore.Period created = jdbi.inTransaction(handle ->
-                    periods.create(handle, name, start, end, renewalOpen, cutoff, prices));
+                    periods.create(handle, name, start, end, renewalOpen, cutoff, journalPrice, prices));
             return Response.status(Response.Status.CREATED).entity(periodJson(created).toString()).build();
         } catch (ConflictException e) {
             return conflict(e.getMessage());
@@ -118,7 +119,10 @@ public class AdminPeriodsResource {
                         ? Payloads.optDate(request, "renewalOpenDate") : e.renewalOpenDate();
                 LocalDate cutoff = request.containsKey("lateJoiningCutoff")
                         ? Payloads.optDate(request, "lateJoiningCutoff") : e.lateJoiningCutoff();
-                return periods.update(handle, id, start, end, renewalOpen, cutoff, prices, repriceUnpaid);
+                Integer journalPrice = request.containsKey("journalPriceCents")
+                        ? parseJournalPrice(request) : e.journalPriceCents();
+                return periods.update(handle, id, start, end, renewalOpen, cutoff, journalPrice,
+                        prices, repriceUnpaid);
             });
             return updated.map(p -> Response.ok(periodJson(p).toString()).build()).orElseGet(this::notFound);
         } catch (IllegalArgumentException e) {
@@ -250,6 +254,13 @@ public class AdminPeriodsResource {
         return prices;
     }
 
+    /** null (absent or JSON null) = journal add-on not offered. */
+    private static Integer parseJournalPrice(JsonObject request) {
+        Integer cents = Payloads.optInt(request, "journalPriceCents");
+        if (cents != null && cents < 0) throw new IllegalArgumentException("journalPriceCents must be >= 0");
+        return cents;
+    }
+
     private static boolean presentDate(JsonObject o, String key) {
         return o.containsKey(key) && !o.isNull(key);
     }
@@ -269,6 +280,7 @@ public class AdminPeriodsResource {
                 p.renewalOpenDate() == null ? null : p.renewalOpenDate().toString());
         AdminPeopleResource.addNullable(b, "lateJoiningCutoff",
                 p.lateJoiningCutoff() == null ? null : p.lateJoiningCutoff().toString());
+        AdminPeopleResource.addNullable(b, "journalPriceCents", p.journalPriceCents());
         JsonArrayBuilder prices = Json.createArrayBuilder();
         for (PeriodStore.Price price : p.prices()) {
             prices.add(Json.createObjectBuilder()

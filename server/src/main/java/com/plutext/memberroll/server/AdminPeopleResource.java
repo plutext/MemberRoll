@@ -193,6 +193,10 @@ public class AdminPeopleResource {
         if (value == null) b.addNull(name); else b.add(name, value);
     }
 
+    static void addNullable(JsonObjectBuilder b, String name, Integer value) {
+        if (value == null) b.addNull(name); else b.add(name, value);
+    }
+
     private static String optString(JsonObject o, String name) {
         String value = o.containsKey(name) && !o.isNull(name) ? o.getString(name).trim() : null;
         return value == null || value.isEmpty() ? null : value;

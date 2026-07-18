@@ -45,6 +45,16 @@ import java.util.Optional;
  */
 final class MembershipStore {
 
+    /**
+     * Rule 6 as SQL: the paid-ness of the membership aliased {@code m}. The
+     * ONE definition — every query that derives paid (here, and the CR-004
+     * pay-view/lost-link queries in {@link RenewalTokenStore}) concatenates
+     * this, so an amendment to what counts as paid cannot drift between the
+     * admin screens and the amount a member is charged.
+     */
+    static final String PAID_SQL = "COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocation pa"
+            + " WHERE pa.membership_id = m.membership_id AND pa.allocation_type = 'MEMBERSHIP'), 0)";
+
     record Person(long personId, String givenName, String familyName, String role,
                   boolean statutory, boolean voting, boolean committee) {}
     record Detail(long id, long periodId, String periodName, long typeId, String typeName,
@@ -87,8 +97,7 @@ final class MembershipStore {
                 + " m.membership_type_id, mt.name AS type_name, m.household_id, h.household_name,"
                 + " m.status, m.application_date, m.approved_date, m.start_date, m.end_date,"
                 + " m.amount_due_cents, m.ceased_date, m.cessation_reason,"
-                + " COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocation pa"
-                + "   WHERE pa.membership_id = m.membership_id AND pa.allocation_type = 'MEMBERSHIP'), 0) AS paid"
+                + " " + PAID_SQL + " AS paid"
                 + " FROM membership m"
                 + " JOIN membership_period per ON per.membership_period_id = m.membership_period_id"
                 + " JOIN membership_type mt ON mt.membership_type_id = m.membership_type_id"
@@ -137,8 +146,7 @@ final class MembershipStore {
                     "SELECT m.membership_id, m.household_id, h.household_name,"
                     + " trim(pc.given_name || ' ' || pc.family_name) AS contact_name,"
                     + " mt.name AS type_name, m.status, m.amount_due_cents,"
-                    + " COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocation pa"
-                    + "   WHERE pa.membership_id = m.membership_id AND pa.allocation_type = 'MEMBERSHIP'), 0) AS paid"
+                    + " " + PAID_SQL + " AS paid"
                     + " FROM membership m"
                     + " JOIN household h ON h.household_id = m.household_id"
                     + " JOIN person pc ON pc.person_id = h.primary_contact_person_id"
@@ -386,9 +394,7 @@ final class MembershipStore {
     void recompute(Handle handle, long membershipId, LocalDate receivedDate) {
         record State(String status, int due, int paid) {}
         State s = handle.createQuery(
-                "SELECT m.status, m.amount_due_cents,"
-                + " COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocation pa"
-                + "   WHERE pa.membership_id = m.membership_id AND pa.allocation_type = 'MEMBERSHIP'), 0) AS paid"
+                "SELECT m.status, m.amount_due_cents, " + PAID_SQL + " AS paid"
                 + " FROM membership m WHERE m.membership_id = :id")
                 .bind("id", membershipId)
                 .map((rs, ctx) -> new State(rs.getString("status"), rs.getInt("amount_due_cents"), rs.getInt("paid")))

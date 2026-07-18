@@ -95,6 +95,24 @@
             <artifactId>commons-csv</artifactId>
             <version>1.11.0</version>
         </dependency>
+        <!-- Stripe Checkout + webhook signature verification (CR-004). The
+             SDK earns its keep on the signature check — hand-rolling that
+             HMAC comparison is exactly the subtle-crypto-bug surface a
+             maintained library exists to own. Webhook payloads are still
+             parsed with jakarta.json (no data-binding), so the SDK's model
+             classes matter only for session creation. -->
+        <dependency>
+            <groupId>com.stripe</groupId>
+            <artifactId>stripe-java</artifactId>
+            <version>29.2.0</version>
+        </dependency>
+        <!-- receipt + lost-link email (CR-004): jakarta.mail implementation;
+             deliberately minimal — real templates and a send log are CR-005 -->
+        <dependency>
+            <groupId>org.eclipse.angus</groupId>
+            <artifactId>angus-mail</artifactId>
+            <version>2.0.3</version>
+        </dependency>
         <!-- route the above libraries' slf4j output into Tomcat's JUL logs -->
         <dependency>
             <groupId>org.slf4j</groupId>

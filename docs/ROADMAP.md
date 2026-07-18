@@ -84,7 +84,7 @@ data too) → **Committed**.
 | 001 | Membership register data layer | Verified · committed | Postgres + Flyway + JDBI, core schema, admin people/household CRUD API, minimal admin register UI |
 | 002 | Import | Verified · committed | CSV import with preview/dedup; synthetic dev fixture shaped like the real list |
 | 003 | Renewals and manual payments | Verified · committed | Period rollover, cash/cheque/transfer payment entry, financial-status filters, CSV exports |
-| 004 | Stripe | Proposed | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
+| 004 | Stripe | Verified | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
 | 005 | Segment email | Planned | Templates, merge fields, segment sends with embedded magic links, send log; communication preferences: admin preferences UI (default EMAIL, manual POST exceptions) and sends honouring it |
 | 006 | Member self-serve | Planned | Keycloak-linked "my membership" page, pay from there |
 | 007 | Public application form | Planned | New-member APPLIED workflow with admin approval |

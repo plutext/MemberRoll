@@ -31,8 +31,26 @@ file; add your organization's LICENSE and headers before the first push.
 ```bash
 mvn clean package                  # builds server/target/server.war
 cd server && docker compose up -d  # Keycloak :18081 (realm from server/keycloak/) + Postgres :5433
+                                   # + Mailpit (dev mail catcher) :18025 UI / :18026 SMTP
 cd .. && mvn -pl server cargo:run  # Tomcat :18080, war deployed at /server (Flyway migrates on start)
 ```
+
+The Stripe/mail features (CR-004) are env-configured and optional — the
+app runs fine without them (the checkout endpoint answers 503). For the
+full dev experience (and the CR-004 verify-matrix rows):
+
+```bash
+STRIPE_WEBHOOK_SECRET=whsec_devmatrix \
+SMTP_HOST=localhost SMTP_PORT=18026 MAIL_FROM=noreply@memberroll.dev \
+MEMBERROLL_SOCIETY_NAME="My Society (dev)" \
+    mvn -pl server cargo:run
+```
+
+Real Checkout sessions additionally need `STRIPE_SECRET_KEY=sk_test_…`
+and, for the webhook round-trip, `stripe listen --forward-to
+localhost:18080/server/api/stripe/webhook` (then use the `whsec_…` it
+prints as `STRIPE_WEBHOOK_SECRET`). Sent mail lands in Mailpit at
+<http://localhost:18025>.
 
 Smoke:
 

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Membership payment</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <style>
+        /* Overrides only — Pico carries the base look (the CR-009 baseline). */
+        [hidden] { display: none !important; }
+        #message { min-height: 1.4rem; color: var(--pico-ins-color); }
+        #message.error { color: var(--pico-del-color); white-space: pre-wrap; }
+        table.summary td:last-child { text-align: right; white-space: nowrap; }
+        #donation { max-width: 8rem; display: inline-block; }
+        .thanks { padding: 1rem; border-radius: var(--pico-border-radius);
+            background: var(--pico-card-sectioning-background-color); }
+    </style>
+</head>
+<body>
+<main>
+<header>
+    <h1 id="society">Membership payment</h1>
+    <div id="message"></div>
+</header>
+
+<!-- No auth.js on purpose: this page never logs in. Holding the emailed
+     token IS the authorisation; the only Stripe contact is the redirect
+     to the hosted Checkout URL (card data never touches this server). -->
+
+<section id="loading"><p>Loading…</p></section>
+
+<section id="summary" hidden>
+    <table class="summary">
+        <tbody>
+        <tr><td>Household / member</td><td id="displayName"></td></tr>
+        <tr><td>Membership year</td><td id="periodName"></td></tr>
+        <tr><td>Membership type</td><td id="typeName"></td></tr>
+        <tr><td>Amount due</td><td id="due"></td></tr>
+        <tr><td>Paid so far</td><td id="paid"></td></tr>
+        <tr><td><strong>Balance</strong></td><td id="balance"></td></tr>
+        </tbody>
+    </table>
+</section>
+
+<section id="payForm" hidden>
+    <label id="journalRow" hidden>
+        <input type="checkbox" id="journal"> Add the journal (<span id="journalPrice"></span>)
+    </label>
+    <label>Optional donation: $ <input id="donation" type="number" min="0" step="0.01" placeholder="0.00"></label>
+    <p><button id="payNow">Pay now</button></p>
+    <p><small>You'll be taken to our payment provider (Stripe) to pay securely by card.</small></p>
+</section>
+
+<section id="paidUp" class="thanks" hidden>
+    <p id="paidUpText"></p>
+</section>
+
+<section id="processing" class="thanks" hidden>
+    <p>Payment received — confirming with our records…</p>
+</section>
+
+<section id="ceased" class="thanks" hidden>
+    <p>This membership has ceased. Please contact the society.</p>
+</section>
+
+<section id="lostLink" hidden>
+    <p>That link wasn't recognised — it may have expired.</p>
+    <p>Enter the email address the society holds for you and we'll send a fresh link:</p>
+    <form id="lostForm">
+        <label>Email: <input id="lostEmail" type="email" required autocomplete="email"></label>
+        <button type="submit">Email me my link</button>
+    </form>
+    <p id="lostSent" hidden>If that address matches a member, we've emailed the link.</p>
+</section>
+</main>
+
+<script src="pay.js"></script>
+</body>
+</html>

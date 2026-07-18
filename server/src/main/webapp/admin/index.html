@@ -122,6 +122,9 @@
     <label>Period <select id="periodSelect"></select></label>
     <button id="periodNew">New period</button>
     <div id="periodSummary" class="muted"></div>
+    <label>Journal add-on price ($, blank = not offered)
+        <input id="journalPrice" type="number" step="0.01" min="0" placeholder="not offered"></label>
+    <button id="journalPriceSave">Save journal price</button>
 
     <dialog id="periodForm">
         <article>
@@ -132,6 +135,8 @@
             <label>Renewal opens <input id="npRenewalOpen" type="date"></label>
             <label>Late-joining cutoff <input id="npCutoff" type="date"></label>
             <div id="npPrices"></div>
+            <label>Journal add-on price ($, blank = not offered)
+                <input id="npJournal" type="number" step="0.01" min="0"></label>
             <footer>
                 <button id="npCancel" type="button" class="secondary">Cancel</button>
                 <button id="npSave">Create period</button>
@@ -197,6 +202,9 @@
                     <select id="payMethod">
                         <option>BANK_TRANSFER</option><option>CASH</option>
                         <option>CHEQUE</option><option>OTHER</option>
+                        <!-- STRIPE only for recording a dashboard refund (negative
+                             amount); positive STRIPE arrives via the webhook -->
+                        <option>STRIPE</option>
                     </select></label>
                 <label>Bank reference <input id="payRef"></label>
                 <label>Membership amount ($) <input id="payMembership" type="number" step="0.01"></label>

@@ -89,6 +89,25 @@ public class AdminMembershipsResource {
         return Response.ok(detailJson(id).toString()).build();
     }
 
+    /**
+     * Mint a pay link for this membership (CR-004) — what the treasurer
+     * pastes into a manual email today, and the primitive CR-005's merge
+     * fields will call. Each mint issues a fresh token (only hashes are
+     * stored, so an earlier token cannot be re-presented); older unexpired
+     * links stay valid.
+     */
+    @POST
+    @Path("{id}/pay-link")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response payLink(@PathParam("id") long id) {
+        return jdbi.inTransaction(handle -> RenewalTokenStore.mint(handle, id))
+                .map(m -> Response.ok(Json.createObjectBuilder()
+                        .add("url", PayResource.payUrl(m.token()))
+                        .add("expiresAt", m.expiresAt().toInstant().toString())
+                        .build().toString()).build())
+                .orElseGet(AdminMembershipsResource::notFound);
+    }
+
     @PUT
     @Path("{id}")
     @Consumes(MediaType.APPLICATION_JSON)
