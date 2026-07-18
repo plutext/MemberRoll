@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-/* The user webapp shell: sign in/out, identity line, the mandatory
- * role-claim gate, and the notes example wired to /api/notes. This file
- * is the copy-me pattern for pages: boot completes a returning login,
- * renders signed-out vs signed-in, and every server call goes through
- * Auth.api (bearer attached, one refresh-and-retry, honest 401 surfacing).
+/* The member webapp: sign in/out, identity line, the mandatory role-claim
+ * gate, and the CR-006 "my membership" view. Boot completes a returning
+ * login, renders signed-out vs signed-in, and every server call goes
+ * through Auth.api (bearer attached, one refresh-and-retry, honest 401
+ * surfacing). Pay now is a handoff: POST pay-link, then navigate to the
+ * CR-004 pay page — one Stripe surface, unchanged.
  */
 "use strict";
 
@@ -64,7 +65,8 @@ async function showIdentity() {
     statusButton("Sign out", Auth.logout);
     if (!who.claimed_role) {
         // mandatory: accounts that predate (or skipped) the registration
-        // picker choose now; the modal has no dismiss
+        // picker choose now; the modal has no dismiss. Provisioned accounts
+        // (CR-006) arrive with claimed_role=member, so it never pops for them.
         Claim.prompt(null, showIdentity);
     }
     return true;
@@ -77,54 +79,103 @@ function showSignedOut() {
         Auth.login().catch(e => say(e.message, true)));
 }
 
-// ---- notes example ----------------------------------------------------------
+// ---- my membership (CR-006) -------------------------------------------------
 
-async function renderNotes() {
-    const response = await Auth.api("/notes");
-    if (!response || !response.ok) return;
-    const notes = await response.json();
-    const list = document.getElementById("notes");
+const STATUS_LABELS = {
+    PENDING_PAYMENT: "Unpaid", ACTIVE: "Paid", LAPSED: "Lapsed",
+    APPLIED: "Applied", CEASED: "Ceased",
+};
+const STATUS_BADGE = {
+    ACTIVE: "green", PENDING_PAYMENT: "amber", APPLIED: "blue",
+    LAPSED: "grey", CEASED: "grey",
+};
+const dollars = (cents) => "$" + (cents / 100).toFixed(2);
+
+function statusBadge(status) {
+    const span = document.createElement("span");
+    span.className = `badge badge-${STATUS_BADGE[status] || "grey"}`;
+    span.textContent = STATUS_LABELS[status] || status;
+    return span;
+}
+
+async function renderMembership() {
+    const response = await Auth.api("/me/membership");
+    if (!response) return;
+    if (!response.ok) {
+        say(`Could not load your membership (HTTP ${response.status}).`, true);
+        return;
+    }
+    const data = await response.json();
+    document.getElementById("membershipSection").hidden = false;
+    const notLinked = document.getElementById("notLinked");
+    const linked = document.getElementById("linked");
+    if (!data.linked) {
+        // deliberately no lookup form — "contact the society" is the answer
+        notLinked.textContent = "We couldn't find a membership linked to this "
+            + `account — contact ${data.societyName}.`;
+        notLinked.hidden = false;
+        linked.hidden = true;
+        return;
+    }
+    notLinked.hidden = true;
+    linked.hidden = false;
+
+    const list = document.getElementById("memberships");
     list.innerHTML = "";
-    for (const note of notes) {
-        const item = document.createElement("li");
+    if (data.memberships.length === 0) {
+        const p = document.createElement("p");
+        p.textContent = "No current membership. Contact "
+            + `${data.societyName} if you were expecting one.`;
+        list.appendChild(p);
+    }
+    for (const m of data.memberships) {
+        const card = document.createElement("div");
+        card.className = "membership-card";
         const heading = document.createElement("h3");
-        heading.textContent = `${note.title} (${note.id})`;
-        const body = document.createElement("p");
-        body.textContent = note.body;
-        const edit = document.createElement("button");
-        edit.textContent = "Edit";
-        edit.onclick = () => {
-            document.getElementById("noteId").value = note.id;
-            document.getElementById("noteTitle").value = note.title;
-            document.getElementById("noteBody").value = note.body;
-        };
-        const del = document.createElement("button");
-        del.textContent = "Delete";
-        del.style.marginLeft = ".5rem";
-        del.onclick = async () => {
-            const r = await Auth.api(`/notes/${note.id}`, {method: "DELETE"});
-            if (r) say(r.ok ? `Deleted ${note.id}.` : `Delete failed: HTTP ${r.status}`, !r.ok);
-            renderNotes();
-        };
-        item.append(heading, body, edit, del);
-        list.appendChild(item);
+        heading.append(`${m.displayName} — ${m.periodName} `, statusBadge(m.status));
+        const balance = Math.max(0, m.amountDueCents - m.amountPaidCents);
+        const amounts = document.createElement("p");
+        amounts.textContent = `${m.typeName} membership. `
+            + (balance > 0
+                ? `Due ${dollars(m.amountDueCents)}, paid ${dollars(m.amountPaidCents)} — `
+                    + `balance ${dollars(balance)}.`
+                : "Paid up — thank you!");
+        card.append(heading, amounts);
+        if (balance > 0 && m.status !== "CEASED") {
+            const pay = document.createElement("button");
+            pay.textContent = "Pay now";
+            pay.onclick = () => payNow(m.membershipId, pay);
+            card.appendChild(pay);
+        }
+        list.appendChild(card);
+    }
+
+    const historyWrap = document.getElementById("historyWrap");
+    historyWrap.hidden = data.history.length === 0;
+    const tbody = document.querySelector("#history tbody");
+    tbody.innerHTML = "";
+    for (const h of data.history) {
+        const row = tbody.insertRow();
+        row.insertCell().textContent = h.periodName;
+        row.insertCell().textContent = h.typeName;
+        row.insertCell().appendChild(statusBadge(h.status));
     }
 }
 
-async function saveNote() {
-    const id = document.getElementById("noteId").value.trim();
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return say("Note id: letters, digits, - _", true);
-    const response = await Auth.api(`/notes/${id}`, {
-        method: "PUT",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-            title: document.getElementById("noteTitle").value,
-            body: document.getElementById("noteBody").value,
-        }),
-    });
-    if (!response) return;
-    say(response.ok ? `Saved ${id}.` : `Save failed: HTTP ${response.status}`, !response.ok);
-    renderNotes();
+async function payNow(membershipId, button) {
+    button.disabled = true; // no double-mint on a slow network (a re-click would still be safe)
+    try {
+        const response = await Auth.api(`/me/membership/${membershipId}/pay-link`, {method: "POST"});
+        if (!response) return;
+        if (!response.ok) {
+            say(`Could not start the payment (HTTP ${response.status}).`, true);
+            return;
+        }
+        const {url} = await response.json();
+        location.href = url; // the CR-004 pay page takes it from here
+    } finally {
+        button.disabled = false;
+    }
 }
 
 // ---- boot ---------------------------------------------------------------
@@ -137,9 +188,7 @@ async function saveNote() {
             return;
         }
         if (await showIdentity()) {
-            document.getElementById("editor").hidden = false;
-            document.getElementById("noteSave").onclick = saveNote;
-            await renderNotes();
+            await renderMembership();
         }
     } catch (e) {
         statusBox.textContent = "Login failed: " + e;

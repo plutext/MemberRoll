@@ -64,10 +64,13 @@ curl -s http://localhost:18080/server/api/whoami -H "Authorization: Bearer $TOKE
 
 Browse:
 
-- <http://localhost:18080/server/web/> — the user page (notes example).
-  Log in as `testuser` / `testuser`, or click through Keycloak's
-  **Register** link to create a real account (the registration form
-  includes the "I am a …" role picker).
+- <http://localhost:18080/server/web/> — the member "my membership"
+  page (CR-006). Log in as `testuser` / `testuser`, or click through
+  Keycloak's **Register** link to create a real account (the
+  registration form includes the "I am a …" role picker; self-registered
+  accounts must verify their email — watch Mailpit). An account only
+  sees membership data once an admin has provisioned/linked it
+  (admin panel → Users → Self-serve provisioning).
 - <http://localhost:18080/server/admin/> — the admin panel
   (`testadmin` / `testadmin`): user list, claim correction, verified
   flag, manager grant, and the membership register (people, households).
@@ -103,14 +106,13 @@ suddenly fails.
 
 The worked example is the pattern:
 
-- **New endpoint**: copy `NotesResource` (guest 401 challenge, owner
-  scoping via the token's `sub`, admin override, id validation) and
-  register it in `ApiApplication.getClasses()`.
+- **New endpoint**: copy `MeResource`'s membership endpoints (guest 401
+  challenge, own-data scoping via the token's `sub`) or an admin
+  resource (`@RolesAllowed("admin")`), and register it in
+  `ApiApplication.getClasses()`.
 - **New tables/queries**: copy `PersonStore`/`HouseholdStore` (hand-written
   SQL over JDBI, records, transactions via `jdbi.inTransaction`) and add a
-  Flyway migration under `server/src/main/resources/db/migration/`. For
-  single-owner blob data, `NoteStore` (env-configured root, atomic writes,
-  id pattern = path-traversal guard) remains the filesystem example.
+  Flyway migration under `server/src/main/resources/db/migration/`.
 - **New page**: copy `web/` (boot sequence in `app.js`; every fetch via
   `Auth.api`). Keep `[hidden]{display:none !important}` in the CSS.
 - **New role**: claimable → `KeycloakAdmin.CLAIMABLE` + realm JSON

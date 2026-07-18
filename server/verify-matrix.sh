@@ -55,22 +55,8 @@ check "9  garbage token 401"           "401" "$(code $API/whoami -H "Authorizati
 USER_SUB=$(curl -s $API/whoami -H "Authorization: Bearer $USER" | jsq "j['sub']")
 VIEWER_SUB=$(curl -s $API/whoami -H "Authorization: Bearer $VIEWER" | jsq "j['sub']")
 
-# --- notes CRUD + ownership --------------------------------------------------
-check "10 notes guest 401"             "401" "$(code $API/notes)"
-check "11 user PUT note 200"           "200" "$(code -X PUT $API/notes/alpha -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{"title":"T1","body":"B1"}')"
-check "12 user list has note"          "1" "$(curl -s $API/notes -H "Authorization: Bearer $USER" | jsq "len(j)")"
-check "13 user GET own note 200"       "200" "$(code $API/notes/alpha -H "Authorization: Bearer $USER")"
-check "13b note title"                 "T1" "$(body | jsq "j['title']")"
-check "14 viewer GET same id 404"      "404" "$(code $API/notes/alpha -H "Authorization: Bearer $VIEWER")"
-check "15 viewer foreign owner 403"    "403" "$(code "$API/notes/alpha?owner=$USER_SUB" -H "Authorization: Bearer $VIEWER")"
-check "16 admin foreign owner 200"     "200" "$(code "$API/notes/alpha?owner=$USER_SUB" -H "Authorization: Bearer $ADMIN")"
-check "17 bad id 400"                  "400" "$(code -X PUT "$API/notes/bad.id" -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{"title":"x"}')"
-check "18 bad body 400"                "400" "$(code -X PUT $API/notes/beta -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{"nope":1}')"
-check "19 update note 200"             "200" "$(code -X PUT $API/notes/alpha -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{"title":"T2","body":"B2"}')"
-check "19b updated title"              "T2" "$(curl -s $API/notes/alpha -H "Authorization: Bearer $USER" | jsq "j['title']")"
-check "20 admin DELETE foreign 200"    "200" "$(code -X DELETE "$API/notes/alpha?owner=$USER_SUB" -H "Authorization: Bearer $ADMIN")"
-check "21 user GET deleted 404"        "404" "$(code $API/notes/alpha -H "Authorization: Bearer $USER")"
-check "22 DELETE absent 404"           "404" "$(code -X DELETE $API/notes/alpha -H "Authorization: Bearer $USER")"
+# notes rows 10–22 retired with NotesResource (CR-006); the placeholder's
+# absence is asserted as CR6-13 below.
 
 # --- claims -----------------------------------------------------------------
 check "23 claim bad role 400"          "400" "$(code -X PUT $API/me/claim -H "Authorization: Bearer $VIEWER" -H 'Content-Type: application/json' -d '{"role":"admin"}')"
@@ -950,6 +936,166 @@ else
   echo "note: psql not found — skipping CR-005 data cases (fixtures + preferences need psql)"
 fi
 
+
+# --- member self-serve: provisioning + my-membership (CR-006) ----------------
+# Provisioning pushes register identity into Keycloak (an idempotent admin
+# batch); the my-membership + pay-link endpoints authorize on the
+# person.keycloak_subject link, never the self-claimed member role. Fixture
+# households (Ss$$ names): E = two MEMBER adults sharing one address
+# (attribution — primary contact wins), F = MEMBER + PARTNER with distinct
+# addresses (PARTNER excluded entirely), G = MEMBER with no email (not a
+# candidate), H1/H2 = the same address on MEMBERs in two households
+# (conflict), J = a MEMBER carrying testuser's email (adopt). Data rows need
+# psql; the unverified-account, user-count and reset-mail rows also need the
+# Keycloak bootstrap admin (dev default admin/admin).
+KC_BASE=http://localhost:${KEYCLOAK_PORT:-18081}
+
+check "CR6-01 preview guest 403"        "403" "$(code -X POST $API/admin/self-serve/preview)"
+check "CR6-01b preview user 403"        "403" "$(code -X POST $API/admin/self-serve/preview -H "Authorization: Bearer $USER")"
+check "CR6-01c preview noaud 401"       "401" "$(code -X POST $API/admin/self-serve/preview -H "Authorization: Bearer $NOAUD")"
+check "CR6-01d provision user 403"      "403" "$(code -X POST $API/admin/self-serve/provision -H "Authorization: Bearer $USER")"
+check "CR6-01e unlink guest 403"        "403" "$(code -X DELETE $API/admin/people/1/keycloak-link)"
+check "CR6-07 me/membership guest 401"  "401" "$(code $API/me/membership)"
+check "CR6-07b me/membership noaud 401" "401" "$(code $API/me/membership -H "Authorization: Bearer $NOAUD")"
+check "CR6-13 notes retired 404"        "404" "$(code $API/notes)"
+
+if [ "$PSQL_OK" = 1 ]; then
+  SS="Ss$$"
+  # re-run hygiene: a previous run linked testuser's subject to ITS J person
+  # (the UNIQUE column would turn this run's adopt into CONFLICT_SUBJECT), and
+  # that person still carries testuser's fixed email in another household
+  # (which would correctly turn this run's J into CONFLICT_HOUSEHOLDS) — reset
+  # both so each run's J fixture starts clean
+  psqlq "UPDATE person SET keycloak_subject=NULL WHERE keycloak_subject='$USER_SUB'" >/dev/null
+  psqlq "DELETE FROM email_address WHERE email='testuser@example.invalid'" >/dev/null
+
+  SEML="e.$$@ss.test"; FEML="fmem.$$@ss.test"; FPART="fpart.$$@ss.test"; HEML="h.$$@ss.test"
+  # E: two MEMBERs, one shared address, E1 is primary contact
+  JPOST $API/admin/people "{\"givenName\":\"Elsa\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"$SEML\",\"isPrimary\":true}]}" >/dev/null; SSE1=$(body | jsq "j['id']")
+  JPOST $API/admin/people "{\"givenName\":\"Errol\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"$SEML\",\"isPrimary\":true}]}" >/dev/null; SSE2=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$SS E\",\"primaryContactPersonId\":$SSE1}" >/dev/null; SSHE=$(body | jsq "j['id']")
+  JPOST $API/admin/households/$SSHE/people "{\"personId\":$SSE2,\"relationshipType\":\"MEMBER\"}" >/dev/null
+  JPOST $API/admin/memberships "{\"householdId\":$SSHE,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_HH}" >/dev/null; SSME=$(body | jsq "j['id']")
+  # F: MEMBER with own address + PARTNER with a distinct one
+  JPOST $API/admin/people "{\"givenName\":\"Faye\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"$FEML\",\"isPrimary\":true}]}" >/dev/null; SSF1=$(body | jsq "j['id']")
+  JPOST $API/admin/people "{\"givenName\":\"Flip\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"$FPART\",\"isPrimary\":true}]}" >/dev/null; SSF2=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$SS F\",\"primaryContactPersonId\":$SSF1}" >/dev/null; SSHF=$(body | jsq "j['id']")
+  JPOST $API/admin/households/$SSHF/people "{\"personId\":$SSF2,\"relationshipType\":\"PARTNER\"}" >/dev/null
+  JPOST $API/admin/memberships "{\"householdId\":$SSHF,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_HH}" >/dev/null
+  # G: MEMBER, no email
+  JPOST $API/admin/people "{\"givenName\":\"Gina\",\"familyName\":\"$SS\"}" >/dev/null; SSGP=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$SS G\",\"primaryContactPersonId\":$SSGP}" >/dev/null; SSHG=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$SSHG,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null
+  # H1/H2: the same address on MEMBERs of two different households
+  JPOST $API/admin/people "{\"givenName\":\"Hank\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"$HEML\",\"isPrimary\":true}]}" >/dev/null; SSH1=$(body | jsq "j['id']")
+  JPOST $API/admin/people "{\"givenName\":\"Hope\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"$HEML\",\"isPrimary\":true}]}" >/dev/null; SSH2=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$SS H1\",\"primaryContactPersonId\":$SSH1}" >/dev/null; SSHH1=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$SS H2\",\"primaryContactPersonId\":$SSH2}" >/dev/null; SSHH2=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$SSHH1,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null
+  JPOST $API/admin/memberships "{\"householdId\":$SSHH2,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null
+  # J: a MEMBER whose email is testuser's (the adopt case)
+  JPOST $API/admin/people "{\"givenName\":\"Jude\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"testuser@example.invalid\",\"isPrimary\":true}]}" >/dev/null; SSJP=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$SS J\",\"primaryContactPersonId\":$SSJP}" >/dev/null; SSHJ=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$SSHJ,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; SSMJ=$(body | jsq "j['id']")
+
+  # the Keycloak bootstrap admin backs the rows the app deliberately has no API for
+  KCTOK=$(curl -s -X POST "$KC_BASE/realms/master/protocol/openid-connect/token" \
+    -d grant_type=password -d client_id=admin-cli \
+    -d username="${KEYCLOAK_ADMIN_USER:-admin}" -d password="${KEYCLOAK_ADMIN_PASSWORD:-admin}" | jsq "j['access_token']")
+  kc_users_count() { curl -s "$KC_BASE/admin/realms/memberroll/users/count" -H "Authorization: Bearer $KCTOK"; }
+
+  # CR6-02: preview resolves the whole table, writes nothing
+  check "CR6-02 preview 200"            "200" "$(code -X POST $API/admin/self-serve/preview -H "Authorization: Bearer $ADMIN")"
+  PREV=$(body)
+  ssrow() { echo "$PREV" | jsq "next(r['action'] for r in j['rows'] if r['personId']==$1)"; }
+  check "CR6-02b E primary CREATE"      "CREATE" "$(ssrow $SSE1)"
+  check "CR6-02c E sharer SHARED_ADDRESS" "SHARED_ADDRESS" "$(ssrow $SSE2)"
+  check "CR6-02d F member CREATE"       "CREATE" "$(ssrow $SSF1)"
+  check "CR6-02e F partner absent"      "0" "$(echo "$PREV" | jsq "sum(1 for r in j['rows'] if r['personId']==$SSF2)")"
+  check "CR6-02f G (no email) absent"   "0" "$(echo "$PREV" | jsq "sum(1 for r in j['rows'] if r['personId']==$SSGP)")"
+  check "CR6-02g H1 conflict"           "CONFLICT_HOUSEHOLDS" "$(ssrow $SSH1)"
+  check "CR6-02g2 H2 conflict"          "CONFLICT_HOUSEHOLDS" "$(ssrow $SSH2)"
+  check "CR6-02h J ADOPT"               "ADOPT" "$(ssrow $SSJP)"
+  check "CR6-02i preview linked nothing" "0" "$(psqlq "SELECT count(*) FROM person WHERE person_id IN ($SSE1,$SSF1,$SSJP) AND keycloak_subject IS NOT NULL")"
+
+  # CR6-03: provision — same actions applied; Keycloak first, DB second
+  check "CR6-03 provision 200"          "200" "$(code -X POST $API/admin/self-serve/provision -H "Authorization: Bearer $ADMIN")"
+  PREV=$(body)
+  check "CR6-03b E primary CREATE"      "CREATE" "$(ssrow $SSE1)"
+  check "CR6-03c J ADOPT"               "ADOPT" "$(ssrow $SSJP)"
+  check "CR6-03d E1/F1/J linked"        "3" "$(psqlq "SELECT count(*) FROM person WHERE person_id IN ($SSE1,$SSF1,$SSJP) AND keycloak_subject IS NOT NULL")"
+  check "CR6-03e nobody else linked"    "0" "$(psqlq "SELECT count(*) FROM person WHERE person_id IN ($SSE2,$SSF2,$SSGP,$SSH1,$SSH2) AND keycloak_subject IS NOT NULL")"
+  check "CR6-03f J linked to testuser"  "$USER_SUB" "$(psqlq "SELECT keycloak_subject FROM person WHERE person_id=$SSJP")"
+
+  # CR6-04: the created account carries claim=member, verified, member granted;
+  # testuser's claim was set through the adopt path
+  check "CR6-04 created account state"  "member|True|True" "$(curl -s "$API/admin/users?search=$SEML" -H "Authorization: Bearer $ADMIN" | jsq "next(str(u['claimed_role'])+'|'+str(u['verified'])+'|'+str('member' in u['roles']) for u in j if u['email']=='$SEML')")"
+  USER4=$(tok testuser test-cli)
+  check "CR6-04b testuser claim member" "member" "$(curl -s $API/whoami -H "Authorization: Bearer $USER4" | jsq "j['claimed_role']")"
+  check "CR6-04c testuser verified"     "true" "$(curl -s $API/whoami -H "Authorization: Bearer $USER4" | jsq "str(j['verified']).lower()")"
+
+  # CR6-05: idempotent — a second run re-reports ALREADY_LINKED, creates nobody
+  KCN_BEFORE=$(kc_users_count)
+  check "CR6-05 provision again 200"    "200" "$(code -X POST $API/admin/self-serve/provision -H "Authorization: Bearer $ADMIN")"
+  PREV=$(body)
+  check "CR6-05b E1 already linked"     "ALREADY_LINKED" "$(ssrow $SSE1)"
+  check "CR6-05c F1 already linked"     "ALREADY_LINKED" "$(ssrow $SSF1)"
+  check "CR6-05d J already linked"      "ALREADY_LINKED" "$(ssrow $SSJP)"
+  check "CR6-05e user count unchanged"  "$KCN_BEFORE" "$(kc_users_count)"
+
+  # CR6-06: the linked member's view
+  check "CR6-06 testuser membership 200" "200" "$(code $API/me/membership -H "Authorization: Bearer $USER4")"
+  check "CR6-06b linked true"           "true" "$(body | jsq "str(j['linked']).lower()")"
+  check "CR6-06c J's household shown"   "$SSMJ" "$(body | jsq "next(m['membershipId'] for m in j['memberships'])")"
+  check "CR6-06d amounts"               "4500|0|2025-2026|SINGLE" "$(curl -s $API/me/membership -H "Authorization: Bearer $USER4" | jsq "(lambda m: str(m['amountDueCents'])+'|'+str(m['amountPaidCents'])+'|'+m['periodName']+'|'+m['typeName'])(j['memberships'][0])")"
+  # CR6-07 (rest): any authenticated-but-unlinked account learns only about itself
+  check "CR6-07c viewer linked false"   "false" "$(curl -s $API/me/membership -H "Authorization: Bearer $VIEWER" | jsq "str(j['linked']).lower()")"
+
+  # CR6-08: pay-link handoff — the CR-004 surface end-to-end
+  check "CR6-08 pay-link 200"           "200" "$(code -X POST $API/me/membership/$SSMJ/pay-link -H "Authorization: Bearer $USER4")"
+  SSURL=$(body | jsq "j['url']"); SSTOK=${SSURL##*t=}
+  check "CR6-08b guest pay view 200"    "200" "$(code $API/pay/$SSTOK)"
+  check "CR6-08c same membership"       "$SSMJ" "$(psqlq "SELECT membership_id FROM renewal_token WHERE token_hash='$(sha "$SSTOK")'")"
+  # CR6-09: another household's membership is a plain 404 (no enumeration)
+  check "CR6-09 foreign pay-link 404"   "404" "$(code -X POST $API/me/membership/$SSME/pay-link -H "Authorization: Bearer $USER4")"
+
+  # CR6-10: an UNVERIFIED self-registration with a member's address never links
+  GEML="gu.$$@ss.test"
+  JPUT $API/admin/people/$SSGP "{\"givenName\":\"Gina\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"$GEML\",\"isPrimary\":true}]}" >/dev/null
+  check "CR6-10 seed unverified user 201" "201" "$(code -X POST "$KC_BASE/admin/realms/memberroll/users" -H "Authorization: Bearer $KCTOK" -H 'Content-Type: application/json' -d "{\"username\":\"$GEML\",\"email\":\"$GEML\",\"firstName\":\"Gina\",\"lastName\":\"$SS\",\"enabled\":true,\"emailVerified\":false}")"
+  check "CR6-10b preview 200"           "200" "$(code -X POST $API/admin/self-serve/preview -H "Authorization: Bearer $ADMIN")"
+  PREV=$(body)
+  check "CR6-10c G skipped unverified"  "SKIPPED_UNVERIFIED" "$(ssrow $SSGP)"
+  check "CR6-10d G not linked"          "" "$(psqlq "SELECT keycloak_subject FROM person WHERE person_id=$SSGP")"
+
+  # CR6-11: unlink — the account stays, the view empties, re-provision re-adopts
+  check "CR6-11 unlink 200"             "200" "$(code -X DELETE $API/admin/people/$SSJP/keycloak-link -H "Authorization: Bearer $ADMIN")"
+  check "CR6-11b now linked false"      "false" "$(curl -s $API/me/membership -H "Authorization: Bearer $USER4" | jsq "str(j['linked']).lower()")"
+  check "CR6-11c unlink absent person 404" "404" "$(code -X DELETE $API/admin/people/999999/keycloak-link -H "Authorization: Bearer $ADMIN")"
+  code -X POST $API/admin/self-serve/provision -H "Authorization: Bearer $ADMIN" >/dev/null
+  check "CR6-11d re-adopted, same subject" "$USER_SUB" "$(psqlq "SELECT keycloak_subject FROM person WHERE person_id=$SSJP")"
+
+  # CR6-12: the V6 column really is unique
+  check "CR6-12 unique constraint exists" "1" "$(psqlq "SELECT count(*) FROM pg_constraint WHERE conrelid='person'::regclass AND contype='u'")"
+  check "CR6-12b duplicate subject refused" "yes" "$(PGPASSWORD=memberroll psql -h localhost -p "${POSTGRES_PORT:-5433}" -U memberroll -d memberroll -tAc "UPDATE person SET keycloak_subject='$USER_SUB' WHERE person_id=$SSE1" 2>&1 | grep -q 'duplicate key' && echo yes || echo no)"
+
+  # CR6-14: resetPasswordAllowed took — the login page offers Forgot Password.
+  # The web client mandates PKCE, so the probe carries a throwaway S256
+  # challenge (the page renders regardless of whether it is ever redeemed).
+  check "CR6-14 login page reset link"  "yes" "$(curl -s "$KC_BASE/realms/memberroll/protocol/openid-connect/auth?client_id=web&redirect_uri=http%3A%2F%2Flocalhost%3A18080%2Fserver%2Fweb%2F&response_type=code&scope=openid&code_challenge_method=S256&code_challenge=$(sha probe | head -c 43)" | grep -q 'reset-credentials' && echo yes || echo no)"
+
+  # CR6-15: the realm smtpServer block works — an admin-triggered
+  # reset-credentials mail (used here only as a relay probe) lands in Mailpit
+  if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
+    FUID=$(curl -s "$KC_BASE/admin/realms/memberroll/users?email=$FEML&exact=true" -H "Authorization: Bearer $KCTOK" | jsq "j[0]['id']")
+    check "CR6-15 reset mail sent 204"  "204" "$(code -X PUT "$KC_BASE/admin/realms/memberroll/users/$FUID/execute-actions-email" -H "Authorization: Bearer $KCTOK" -H 'Content-Type: application/json' -d '["UPDATE_PASSWORD"]')"
+    check "CR6-15b reset mail in Mailpit" "1" "$(mailpit_count "$FEML")"
+  else
+    echo "SKIP CR6-15 reset-mail relay probe (Mailpit not reachable at $MAILPIT)"
+  fi
+else
+  echo "note: psql not found — skipping CR-006 data cases (fixtures + link assertions need psql)"
+fi
 
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.html)"

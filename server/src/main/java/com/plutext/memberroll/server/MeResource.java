@@ -17,13 +17,18 @@
 package com.plutext.memberroll.server;
 
 import jakarta.json.Json;
+import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObject;
+import jakarta.json.JsonObjectBuilder;
 import jakarta.json.JsonReader;
 import jakarta.json.JsonValue;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotAuthorizedException;
+import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
@@ -37,11 +42,19 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The caller's own role claim. New users pick a claim on the hosted
- * registration page; this endpoint is the path for accounts that predate
- * the picker (the webapp prompts them) and for changing one's claim
- * later. Setting a claim resets the verified flag — the admin verified
- * the old claim, not the new one.
+ * The caller's own role claim, and — since CR-006 — their "my membership"
+ * view. The claim endpoint is the path for accounts that predate the
+ * registration picker (the webapp prompts them) and for changing one's
+ * claim later; setting a claim resets the verified flag — the admin
+ * verified the old claim, not the new one.
+ *
+ * The membership endpoints carry NO {@code @RolesAllowed} on purpose: the
+ * {@code person.keycloak_subject} link is the authority, not the
+ * self-claimed {@code member} role (CR-006's role-model decision). Any
+ * authenticated account may ask and learns only about itself —
+ * {@code {linked: false}} reveals nothing about others, and there is
+ * deliberately no lookup by email (an enumeration oracle). Guests get the
+ * usual 401 challenge.
  */
 @Path("me")
 public class MeResource {
@@ -97,6 +110,84 @@ public class MeResource {
                             + WhoAmIResource.escape(String.valueOf(e.getMessage())) + "\"}")
                     .build();
         }
+    }
+
+    // ---- my membership (CR-006) -----------------------------------------
+
+    @GET
+    @Path("membership")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response membership(@Context SecurityContext security) {
+        UserPrincipal user = requireUser(security);
+        org.jdbi.v3.core.Jdbi jdbi = Db.jdbi();
+        return jdbi.withHandle(handle -> {
+            SelfServeStore.LinkedPerson person =
+                    SelfServeStore.personBySubject(handle, user.getName()).orElse(null);
+            JsonObjectBuilder out = Json.createObjectBuilder()
+                    .add("societyName", Mail.societyName());
+            if (person == null) {
+                return Response.ok(out.add("linked", false).build().toString()).build();
+            }
+            out.add("linked", true)
+                    .add("person", Json.createObjectBuilder()
+                            .add("givenName", person.givenName())
+                            .add("familyName", person.familyName()));
+            JsonArrayBuilder memberships = Json.createArrayBuilder();
+            for (SelfServeStore.MembershipRow m : SelfServeStore.currentMemberships(handle, person.personId())) {
+                memberships.add(Json.createObjectBuilder()
+                        .add("membershipId", m.membershipId())
+                        .add("displayName", m.displayName())
+                        .add("periodName", m.periodName())
+                        .add("typeName", m.typeName())
+                        .add("status", m.status())
+                        .add("amountDueCents", m.amountDueCents())
+                        .add("amountPaidCents", m.amountPaidCents())
+                        .add("paid", m.amountPaidCents() >= m.amountDueCents()));
+            }
+            JsonArrayBuilder history = Json.createArrayBuilder();
+            for (SelfServeStore.HistoryRow h : SelfServeStore.history(handle, person.personId())) {
+                history.add(Json.createObjectBuilder()
+                        .add("periodName", h.periodName())
+                        .add("typeName", h.typeName())
+                        .add("status", h.status()));
+            }
+            return Response.ok(out.add("memberships", memberships)
+                    .add("history", history).build().toString()).build();
+        });
+    }
+
+    /**
+     * Pay-now is a handoff, not a second payment path: mint a CR-004 magic
+     * link (fresh per call) and let the browser navigate to the one Stripe
+     * surface. 404 unless the membership is in the caller's payable set —
+     * indistinguishable from "no such membership", so nothing enumerates.
+     */
+    @POST
+    @Path("membership/{id}/pay-link")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response payLink(@Context SecurityContext security, @PathParam("id") long membershipId) {
+        UserPrincipal user = requireUser(security);
+        org.jdbi.v3.core.Jdbi jdbi = Db.jdbi();
+        return jdbi.inTransaction(handle -> {
+            Long personId = SelfServeStore.personBySubject(handle, user.getName())
+                    .map(SelfServeStore.LinkedPerson::personId).orElse(null);
+            if (personId == null || !SelfServeStore.canPay(handle, personId, membershipId)) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity("{\"error\":\"no such membership\"}").build();
+            }
+            RenewalTokenStore.Minted minted =
+                    RenewalTokenStore.mint(handle, membershipId).orElseThrow();
+            return Response.ok(Json.createObjectBuilder()
+                    .add("url", PayResource.payUrl(minted.token()))
+                    .build().toString()).build();
+        });
+    }
+
+    private static UserPrincipal requireUser(SecurityContext security) {
+        if (!(security.getUserPrincipal() instanceof UserPrincipal user)) {
+            throw new NotAuthorizedException("Bearer realm=\"memberroll\"");
+        }
+        return user;
     }
 
     private static String jsonArray(Set<String> values) {

@@ -11,11 +11,10 @@ One Maven module today: `server/`, a war (Jersey 3.1 / Tomcat 10.1,
 jakarta namespace, Java 17). Identity lives entirely in Keycloak — the
 server never sees a password, it only validates the RS256 bearer tokens
 Keycloak issues (`AuthFilter`, JWKS-backed, multi-issuer allowlist).
-Static pages in the same war (`web/` user page, `admin/` panel) share a
+Static pages in the same war (`web/` member page, `admin/` panel) share a
 hand-rolled OAuth2 Authorization Code + PKCE login (`shared/auth.js` —
-deliberately no keycloak-js). `NotesResource`/`NoteStore` is the worked
-example of an owner-scoped resource over a filesystem store; it is
-placeholder app content, made to be replaced.
+deliberately no keycloak-js). The `NotesResource`/`NoteStore` placeholder
+was retired by CR-006 — `web/` is now the member "my membership" page.
 
 ## Commands
 
@@ -33,7 +32,7 @@ STRIPE_WEBHOOK_SECRET=whsec_devmatrix SMTP_HOST=localhost SMTP_PORT=18026 \
   MAIL_FROM=noreply@memberroll.dev MAIL_REPLY_TO=treasurer@memberroll.dev \
   MEMBERROLL_SOCIETY_NAME="MemberRoll Dev Society" mvn -pl server cargo:run
 
-server/verify-matrix.sh         # the role x endpoint matrix (389 checks offline / +1 with a
+server/verify-matrix.sh         # the role x endpoint matrix (428 checks offline / +1 with a
                                 # Stripe key) against the running dev stack (ports via
                                 # PORT / KEYCLOAK_PORT); extend it alongside new endpoints —
                                 # it must stay green. The CR-005 abort/resume rows stop and
@@ -158,6 +157,41 @@ Preferences ride the person/household resources
 insert-don't-overwrite (close the current row, insert the new — no churn
 when the value already equals the inherited default).
 
+CR-006 added member self-serve. Identity linking is **provision-time,
+register-push** (never match-at-login): `POST /api/admin/self-serve/
+provision` (with a write-nothing `/preview`) is an idempotent admin batch
+that, for every current MEMBER-relationship person in an ACTIVE household
+with an email (primary, else lowest id), creates a Keycloak account
+(username = email, `emailVerified: true` — imported addresses count as
+verified, and the `lastName` bite applies) or adopts an existing
+**verified** one, sets `claimed_role=member` through the claim mechanism
+(attribute + `syncClaim`, then `role_verified=true` AFTER the sync resets
+it), and only then writes `person.keycloak_subject` (V6, nullable+unique)
+— Keycloak first, DB second, so a re-run's ADOPT branch heals a crash
+between the two; don't reorder it. The report's distinctions matter:
+CONFLICT_HOUSEHOLDS (one address in two households — principle 4, an
+application-level rule, deliberately not a DB constraint),
+SHARED_ADDRESS (within-household sharer who is not the CR-005-attributed
+person), SKIPPED_UNVERIFIED (an unverified self-registration must never
+be linked), CONFLICT_SUBJECT — each names a different admin fix.
+`MeResource` gained `GET /api/me/membership` and `POST /api/me/
+membership/{id}/pay-link`, both authenticated but **deliberately not
+`@RolesAllowed`**: the subject→person link is the authority (the
+self-claimed `member` role is only UX), every request re-derives
+entitlement from current register state (current MEMBER row; the
+CR-004 lostLinkRows window in `SelfServeStore.PAYABLE_SQL`), and pay-now
+is a handoff to the CR-004 pay page — one Stripe surface. Unlinked
+accounts get `{linked: false}` and the page shows "contact the society";
+there is deliberately NO lookup/request-access form (enumeration
+oracle). Provisioning is silent (no invite mail): first login is
+Keycloak's Forgot Password against the pre-verified address, which the
+realm now enables (`resetPasswordAllowed`, `verifyEmail`, and an
+`smtpServer` block pointing at compose-internal `mailpit:1025` — dev
+Keycloak sends its own mail, separate from the app's `Mail` env).
+Nobody disables Keycloak accounts on lapse/leave, and unlink
+(`DELETE /api/admin/people/{id}/keycloak-link`) leaves the account
+alone — a stale login simply sees no membership.
+
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
 `MembershipStore.insertMembershipPerson` sets
@@ -168,8 +202,6 @@ CR-003's rollover, and CR-010's new-member endpoint, so the rule is
 uniform everywhere a membership's composition is copied — see
 `docs/membership_management_database_schema.md` "Formal member status"
 and `docs/ROADMAP.md` "Voting rights, corrected" for the record.
-`NoteStore`'s per-owner JSON files under `MEMBERROLL_DATA` remain the
-worked example for single-owner blobs, slated for retirement.
 Production topology (server/deploy/): Caddy is the sole ingress and TLS
 terminator, Tomcat serves the war, Keycloak runs in production mode on
 Postgres under `/auth` with a single public issuer, and the admin

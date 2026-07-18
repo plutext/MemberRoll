@@ -36,7 +36,7 @@ public class ApiApplication extends Application {
     public Set<Class<?>> getClasses() {
         return Set.of(HealthResource.class, WhoAmIResource.class,
                 AdminPingResource.class, MeResource.class,
-                AdminUsersResource.class, NotesResource.class,
+                AdminUsersResource.class, AdminSelfServeResource.class,
                 AdminPeopleResource.class, AdminHouseholdsResource.class,
                 AdminImportResource.class, AdminPeriodsResource.class,
                 AdminMembershipsResource.class, AdminPaymentsResource.class,

@@ -15,17 +15,19 @@ docker compose down                        # remove; next `up` re-imports the re
                                            # Flyway re-creates the app schema at Tomcat start
 
 ./verify-matrix.sh                         # the role x endpoint matrix against the running
-                                           # stack (83 checks; PORT/KEYCLOAK_PORT env to retarget)
+                                           # stack (428 checks; PORT/KEYCLOAK_PORT env to retarget)
 ```
 
 Endpoints: `/server/api/health` (public), `/server/api/whoami` (any
 logged-in user), `/server/api/admin/ping` (admin role),
 `/server/api/me/claim` (PUT, own role claim), `/server/api/admin/users`
-(admin: list/claim/verify/manager), and the notes example (all
-owner-scoped, any account): `GET /server/api/notes`,
-`GET`/`PUT`/`DELETE /server/api/notes/{id}` (`?owner=<sub>` lets admin
-name another owner on GET/DELETE). Note files live under `$MEMBERROLL_DATA`
-(default `~/memberroll-server/`).
+(admin: list/claim/verify/manager), and member self-serve (CR-006):
+`GET /server/api/me/membership` (any logged-in account — `linked: false`
+when no `person` row carries the caller's Keycloak subject) and
+`POST /server/api/me/membership/{id}/pay-link` (mints a CR-004 magic
+link for a membership in the caller's own payable set). Provisioning
+(admin): `POST /server/api/admin/self-serve/preview` / `.../provision`,
+plus `GET`/`DELETE /server/api/admin/people/{id}/keycloak-link`.
 
 The membership register (CR-001, admin role): `/server/api/admin/people`
 (GET list `?q=&limit=&offset=`, POST) and `/{id}` (GET/PUT — emails and
@@ -62,10 +64,11 @@ registration are CR-008):
 
 ## The webapps
 
-- <http://localhost:18080/server/web/> — the user page: log in (or
-  register via the hosted Keycloak pages), pick a role claim (mandatory
-  modal for claim-less accounts), and the notes example. An admin
-  account gets a link to the panel.
+- <http://localhost:18080/server/web/> — the member's "my membership"
+  page (CR-006): log in (or register via the hosted Keycloak pages;
+  provisioned members use Forgot Password the first time), see the
+  household's membership status, and pay via the CR-004 pay page. An
+  admin account gets a link to the panel.
 - <http://localhost:18080/server/admin/> — the admin panel (`testadmin` /
   `testadmin`): the users section lists accounts with claimed role /
   verified flag / granted roles, corrects claims, records verification,

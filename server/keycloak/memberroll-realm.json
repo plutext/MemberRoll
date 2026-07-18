@@ -4,10 +4,16 @@
   "displayName": "MemberRoll",
   "registrationAllowed": true,
   "registrationEmailAsUsername": false,
-  "verifyEmail": false,
-  "resetPasswordAllowed": false,
+  "verifyEmail": true,
+  "resetPasswordAllowed": true,
   "rememberMe": true,
   "sslRequired": "external",
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "noreply@memberroll.dev",
+    "fromDisplayName": "MemberRoll Dev"
+  },
   "roles": {
     "realm": [
       {

@@ -1,6 +1,6 @@
 # CR 006: Member self-serve — "my membership" page, pay from there
 
-Status: PROPOSED (2026-07-18)
+Status: IMPLEMENTED + VERIFIED (2026-07-18)
 
 ## Problem
 
@@ -324,7 +324,90 @@ production push per the standing rule, since auth realm config moved.
 
 ## Results
 
-(to be recorded when implemented)
+Implemented 2026-07-18. What landed, mapped to the approach above:
+
+- **V6 migration** `person.keycloak_subject text UNIQUE` (nullable).
+- **`SelfServeStore`** — candidate selection (current MEMBER row, ACTIVE
+  household, not deceased, primary-else-lowest email via LATERAL), the
+  link column accessors, and the my-membership queries. The payable
+  window is one SQL fragment (`PAYABLE_SQL`) shared by the GET, the
+  history query (negated) and the pay-link guard, mirroring
+  `lostLinkRows`.
+- **`AdminSelfServeResource`** — `/preview` + `/provision`, one shared
+  resolution pass implementing the first-match-wins table; provision
+  executes CREATE/ADOPT per candidate: Keycloak account → claim
+  attribute → `syncClaim` → `role_verified=true` (after the sync resets
+  it) → DB link, in that order. A per-candidate Keycloak failure is
+  reported as an `ERROR` row and does not sink the batch (re-run heals).
+  `KeycloakAdmin` gained `findUsersByEmail` (exact) and `createUser`
+  (reads the 201 Location header for the subject; blank-name guard for
+  the `lastName` bite).
+- **`MeResource`** — `GET /api/me/membership`,
+  `POST /api/me/membership/{id}/pay-link`; no `@RolesAllowed`; the
+  response also carries `societyName` so the not-linked page can name
+  who to contact. Unlink + link-status ride `AdminPeopleResource`
+  (`GET`/`DELETE /{id}/keycloak-link`).
+- **Web** — `web/index.html`/`app.js` rewritten as the my-membership
+  page (cards + status badges + Pay now handoff + history table;
+  not-linked message; claim modal wiring unchanged).
+  `NotesResource`/`NoteStore`/notes UI **deleted**; docs swept
+  (`MEMBERROLL_DATA` gone). Admin: "Self-serve provisioning" section on
+  users.html (preview/provision + report table), link indicator +
+  Unlink in the person form.
+- **Realm** — `verifyEmail: true`, `resetPasswordAllowed: true`,
+  `smtpServer` → compose-internal `mailpit:1025`. No `clientScopes` key.
+
+### Scripted matrix (2026-07-18)
+
+`server/verify-matrix.sh` extended with the CR6-* rows (notes rows
+10–22 removed; retirement asserted as CR6-13). Full run against the
+fresh dev stack (compose down/up + cargo with the CR-004/005 env):
+**PASS=428 FAIL=0** (CR4-09 checkout rows skipped — no Stripe key in
+the shell), covering all 15 planned rows: auth (403/403/401), the
+preview/provision report per fixture (E attribution CREATE +
+SHARED_ADDRESS, F PARTNER absent, G absent, H1+H2 CONFLICT_HOUSEHOLDS,
+J ADOPT of testuser), Keycloak-side state (claim=member, verified,
+member granted; testuser adopted), idempotency (ALREADY_LINKED, user
+count unchanged), the member view + amounts, pay-link end-to-end
+through the CR-004 pay view, foreign-membership 404,
+SKIPPED_UNVERIFIED (unverified account seeded via the bootstrap
+admin), unlink → linked:false → re-adopt (same subject), the V6 unique
+constraint (duplicate refused), the Forgot Password link on the login
+page (the probe needs a PKCE challenge — the `web` client mandates
+S256), and the realm smtpServer relay probe (reset mail in Mailpit).
+Two matrix rows needed re-run hygiene: testuser's subject is unlinked
+and prior runs' `testuser@example.invalid` email rows deleted at block
+start, or the fixed adopt email correctly trips CONFLICT_SUBJECT /
+CONFLICT_HOUSEHOLDS against earlier runs' fixtures.
+
+### Browser walkthrough (headless, 2026-07-18)
+
+Playwright/chromium, 16/16 checks: (A) admin users page — Preview
+renders the report (fixture listed as Create account), Provision
+gated on preview, applies, report + users list update; person form
+shows "Linked to Keycloak account …" + Unlink. (B) provisioned
+member's first login: login page → Forgot Password → reset mail in
+Mailpit → set password → **lands back in the webapp logged in** —
+no verify-email prompt (pre-verified), **no claim modal**
+(pre-claimed); my-membership shows household, Unpaid badge, due
+$45.00; Pay now navigates to the CR-004 pay page with the same
+amount. (C) testviewer (unlinked) sees the not-linked message and no
+way to probe the register. (D) fresh self-registration → Keycloak
+demands email verification (Mailpit round trip) → verified login →
+not-linked message. Not exercised: a physical phone on the LAN IP
+(step 5) — manual, unchanged auth plumbing.
+
+Stripe test-card payment (walkthrough step 3's tail) not exercised —
+no `STRIPE_SECRET_KEY` on hand this session; the webhook → recompute
+path is CR-004's surface, unchanged and still covered by its matrix
+rows.
+
+**Before the next production push**: run the deploy Local smoke
+(deploy/README.md §6 — realm auth config changed), and mirror the
+three realm changes (verifyEmail, resetPasswordAllowed, a production
+`smtpServer` block pointing at the real relay) into the prod realm via
+console/REST per the dev/prod realm discipline. From-address SPF/DKIM
+alignment remains CR-008.
 
 ## Follow-ups / amendments
 

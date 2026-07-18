@@ -546,8 +546,11 @@ Tables that arrive with the change request that needs them, not in the
 initial schema: renewal-token storage for magic payment links (CR-004:
 token hash, membership, expiry, used_at), the email send log (CR-005),
 `person.keycloak_subject` nullable+unique for member self-serve
-(CR-006), and publication tables if `PublicationPreference` graduates
-beyond the JOURNAL allocation type.
+(arrived with CR-006 as migration V6; the companion "one email address
+in at most one household" rule is deliberately application-level
+validation in provisioning, not a constraint), and publication tables
+if `PublicationPreference` graduates beyond the JOURNAL allocation
+type.
 
 ## Revision history
 

@@ -31,6 +31,23 @@
         </thead>
         <tbody></tbody>
     </table>
+
+    <h2>Self-serve provisioning</h2>
+    <p>Creates (or adopts) a Keycloak account for every current formal member
+        with an email address and links it to their register record (CR-006).
+        Idempotent — run it after an import, a walk-in, or on a whim; already
+        provisioned members report <em>Already linked</em>. Provisioning sends
+        nothing: members opt in via the login page's Forgot Password.
+        Preview writes nothing.</p>
+    <button id="ssPreview">Preview</button>
+    <button id="ssProvision" disabled>Provision</button>
+    <div id="ssCounts" class="muted"></div>
+    <table id="ssReport" hidden>
+        <thead>
+        <tr><th>Person</th><th>Email</th><th>Action</th><th>Detail</th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
 </section>
 </main>
 

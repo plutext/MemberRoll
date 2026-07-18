@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
 /**
  * "Any valid token" endpoint - answers who the server thinks the caller
  * is. The 401 challenge for guests is the pattern own-data resources
- * reuse (see NotesResource).
+ * reuse (see MeResource's membership endpoints).
  */
 @Path("whoami")
 public class WhoAmIResource {

@@ -278,3 +278,43 @@ current members copied onto it. Record their payment from the members table
 as usual. If the join date is past the period's late-joining cutoff, the app
 notes that so you can consider signing them up for the following year
 instead.
+
+## Member self-serve — "my membership"
+
+Members can (optionally) log in and see their own household's membership
+at `/server/web/` — status, amount due, past years — with a **Pay now**
+button that opens the same pay page as an emailed pay link. It's view +
+pay only: members can't edit their details online.
+
+- **Giving members access — provisioning**: on **Users**, the
+  **Self-serve provisioning** section creates a login for every current
+  formal member who has an email address, and links it to their register
+  record. Click **Preview** first (it changes nothing), read the report,
+  then **Provision**. It's safe to run any time — after an import, after
+  a walk-in, or just to be sure; people already provisioned simply show
+  *Already linked*.
+- **Reading the report**: *Create account* / *Adopt existing account*
+  are the ones that will act. *Shared address* is normal for couples —
+  one address gets one login, held by the household's primary contact.
+  *Conflict: two households* means the same email address appears in two
+  different households — fix the register data, then run again.
+  *Skipped: unverified account* means someone self-registered with that
+  address but never confirmed it — the app won't link an unconfirmed
+  mailbox to a member's record.
+- **Nothing is emailed.** Provisioning is silent. A member who wants to
+  use the page goes to the sign-in screen and clicks **Forgot
+  Password?** — the reset email (to their known address) lets them set a
+  password and they're in. When the society wants to announce the
+  feature, send a segment email (the Email area).
+- **Members who sign themselves up** (the Register link) must confirm
+  their email address, and until you provision/link them they see "we
+  couldn't find a membership linked to this account — contact the
+  society". There's deliberately no way for a visitor to look up
+  membership records.
+- **Unlinking**: in a person's record (Register → People → Edit), the
+  **Self-serve account** section shows whether they're linked, with an
+  **Unlink** button (use it if an email address was reassigned or linked
+  to the wrong person). Their login keeps working but shows no
+  membership; provisioning can re-link later. Members who leave are
+  handled automatically — the page always checks the current register,
+  so someone removed from a household simply stops seeing it.

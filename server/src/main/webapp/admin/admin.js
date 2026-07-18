@@ -188,6 +188,59 @@ async function renderUsers() {
     document.getElementById("usersSection").hidden = false;
 }
 
+// ---- self-serve provisioning (CR-006) --------------------------------------
+
+// each action names a different admin fix — never collapsed into "skipped"
+const SS_ACTIONS = {
+    CREATE: ["Create account", "green"],
+    ADOPT: ["Adopt existing account", "green"],
+    ALREADY_LINKED: ["Already linked", "grey"],
+    SHARED_ADDRESS: ["Shared address", "grey"],
+    CONFLICT_HOUSEHOLDS: ["Conflict: two households", "amber"],
+    CONFLICT_SUBJECT: ["Conflict: account linked elsewhere", "amber"],
+    SKIPPED_UNVERIFIED: ["Skipped: unverified account", "amber"],
+    ERROR: ["Error", "amber"],
+};
+
+async function runSelfServe(apply) {
+    const response = await registerCall(
+        `/admin/self-serve/${apply ? "provision" : "preview"}`, {method: "POST"});
+    if (!response) return;
+    const report = await response.json();
+    const counts = Object.entries(report.counts)
+        .map(([k, v]) => `${(SS_ACTIONS[k] || [k])[0]}: ${v}`).join(" · ");
+    document.getElementById("ssCounts").textContent =
+        (apply ? "Provisioned. " : "Preview — nothing written. ") + (counts || "No candidates.");
+    const table = document.getElementById("ssReport");
+    const body = table.querySelector("tbody");
+    body.innerHTML = "";
+    for (const r of report.rows) {
+        const row = body.insertRow();
+        row.insertCell().textContent = `${r.name} (#${r.personId})`;
+        row.insertCell().textContent = r.email;
+        const [label, colour] = SS_ACTIONS[r.action] || [r.action, "grey"];
+        const badge = document.createElement("span");
+        badge.className = `badge badge-${colour}`;
+        badge.textContent = label;
+        row.insertCell().appendChild(badge);
+        row.insertCell().textContent = r.detail || "";
+    }
+    table.hidden = report.rows.length === 0;
+    // Provision is gated on a preview (the import pattern); a run that would
+    // do nothing keeps it disabled
+    const actionable = (report.counts.CREATE || 0) + (report.counts.ADOPT || 0);
+    document.getElementById("ssProvision").disabled = apply || actionable === 0;
+    if (apply) {
+        say("Provisioning done — new accounts appear in the users list above.");
+        renderUsers();
+    }
+}
+
+function wireSelfServe() {
+    document.getElementById("ssPreview").onclick = () => runSelfServe(false);
+    document.getElementById("ssProvision").onclick = () => runSelfServe(true);
+}
+
 // ---- register: people ------------------------------------------------------
 
 let editingPersonId = null; // null = the form creates; otherwise it updates
@@ -252,7 +305,38 @@ function openPersonForm(person) {
         if (person) renderPreferences("pfPrefs", "people", person.id);
         else document.getElementById("pfPrefs").innerHTML = "";
     }
+    // self-serve link status (CR-006): also editing-only
+    const linkWrap = document.getElementById("pfLinkWrap");
+    if (linkWrap) {
+        linkWrap.hidden = !person;
+        if (person) renderPersonLink(person.id);
+    }
     openDialog("personForm");
+}
+
+// the linked/not-linked indicator + Unlink in person detail (CR-006). Unlink
+// leaves the Keycloak account alone — the account then sees "no membership
+// linked"; re-provisioning re-adopts it.
+async function renderPersonLink(personId) {
+    const statusEl = document.getElementById("pfLinkStatus");
+    const unlink = document.getElementById("pfUnlink");
+    statusEl.textContent = "…";
+    unlink.hidden = true;
+    const response = await registerCall(`/admin/people/${personId}/keycloak-link`);
+    if (!response) return;
+    const link = await response.json();
+    statusEl.textContent = link.linked
+        ? `Linked to Keycloak account ${link.subject} — this person can use the member webapp.`
+        : "Not linked — no self-serve account (run provisioning on the Users page).";
+    unlink.hidden = !link.linked;
+    unlink.onclick = async () => {
+        if (!confirm("Unlink this person's self-serve account? The Keycloak account "
+                + "remains but will no longer see a membership.")) return;
+        if (await registerCall(`/admin/people/${personId}/keycloak-link`, {method: "DELETE"})) {
+            say(`Unlinked person #${personId}.`);
+            renderPersonLink(personId);
+        }
+    };
 }
 
 function personPayload() {
@@ -1806,6 +1890,7 @@ async function wireUsers() {
     document.getElementById("userSearchGo").onclick = renderUsers;
     document.getElementById("userSearch").onkeydown =
         (e) => { if (e.key === "Enter") renderUsers(); };
+    if (document.getElementById("ssPreview")) wireSelfServe();
     await renderUsers();
 }
 

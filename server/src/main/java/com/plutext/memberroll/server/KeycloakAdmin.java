@@ -211,6 +211,55 @@ final class KeycloakAdmin {
         return request("GET", "/users" + query, null).asJsonArray();
     }
 
+    /** Exact-email lookup (CR-006 provisioning); empty array when nobody carries it. */
+    JsonArray findUsersByEmail(String email) throws IOException {
+        return request("GET", "/users?briefRepresentation=false&exact=true&email=" + encode(email), null)
+                .asJsonArray();
+    }
+
+    /**
+     * Create a user (CR-006 provisioning) and return the new subject id.
+     * emailVerified is the caller's call (register-provisioned accounts are
+     * pre-verified, principle 2). lastName must be non-blank — REST-created
+     * users missing the user-profile required fields fail login with
+     * "Account is not fully set up". No credentials: first login is
+     * Keycloak's Forgot Password flow.
+     */
+    String createUser(String username, String email, String firstName, String lastName,
+                      boolean emailVerified) throws IOException {
+        JsonObject rep = Json.createObjectBuilder()
+                .add("username", username)
+                .add("email", email)
+                .add("firstName", firstName == null || firstName.isBlank() ? "-" : firstName)
+                .add("lastName", lastName == null || lastName.isBlank() ? "-" : lastName)
+                .add("emailVerified", emailVerified)
+                .add("enabled", true)
+                .build();
+        // the id only rides in the 201's Location header, which request()
+        // does not surface — so this call handles the response itself
+        HttpRequest post = HttpRequest.newBuilder()
+                .uri(URI.create(base + "/admin/realms/" + realm + "/users"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Bearer " + serviceToken())
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(rep.toString()))
+                .build();
+        HttpResponse<String> response;
+        try {
+            response = http.send(post, HttpResponse.BodyHandlers.ofString());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted creating Keycloak user", e);
+        }
+        if (response.statusCode() != 201) {
+            throw new IOException("Keycloak user creation for " + email + ": "
+                    + response.statusCode() + " " + response.body());
+        }
+        String location = response.headers().firstValue("Location")
+                .orElseThrow(() -> new IOException("user created but no Location header"));
+        return location.substring(location.lastIndexOf('/') + 1);
+    }
+
     /**
      * Merge attribute values into the user (null value removes the key).
      * Keycloak's PUT replaces the whole representation, so read-modify-write.

@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>memberroll</title>
+    <title>My membership</title>
     <link rel="stylesheet" href="../shared/pico.classless.min.css">
     <style>
         /* Overrides only — Pico (linked above) carries the base look. */
@@ -17,11 +17,17 @@
         #status.warn { background: var(--pico-del-color); color: #fff; }
         #message { min-height: 1.4rem; color: var(--pico-ins-color); }
         #message.error { color: var(--pico-del-color); white-space: pre-wrap; }
-        ul#notes { list-style: none; padding: 0; }
-        ul#notes li { border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius);
-            padding: .6rem .8rem; margin: .5rem 0; }
-        ul#notes li h3 { margin: 0 0 .3rem; font-size: 1rem; }
-        ul#notes li p { margin: 0 0 .5rem; white-space: pre-wrap; }
+        .membership-card { border: 1px solid var(--pico-muted-border-color);
+            border-radius: var(--pico-border-radius); padding: .8rem 1rem; margin: .6rem 0; }
+        .membership-card h3 { margin: 0 0 .3rem; font-size: 1.05rem; }
+        .membership-card p { margin: .2rem 0 .6rem; }
+        /* the CR-009 status badges, colours matched to the admin panel */
+        .badge { display: inline-block; padding: .1rem .55rem; border-radius: 999px;
+            font-size: .8rem; font-weight: 600; border: none; }
+        .badge-green { background: #d9f2df; color: #14652d; }
+        .badge-amber { background: #fdeece; color: #7a5a10; }
+        .badge-blue  { background: #dbe9fb; color: #1c4f8a; }
+        .badge-grey  { background: #e6e6e6; color: #555; }
         /* the claim modal keeps its own overlay mechanism (shipped-bug history
            around [hidden]; not worth re-plumbing to <dialog>); only its
            hardcoded colours move to Pico variables so dark mode stays legible */
@@ -36,22 +42,28 @@
 <body>
 <main>
 <header>
-    <h1>memberroll</h1>
+    <h1>My membership</h1>
     <div id="status">Checking login…</div>
     <div id="message"></div>
 </header>
 
-<!-- The worked example: a private notes collection per signed-in user.
-     Replace this section (and NotesResource/NoteStore on the server)
-     with the real app. -->
-<fieldset id="editor" hidden>
-    <legend>Add or update a note</legend>
-    <label>Id (letters, digits, - _):<input id="noteId" maxlength="64" placeholder="shopping"></label>
-    <label>Title:<input id="noteTitle" maxlength="200"></label>
-    <label>Body:<textarea id="noteBody" rows="4"></textarea></label>
-    <button id="noteSave">Save</button>
-</fieldset>
-<ul id="notes"></ul>
+<!-- CR-006: the member self-serve view — filled by app.js from
+     GET /api/me/membership; no lookup form on purpose (a lookup would be
+     an enumeration oracle — the pay page's lost-link flow is the
+     self-service recovery for pay links). -->
+<section id="membershipSection" hidden>
+    <p id="notLinked" hidden></p>
+    <div id="linked" hidden>
+        <div id="memberships"></div>
+        <div id="historyWrap" hidden>
+            <h2>Past periods</h2>
+            <table id="history">
+                <thead><tr><th>Period</th><th>Type</th><th>Status</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</section>
 </main>
 
 <div id="claim" hidden></div>

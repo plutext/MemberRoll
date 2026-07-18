@@ -37,8 +37,8 @@ import java.sql.Statement;
  * context instead of serving 500s). Runtime loss of the database is a
  * different case: {@link #probe()} lets /api/health report degraded.
  *
- * Static accessor rather than injection on purpose (the NoteStore.fromEnv
- * idiom): resources stay plain classes, and there is exactly one database.
+ * Static accessor rather than injection on purpose: resources stay plain
+ * classes, and there is exactly one database.
  */
 @WebListener
 public final class Db implements ServletContextListener {

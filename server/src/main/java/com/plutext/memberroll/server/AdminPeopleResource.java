@@ -117,6 +117,40 @@ public class AdminPeopleResource {
                 .orElseGet(AdminPeopleResource::notFound);
     }
 
+    // ---- self-serve link (CR-006) ---------------------------------------
+
+    /** Whether (and to which subject) this person is linked for self-serve. */
+    @GET
+    @Path("{id}/keycloak-link")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getKeycloakLink(@PathParam("id") long id) {
+        return jdbi.withHandle(handle -> {
+            if (!SelfServeStore.personExists(handle, id)) return notFound();
+            String subject = SelfServeStore.subjectOf(handle, id).orElse(null);
+            JsonObjectBuilder b = Json.createObjectBuilder()
+                    .add("personId", id).add("linked", subject != null);
+            addNullable(b, "subject", subject);
+            return Response.ok(b.build().toString()).build();
+        });
+    }
+
+    /**
+     * Unlink (email reassigned, wrong link, member asks): nulls the column
+     * and leaves the Keycloak account alone (CR-006 principle 7) — an
+     * unlinked account can still log in and simply sees "no membership
+     * linked". Idempotent: unlinking an unlinked person is a 200 no-op.
+     */
+    @jakarta.ws.rs.DELETE
+    @Path("{id}/keycloak-link")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response deleteKeycloakLink(@PathParam("id") long id) {
+        return jdbi.withHandle(handle -> {
+            if (!SelfServeStore.unlink(handle, id)) return notFound();
+            return Response.ok(Json.createObjectBuilder()
+                    .add("personId", id).add("linked", false).build().toString()).build();
+        });
+    }
+
     // ---- communication preferences (CR-005) ----------------------------
 
     @GET

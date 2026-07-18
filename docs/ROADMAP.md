@@ -89,7 +89,7 @@ data too) → **Committed**.
 | 003 | Renewals and manual payments | Verified · committed | Period rollover, cash/cheque/transfer payment entry, financial-status filters, CSV exports |
 | 004 | Stripe | Verified · committed | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
 | 005 | Segment email | Verified · committed | Templates, merge fields, segment sends with embedded magic links, send log; communication preferences: admin preferences UI (default EMAIL, manual POST exceptions) and sends honouring it |
-| 006 | Member self-serve | Proposed | Keycloak-linked "my membership" page, pay from there; register-push account provisioning; retires the NotesResource placeholder |
+| 006 | Member self-serve | Implemented (2026-07-18, verified) | Keycloak-linked "my membership" page, pay from there; register-push account provisioning; retired the NotesResource placeholder |
 | 007 | Public application form | Planned | New-member APPLIED workflow with admin approval |
 | 008 | Production hardening | Planned | Prod DB provisioning, Stripe live keys, SPF/DKIM/from-address, backup coverage, deploy docs |
 | 009 | UI polish (out-of-band) | Verified · committed | Pico CSS baseline across all static pages, dialog-based forms, person picker, status badges — orthogonal to the sequence. Implementation order decided 2026-07-18: 009 lands before 004, so the public pay page starts on the new baseline |
