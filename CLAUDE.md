@@ -35,11 +35,17 @@ STRIPE_WEBHOOK_SECRET=whsec_devmatrix SMTP_HOST=localhost SMTP_PORT=18026 \
   MAIL_FROM=noreply@memberroll.dev MAIL_REPLY_TO=treasurer@memberroll.dev \
   MEMBERROLL_SOCIETY_NAME="MemberRoll Dev Society" mvn -pl server cargo:run
 
-server/verify-matrix.sh         # the role x endpoint matrix (491 checks offline / +1 with a
+server/verify-matrix.sh         # the role x endpoint matrix (540 checks offline / +1 with a
                                 # Stripe key) against the running dev stack (ports via
                                 # PORT / KEYCLOAK_PORT); extend it alongside new endpoints —
                                 # it must stay green. The CR-005 abort/resume rows stop and
-                                # start the Mailpit container mid-run.
+                                # start the Mailpit container mid-run. Since CR-008 every
+                                # environment coupling is env-overridable (ORIGIN, KC_BASE,
+                                # KC_ADMIN_BASE, CURL_OPTS, RELAY_HOST/PORT, MAILPIT_*,
+                                # POSTGRES_PORT/MEMBERROLL_DB_PASSWORD) so the SAME matrix
+                                # runs against the deploy local smoke — the production-
+                                # topology stand-in, since prod strips the test fixtures
+                                # (invocation: server/deploy/README.md "Local smoke").
 
 # token for scripted verification (dev realm only)
 curl -s -X POST http://localhost:18081/realms/memberroll/protocol/openid-connect/token \
@@ -275,6 +281,22 @@ settings.html` adds the Microsoft 365 preset (a client-side form-filler — the
 server knows no vendors). Keycloak's own forgot-password mail stays a separate
 realm-config concern.
 
+CR-008 readied production (docs/change-requests/008-production-deployment.md,
+go-live runbook included there): the deploy assets — frozen at CR-001 —
+caught up with the app. Prod compose now passes `PUBLIC_BASE_URL`
+(derived from `DOMAIN` in compose.yml, never a separate .env line),
+`MEMBERROLL_SOCIETY_NAME` and the `STRIPE_*` pair (blank-is-unset:
+empty = checkout/webhook 503) to Tomcat; there is deliberately NO
+`SMTP_*` in the prod compose — the CR-014 page is production mail
+config, and Keycloak's own relay is entered once via the tunnel console
+(the one mirror-back exception; the render strips the dev `smtpServer`
+block, keeping it only under `KEEP_TEST_FIXTURES=1`). `backup.sh` dumps
+BOTH databases (memberroll = the financial record — it previously
+dumped only keycloak); the `MEMBERROLL_DATA`/`data/store` vestige is
+gone (nothing ever read it). The smoke override gained a `mailpit`
+service (name matters — the realm's `smtpServer` host) plus loopback
+Postgres/Mailpit publishes, so the FULL matrix runs against the smoke.
+
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
 `MembershipStore.insertMembershipPerson` sets
@@ -361,6 +383,12 @@ console is SSH-tunnel-only.
 - **Behind Caddy, scheme/IP correctness is the RemoteIpValve** in
   `server/deploy/tomcat/context.xml` — don't drop it when touching the
   Tomcat image.
+- **The JVM caches negative DNS for 10s**: while a compose-internal
+  hostname's container is down, lookups fail AND the failure is cached —
+  sends to a just-restarted `mailpit` fail instantly (not a timeout) for
+  up to 10s after it's back. The matrix's abort/resume rows sleep this
+  window out for named relays; dev (`localhost`) never sees it. Same
+  physics applies to any in-network hostname in production.
 
 ## Workflow conventions
 

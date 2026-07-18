@@ -1,0 +1,9 @@
+# The tomcat build (tomcat/Dockerfile) needs only tomcat/ and server.war.
+# Everything stateful is excluded: data/ contains root-owned files (Caddy
+# cert storage) that fail the context walk as the deploy user — without
+# this, every REBUILD after first boot dies at "can't stat data/caddy/..."
+# — and none of it belongs in a build context anyway.
+data
+backups
+keycloak-import
+.env

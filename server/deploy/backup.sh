@@ -13,11 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Nightly on-box backup (systemd timer — see systemd/). Dumps the
-# Keycloak database and tars the data store into ./backups, keeping 14
-# nights. On-box only: this protects against application-level mistakes;
-# instance loss is covered by console-scheduled EBS snapshots (or add an
-# S3 sync). Restore drill: deploy README, "Restore".
+# Nightly on-box backup (systemd timer — see systemd/). Dumps BOTH
+# databases into ./backups, keeping 14 nights — memberroll is the
+# financial record, keycloak the identities. On-box only: this protects
+# against application-level mistakes; instance loss is covered by
+# console-scheduled EBS snapshots (or add an S3 sync). Restore drill:
+# deploy README, "Restore". Before each period rollover, copy that
+# night's memberroll dump into backups/archive/ (never pruned) — the
+# year-boundary register is the AGM/audit artefact (CR-008 §1).
 set -euo pipefail
 cd "$(dirname "$0")"
 set -a; . ./.env; set +a
@@ -26,7 +29,7 @@ ts=$(date +%Y%m%d_%H%M%S)
 mkdir -p backups
 
 docker compose exec -T postgres pg_dump -U keycloak keycloak | gzip > "backups/keycloak-$ts.sql.gz"
-tar czf "backups/store-$ts.tar.gz" -C data store
+docker compose exec -T postgres pg_dump -U memberroll memberroll | gzip > "backups/memberroll-$ts.sql.gz"
 
-find backups -name '*.gz' -mtime +14 -delete
+find backups -maxdepth 1 -name '*.gz' -mtime +14 -delete
 echo "backup $ts done: $(du -sh backups | cut -f1) total"

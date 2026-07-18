@@ -135,7 +135,11 @@ server/deploy/push-war.sh ubuntu@<instance>
 
 Before the first real deployment, rehearse locally: the "Local smoke"
 section of that README runs the exact production topology (Caddy TLS,
-Keycloak-on-Postgres, single issuer) on your machine.
+Keycloak-on-Postgres, single issuer) on your machine — and since CR-008
+the full `verify-matrix.sh` can run against it. Going live for real
+(domain, live Stripe, Exchange mail, importing the member list) is the
+step-by-step runbook in
+[change-requests/008-production-deployment.md](change-requests/008-production-deployment.md).
 
 Production realm discipline — the one rule that prevents real pain: in
 production the Keycloak **database** is authoritative (the realm JSON was

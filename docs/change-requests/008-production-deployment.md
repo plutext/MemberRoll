@@ -1,6 +1,9 @@
 # Change Request 008: Production Deployment — go-live for the Yass society
 
-**Status:** Proposed
+**Status:** Implemented (drift closure + local verification complete —
+plan items 1–2 and the smoke halves of 9–10; the on-instance items
+(3–11) await the instance, DNS, the society's Stripe account and SMTP
+AUTH enablement — see Results)
 **Date:** 2026-07-19
 **Builds on:** the `server/deploy/` assets inherited from webapp-template
 (themselves extracted from TurbinePreview CR-037, where the topology —
@@ -398,6 +401,111 @@ authoritative post-import regardless.
     invocation and dev realm are untouched — full matrix green
     locally after all of the above.
 
-## Results
+## Results (2026-07-19) — drift closure + local verification
 
-*(to be recorded during implementation)*
+Deliverables landed: `compose.yml` (post-CR-001 env; `PUBLIC_BASE_URL`
+derived from `DOMAIN` in the file; `MEMBERROLL_DATA`/store mount
+removed), `deploy.sh` (.env template + `smtpServer` strip in the
+prod-strict render), `backup.sh` (both databases, no store tarball),
+`compose.smoke.yml` (mailpit service — named `mailpit` so the realm's
+checked-in `smtpServer` host resolves — matrix env, loopback
+Postgres/Mailpit publishes), `verify-matrix.sh` (the §1 overrides; a
+shadowing `curl()` wrapper carries `CURL_OPTS` into every call),
+deploy `README.md` (mail/Stripe/.env, two-dump backups + yearly
+archive, restore, the smoke-matrix invocation), and one deliverable
+the plan didn't predict: **`server/deploy/.dockerignore`** (below).
+
+**Verification 1 — dev matrix, byte-identical invocation**:
+PASS=537 FAIL=3, the 3 being exactly the pre-existing environmental
+flakes (27b Keycloak user-listing; CR10-04g2/CR10-12c UTC-date
+window). Identical to the CR-014 baseline — the refactor is proven
+behavior-neutral on dev.
+
+**Verification 2 — local smoke, current war**: first-ever run of the
+production topology with the post-CR-001 application. All README §6
+basics green: Flyway V1–V7 migrated the fresh `memberroll` database
+(`{"status":"ok","db":"ok"}` through Caddy TLS), issuer exactly
+`https://smoke.localhost/auth/realms/memberroll`, `/auth/admin/` and
+master realm 403 public / console 200 via loopback
+(`KEYCLOAK_ADMIN_PORT=28081`), `/` → `/server/web/`, token via
+`test-cli` through Caddy → `whoami` with roles (the alias + truststore
++ single-issuer JWKS path). Prod-strict render checked standalone: no
+`smtpServer`, clients reduced to `web`/`server-service`, users to the
+service account, secret rotated. Smoke render (KEEP_TEST_FIXTURES=1)
+keeps `smtpServer` → the smoke's own `mailpit:1025`. Keycloak restart:
+"Realm 'memberroll' already exists. Import skipped" and the same
+subject minted a valid token after — prod-on-Postgres persistence.
+`backup.sh` produced **both** dumps (keycloak 68K, memberroll 14K) and
+no store tarball; the memberroll dump restored into a scratch Postgres
+17: 98 people, 31 payments, `flyway_schema_history` max version 7,
+scratch container removed after.
+
+**The full matrix against the smoke** — run 1: PASS=532 FAIL=8, every
+failure diagnosed to root cause, none an application defect:
+
+- *CR6-12b, CR13-13b* — matrix bug in this CR's own refactor: two rows
+  psql inline (they need stderr, which `psqlq` discards) and kept the
+  hardcoded dev password; against the smoke's generated password the
+  auth failure never printed `duplicate key`. Fixed with the same
+  `${MEMBERROLL_DB_PASSWORD:-memberroll}` idiom.
+- *CR5-17b/c/d/e and CR12-06c* — one causal chain, and a finding worth
+  keeping: **the JVM caches negative DNS for 10s**. While the mailpit
+  container is stopped, Docker DNS un-resolves the name; the resume's
+  five attempts (log: all five within 15 ms — instant failures, not
+  timeouts) and a receipt send 8 s later died on the cached
+  unknown-host; sends ≥11 s after the window succeeded. Dev never sees
+  this: its relay is `localhost`, no DNS involved. Fix: the restart
+  poll goes to 30 tries and named relays sleep the cache window out
+  (dev's invocation is unchanged — the sleep is gated on
+  `RELAY_HOST != localhost`). Recorded as a CLAUDE.md bite — the same
+  physics applies to any compose-internal hostname in production.
+- *CR10-13b* — the known UTC-date environmental class wearing a new
+  face: the all-UTC smoke stack is internally *consistent* (CR10-04g2/
+  12c PASS there while failing on dev in the morning window), but the
+  row's cutoff fixture is built from host-local `date -d '-1 day'`, so
+  before 10:00 AEST server-today equals the engineered cutoff and the
+  warning correctly doesn't fire. Fixed in the fixture, not masked:
+  the cutoff becomes `-2 days` — still strictly in the past (the
+  tested semantics), now clear of the ±1-day host/server skew in both
+  environments. (Its siblings CR10-04g2/12c compare an app-written
+  date against DB `current_date` and have no equivalent
+  strictly-stronger fix — they stay documented environmental.)
+
+Run 2 (post psql-password + DNS fixes, same stack — re-runnability on
+the prod topology): **PASS=539 FAIL=1**, the 1 being CR10-13b inside
+the UTC window as predicted. Final runs after all fixes: dev
+**PASS=537 FAIL=3** (27b, CR10-04g2, CR10-12c — exactly the
+pre-existing environmental set, CR10-13b now robust), smoke
+**PASS=540 FAIL=0** — the first fully green full-matrix run anywhere,
+on the production topology (the one SKIP being the Stripe-key checkout
+row, expected offline).
+
+**The unplanned find — `deploy.sh` re-runs were broken on any
+provisioned instance**: `docker compose build tomcat` uses the deploy
+dir as context, and once Caddy has written root-owned cert storage
+under `data/caddy` the context walk dies with "can't stat …" as the
+deploy user. First-boot works (data/ empty), every later rebuild —
+including every `push-war.sh` update — would fail. Latent since the
+template was inherited; surfaced by this CR's idempotent-re-run check.
+Fix: `server/deploy/.dockerignore` (data/, backups/, keycloak-import/,
+.env) — the build needs only `tomcat/` + `server.war`, and the
+stateful tree never belonged in a build context. Re-run then completed
+clean: build OK, no container recreated, render + master-frontendUrl
+pin idempotent, health still ok.
+
+**Close-out (repo side):** CLAUDE.md (commands + a CR-008 paragraph +
+the negative-DNS bite), deploy README, GETTING-STARTED §5 (runbook
+pointer) all updated. Dev-loop regression (plan item 11): the dev
+stack, realm and matrix invocation are untouched — the final dev run
+above is the proof.
+
+**Pending — needs the instance + society inputs** (plan items 3–10 in
+their on-instance form): provision-from-document, real ACME
+(staging → production), the public fixture-free smoke, the admin
+walkthrough on mobile data, Exchange mail end-to-end with
+`Authentication-Results` checked, live Stripe pay-and-refund, the
+real-data import reconciliation, reboot self-heal, on-instance
+backup timer + EBS DLM + restore drill. Blockers as of 2026-07-19:
+Stripe onboarding underway (society account); SMTP AUTH enablement on
+`secretary@yasshistory.org.au`; DNS record for
+`members.yasshistory.org.au` once the instance exists.

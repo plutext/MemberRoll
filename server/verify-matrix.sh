@@ -18,9 +18,27 @@
 # the project's dev stack lives on 18xxx ports (see docker-compose.yml).
 # Needs the dev realm (test-cli + test users). Mutates testviewer's claim
 # and grants manager — dev Keycloak only (docker compose down resets).
+#
+# CR-008: every environment coupling is env-overridable so the SAME matrix
+# runs against the deploy local smoke (production topology + KEEP_TEST_FIXTURES
+# render — deploy/README.md "Local smoke"); defaults keep the dev invocation
+# byte-identical. ORIGIN (page/app origin), KC_BASE (public Keycloak base,
+# /auth included where applicable), KC_ADMIN_BASE (master realm + admin REST —
+# the smoke's Caddy 403s those publicly, so it uses the loopback admin port),
+# CURL_OPTS (e.g. -k --resolve smoke.localhost:443:127.0.0.1), POSTGRES_PORT /
+# MEMBERROLL_DB_PASSWORD (psql rows), MAILPIT_UI_PORT, MAILPIT_COMPOSE (which
+# stack's mailpit the abort/resume rows stop), RELAY_HOST/RELAY_PORT (the
+# relay as the SERVER reaches it — in-network for the smoke).
 set -u
-API=http://localhost:${PORT:-18080}/server/api
-KC=http://localhost:${KEYCLOAK_PORT:-18081}/realms/memberroll/protocol/openid-connect/token
+ORIGIN=${ORIGIN:-http://localhost:${PORT:-18080}}
+API=$ORIGIN/server/api
+KC_BASE=${KC_BASE:-http://localhost:${KEYCLOAK_PORT:-18081}}
+KC_ADMIN_BASE=${KC_ADMIN_BASE:-$KC_BASE}
+KC=$KC_BASE/realms/memberroll/protocol/openid-connect/token
+MAILPIT_COMPOSE=${MAILPIT_COMPOSE:-docker compose -f server/docker-compose.yml}
+RELAY_HOST=${RELAY_HOST:-localhost}
+RELAY_PORT=${RELAY_PORT:-18026}
+curl() { command curl ${CURL_OPTS:-} "$@"; }
 PASS=0; FAIL=0
 
 check() { # name expected actual
@@ -220,7 +238,7 @@ check "74 body over 1MB 413"            "413" "$(imp $API/admin/import/preview "
 
 # --- CR-002 side effects (psql; skipped where the client is absent) ----------
 PSQL_OK=0; command -v psql >/dev/null 2>&1 && PSQL_OK=1
-psqlq() { PGPASSWORD=memberroll psql -h localhost -p "${POSTGRES_PORT:-5433}" -U memberroll -d memberroll -tAc "$1" 2>/dev/null; }
+psqlq() { PGPASSWORD=${MEMBERROLL_DB_PASSWORD:-memberroll} psql -h localhost -p "${POSTGRES_PORT:-5433}" -U memberroll -d memberroll -tAc "$1" 2>/dev/null; }
 if [ "$PSQL_OK" = 1 ]; then
   check "75 Alpha membership ACTIVE/due" "ACTIVE|6500" "$(psqlq "SELECT m.status||'|'||m.amount_due_cents FROM membership m JOIN household h ON h.household_id=m.household_id WHERE h.household_name='AlphaHH$$'")"
   check "76 Alpha payment recorded"      "6500|OTHER|testadmin" "$(psqlq "SELECT p.amount_cents||'|'||p.payment_method||'|'||p.recorded_by FROM payment p JOIN payment_allocation pa ON pa.payment_id=p.payment_id JOIN membership m ON m.membership_id=pa.membership_id JOIN household h ON h.household_id=m.household_id WHERE h.household_name='AlphaHH$$' AND pa.allocation_type='MEMBERSHIP'")"
@@ -695,13 +713,17 @@ if [ "$PSQL_OK" = 1 ]; then
   check "CR10-12c approved today"        "t" "$(psqlq "SELECT approved_date = current_date FROM membership WHERE membership_id=$NM_J_MEM")"
   check "CR10-12d no payment row"        "0" "$(psqlq "SELECT count(*) FROM payment_allocation WHERE membership_id=$NM_J_MEM")"
 
-  # CR10-13: an engineered period whose late_joining_cutoff is always
-  # yesterday (relative to today, not a hardcoded seed date like $P2526's —
+  # CR10-13: an engineered period whose late_joining_cutoff is always in
+  # the past (relative to today, not a hardcoded seed date like $P2526's —
   # that made this check pass or fail on wall-clock timing rather than
-  # testing the feature on its own terms). Via the periods API (like
-  # CR3-05's TGT period) rather than psql, since psql -tAc can't cleanly
-  # capture a bare INSERT...RETURNING id (the command-tag line rides along).
-  check "CR10-13setup cutoff period 201" "201" "$(JPOST $API/admin/periods "{\"name\":\"NmCutoff$$\",\"startDate\":\"$(date -d '-400 days' +%F)\",\"endDate\":\"$(date -d '+300 days' +%F)\",\"lateJoiningCutoff\":\"$(date -d '-1 day' +%F)\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}")"
+  # testing the feature on its own terms). -2 days, not -1: the server's
+  # "today" can lag the host's by a day (the all-UTC smoke stack vs an
+  # AEST host before 10:00), and a cutoff equal to server-today correctly
+  # fires no warning — two days clears the skew in both environments.
+  # Via the periods API (like CR3-05's TGT period) rather than psql, since
+  # psql -tAc can't cleanly capture a bare INSERT...RETURNING id (the
+  # command-tag line rides along).
+  check "CR10-13setup cutoff period 201" "201" "$(JPOST $API/admin/periods "{\"name\":\"NmCutoff$$\",\"startDate\":\"$(date -d '-400 days' +%F)\",\"endDate\":\"$(date -d '+300 days' +%F)\",\"lateJoiningCutoff\":\"$(date -d '-2 days' +%F)\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}")"
   CUTOFF_PERIOD=$(body | jsq "j['id']")
   check "CR10-13 late-joining create 201" "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Amy\",\"familyName\":\"${NM}K\"},\"membershipPeriodId\":$CUTOFF_PERIOD,\"membershipTypeId\":$T_SINGLE}")"
   check "CR10-13b late-joining warning"  "true" "$(body | jsq "str(any('late-joining' in w for w in j['warnings'])).lower()")"
@@ -895,7 +917,7 @@ if [ "$PSQL_OK" = 1 ]; then
       JPOST $API/admin/households "{\"householdName\":\"$EM Ab$i\",\"primaryContactPersonId\":$AP}" >/dev/null; AH=$(body | jsq "j['id']")
       JPOST $API/admin/memberships "{\"householdId\":$AH,\"membershipPeriodId\":$ABPID,\"membershipTypeId\":$T_SINGLE}" >/dev/null
     done
-    docker compose -f server/docker-compose.yml stop mailpit >/dev/null 2>&1
+    $MAILPIT_COMPOSE stop mailpit >/dev/null 2>&1
     check "CR5-16 abort send 201"           "201" "$(JPOST $API/admin/email/sends "{\"templateId\":$EMTPL,\"periodId\":$ABPID,\"communicationType\":\"RENEWAL\"}")"
     ABSEND=$(body | jsq "j['id']")
     check "CR5-16b aborts"                  "ABORTED" "$(poll_send_status $ABSEND)"
@@ -914,8 +936,13 @@ if [ "$PSQL_OK" = 1 ]; then
     psqlq "UPDATE email_send SET status='COMPLETE', finished_at=now() WHERE created_by='$GUARD' AND status='RUNNING'" >/dev/null
 
     # row 17: bring Mailpit back, resume, expect COMPLETE with all 6 delivered
-    docker compose -f server/docker-compose.yml start mailpit >/dev/null 2>&1
-    for _ in 1 2 3 4 5 6 7 8; do curl -s "$MAILPIT/api/v1/messages" >/dev/null 2>&1 && break; sleep 1; done
+    $MAILPIT_COMPOSE start mailpit >/dev/null 2>&1
+    for _ in $(seq 1 30); do curl -s "$MAILPIT/api/v1/messages" >/dev/null 2>&1 && break; sleep 1; done
+    # a NAMED relay (the smoke's in-network mailpit) also needs the JVM's
+    # negative-DNS cache from the down window to expire (10s default), or the
+    # resume's attempts fail instantly and re-abort; localhost (dev) skips —
+    # no DNS is involved, so no wait is earned
+    [ "$RELAY_HOST" != "localhost" ] && sleep 11
     check "CR5-17 resume 200"               "200" "$(code -X POST $API/admin/email/sends/$ABSEND/resume -H "Authorization: Bearer $ADMIN")"
     check "CR5-17b resumed completes"       "COMPLETE" "$(poll_send_status $ABSEND)"
     check "CR5-17c all 6 SENT"              "6" "$(curl -s $API/admin/email/sends/$ABSEND -H "Authorization: Bearer $ADMIN" | jsq "j['counts'].get('SENT',0)")"
@@ -947,8 +974,9 @@ fi
 # candidate), H1/H2 = the same address on MEMBERs in two households
 # (conflict), J = a MEMBER carrying testuser's email (adopt). Data rows need
 # psql; the unverified-account, user-count and reset-mail rows also need the
-# Keycloak bootstrap admin (dev default admin/admin).
-KC_BASE=http://localhost:${KEYCLOAK_PORT:-18081}
+# Keycloak bootstrap admin (dev default admin/admin; KEYCLOAK_ADMIN_USER/
+# KEYCLOAK_ADMIN_PASSWORD override — the smoke's are in its .env), reached
+# via KC_ADMIN_BASE (defined at the top).
 
 check "CR6-01 preview guest 403"        "403" "$(code -X POST $API/admin/self-serve/preview)"
 check "CR6-01b preview user 403"        "403" "$(code -X POST $API/admin/self-serve/preview -H "Authorization: Bearer $USER")"
@@ -999,10 +1027,10 @@ if [ "$PSQL_OK" = 1 ]; then
   JPOST $API/admin/memberships "{\"householdId\":$SSHJ,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; SSMJ=$(body | jsq "j['id']")
 
   # the Keycloak bootstrap admin backs the rows the app deliberately has no API for
-  KCTOK=$(curl -s -X POST "$KC_BASE/realms/master/protocol/openid-connect/token" \
+  KCTOK=$(curl -s -X POST "$KC_ADMIN_BASE/realms/master/protocol/openid-connect/token" \
     -d grant_type=password -d client_id=admin-cli \
     -d username="${KEYCLOAK_ADMIN_USER:-admin}" -d password="${KEYCLOAK_ADMIN_PASSWORD:-admin}" | jsq "j['access_token']")
-  kc_users_count() { curl -s "$KC_BASE/admin/realms/memberroll/users/count" -H "Authorization: Bearer $KCTOK"; }
+  kc_users_count() { curl -s "$KC_ADMIN_BASE/admin/realms/memberroll/users/count" -H "Authorization: Bearer $KCTOK"; }
 
   # CR6-02: preview resolves the whole table, writes nothing
   check "CR6-02 preview 200"            "200" "$(code -X POST $API/admin/self-serve/preview -H "Authorization: Bearer $ADMIN")"
@@ -1062,7 +1090,7 @@ if [ "$PSQL_OK" = 1 ]; then
   # CR6-10: an UNVERIFIED self-registration with a member's address never links
   GEML="gu.$$@ss.test"
   JPUT $API/admin/people/$SSGP "{\"givenName\":\"Gina\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"$GEML\",\"isPrimary\":true}]}" >/dev/null
-  check "CR6-10 seed unverified user 201" "201" "$(code -X POST "$KC_BASE/admin/realms/memberroll/users" -H "Authorization: Bearer $KCTOK" -H 'Content-Type: application/json' -d "{\"username\":\"$GEML\",\"email\":\"$GEML\",\"firstName\":\"Gina\",\"lastName\":\"$SS\",\"enabled\":true,\"emailVerified\":false}")"
+  check "CR6-10 seed unverified user 201" "201" "$(code -X POST "$KC_ADMIN_BASE/admin/realms/memberroll/users" -H "Authorization: Bearer $KCTOK" -H 'Content-Type: application/json' -d "{\"username\":\"$GEML\",\"email\":\"$GEML\",\"firstName\":\"Gina\",\"lastName\":\"$SS\",\"enabled\":true,\"emailVerified\":false}")"
   check "CR6-10b preview 200"           "200" "$(code -X POST $API/admin/self-serve/preview -H "Authorization: Bearer $ADMIN")"
   PREV=$(body)
   check "CR6-10c G skipped unverified"  "SKIPPED_UNVERIFIED" "$(ssrow $SSGP)"
@@ -1077,18 +1105,19 @@ if [ "$PSQL_OK" = 1 ]; then
 
   # CR6-12: the V6 column really is unique
   check "CR6-12 unique constraint exists" "1" "$(psqlq "SELECT count(*) FROM pg_constraint WHERE conrelid='person'::regclass AND contype='u'")"
-  check "CR6-12b duplicate subject refused" "yes" "$(PGPASSWORD=memberroll psql -h localhost -p "${POSTGRES_PORT:-5433}" -U memberroll -d memberroll -tAc "UPDATE person SET keycloak_subject='$USER_SUB' WHERE person_id=$SSE1" 2>&1 | grep -q 'duplicate key' && echo yes || echo no)"
+  check "CR6-12b duplicate subject refused" "yes" "$(PGPASSWORD=${MEMBERROLL_DB_PASSWORD:-memberroll} psql -h localhost -p "${POSTGRES_PORT:-5433}" -U memberroll -d memberroll -tAc "UPDATE person SET keycloak_subject='$USER_SUB' WHERE person_id=$SSE1" 2>&1 | grep -q 'duplicate key' && echo yes || echo no)"
 
   # CR6-14: resetPasswordAllowed took — the login page offers Forgot Password.
   # The web client mandates PKCE, so the probe carries a throwaway S256
   # challenge (the page renders regardless of whether it is ever redeemed).
-  check "CR6-14 login page reset link"  "yes" "$(curl -s "$KC_BASE/realms/memberroll/protocol/openid-connect/auth?client_id=web&redirect_uri=http%3A%2F%2Flocalhost%3A18080%2Fserver%2Fweb%2F&response_type=code&scope=openid&code_challenge_method=S256&code_challenge=$(sha probe | head -c 43)" | grep -q 'reset-credentials' && echo yes || echo no)"
+  WEB_REDIRECT=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$ORIGIN/server/web/")
+  check "CR6-14 login page reset link"  "yes" "$(curl -s "$KC_BASE/realms/memberroll/protocol/openid-connect/auth?client_id=web&redirect_uri=$WEB_REDIRECT&response_type=code&scope=openid&code_challenge_method=S256&code_challenge=$(sha probe | head -c 43)" | grep -q 'reset-credentials' && echo yes || echo no)"
 
   # CR6-15: the realm smtpServer block works — an admin-triggered
   # reset-credentials mail (used here only as a relay probe) lands in Mailpit
   if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
-    FUID=$(curl -s "$KC_BASE/admin/realms/memberroll/users?email=$FEML&exact=true" -H "Authorization: Bearer $KCTOK" | jsq "j[0]['id']")
-    check "CR6-15 reset mail sent 204"  "204" "$(code -X PUT "$KC_BASE/admin/realms/memberroll/users/$FUID/execute-actions-email" -H "Authorization: Bearer $KCTOK" -H 'Content-Type: application/json' -d '["UPDATE_PASSWORD"]')"
+    FUID=$(curl -s "$KC_ADMIN_BASE/admin/realms/memberroll/users?email=$FEML&exact=true" -H "Authorization: Bearer $KCTOK" | jsq "j[0]['id']")
+    check "CR6-15 reset mail sent 204"  "204" "$(code -X PUT "$KC_ADMIN_BASE/admin/realms/memberroll/users/$FUID/execute-actions-email" -H "Authorization: Bearer $KCTOK" -H 'Content-Type: application/json' -d '["UPDATE_PASSWORD"]')"
     check "CR6-15b reset mail in Mailpit" "1" "$(mailpit_count "$FEML")"
   else
     echo "SKIP CR6-15 reset-mail relay probe (Mailpit not reachable at $MAILPIT)"
@@ -1270,7 +1299,7 @@ if [ "$PSQL_OK" = 1 ]; then
   check "CR13-13 singular index present" "1" "$(psqlq "SELECT count(*) FROM pg_indexes WHERE indexname='committee_appointment_singular_office'")"
   # C is the current president (row 7); a hand-inserted second open president is
   # rejected by the index
-  check "CR13-13b second open president rejected" "yes" "$(PGPASSWORD=memberroll psql -h localhost -p "${POSTGRES_PORT:-5433}" -U memberroll -d memberroll -tAc "INSERT INTO committee_appointment (person_id, office, started_date, recorded_by) VALUES ($CD,'PRESIDENT',current_date,'psql-test')" 2>&1 | grep -q 'duplicate key' && echo yes || echo no)"
+  check "CR13-13b second open president rejected" "yes" "$(PGPASSWORD=${MEMBERROLL_DB_PASSWORD:-memberroll} psql -h localhost -p "${POSTGRES_PORT:-5433}" -U memberroll -d memberroll -tAc "INSERT INTO committee_appointment (person_id, office, started_date, recorded_by) VALUES ($CD,'PRESIDENT',current_date,'psql-test')" 2>&1 | grep -q 'duplicate key' && echo yes || echo no)"
 else
   echo "note: psql not found — skipping CR13-13 (singular-office index check)"
 fi
@@ -1311,12 +1340,12 @@ check "CR14-01g POST test noaud 401"   "401" "$(code -X POST $MS/test -H "Author
 # row 2: admin GET with no row → source=ENV, host mirrors env, no password
 G0=$(curl -s $MS -H "Authorization: Bearer $ADMIN")
 check "CR14-02 source ENV (no row)"    "ENV" "$(echo "$G0" | jsq "j['source']")"
-check "CR14-02b host mirrors env"      "localhost" "$(echo "$G0" | jsq "j['host']")"
+check "CR14-02b host mirrors env"      "$RELAY_HOST" "$(echo "$G0" | jsq "j['host']")"
 check "CR14-02c passwordSet false"     "False" "$(echo "$G0" | jsq "j['passwordSet']")"
 check "CR14-02d no password key"       "False" "$(echo "$G0" | jsq "str('password' in j)")"
 
 # row 3: PUT page settings (Mailpit host/port, NONE, username+password)
-check "CR14-03 PUT settings 200"       "200" "$(JPUT $MS "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"page.$$@memberroll.dev\",\"username\":\"pageuser\",\"password\":\"s3cret-$$\"}")"
+check "CR14-03 PUT settings 200"       "200" "$(JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"page.$$@memberroll.dev\",\"username\":\"pageuser\",\"password\":\"s3cret-$$\"}")"
 G1=$(curl -s $MS -H "Authorization: Bearer $ADMIN")
 check "CR14-03b source PAGE"           "PAGE" "$(echo "$G1" | jsq "j['source']")"
 check "CR14-03c from echoed"           "page.$$@memberroll.dev" "$(echo "$G1" | jsq "j['from']")"
@@ -1331,18 +1360,18 @@ check "CR14-04c port 70000 → 400"      "400" "$(JPUT $MS "{\"host\":\"h\",\"po
 check "CR14-04d security BOGUS → 400"  "400" "$(JPUT $MS "{\"host\":\"h\",\"port\":587,\"security\":\"BOGUS\",\"from\":\"a@b.co\"}")"
 check "CR14-04e unparseable from → 400" "400" "$(JPUT $MS "{\"host\":\"h\",\"port\":587,\"security\":\"NONE\",\"from\":\"not-an-email\"}")"
 check "CR14-04f GET still PAGE"        "PAGE" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
-check "CR14-04g GET still Mailpit host" "localhost" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['host']")"
+check "CR14-04g GET still Mailpit host" "$RELAY_HOST" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['host']")"
 
 # row 5: password kept when absent; cleared on empty string
-check "CR14-05 re-PUT no password 200" "200" "$(JPUT $MS "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"page.$$@memberroll.dev\",\"username\":\"pageuser\"}")"
+check "CR14-05 re-PUT no password 200" "200" "$(JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"page.$$@memberroll.dev\",\"username\":\"pageuser\"}")"
 check "CR14-05b password kept"         "True" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['passwordSet']")"
-check "CR14-05c PUT password:'' 200"   "200" "$(JPUT $MS "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"page.$$@memberroll.dev\",\"username\":\"pageuser\",\"password\":\"\"}")"
+check "CR14-05c PUT password:'' 200"   "200" "$(JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"page.$$@memberroll.dev\",\"username\":\"pageuser\",\"password\":\"\"}")"
 check "CR14-05d password cleared"      "False" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['passwordSet']")"
 
 # rows 6/7: synchronous test sends (need Mailpit; the saved row-5 PAGE row stands)
 if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
   T6TO="cr14test.$$@example.com"
-  T6=$(curl -s -X POST $MS/test -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"cr14from.$$@memberroll.dev\",\"to\":\"$T6TO\"}")
+  T6=$(curl -s -X POST $MS/test -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"cr14from.$$@memberroll.dev\",\"to\":\"$T6TO\"}")
   check "CR14-06 test ok true"         "True" "$(echo "$T6" | jsq "j['ok']")"
   check "CR14-06b test delivered"      "1" "$(mailpit_count "$T6TO")"
   T6ID=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$T6TO%22" | jsq "j['messages'][0]['ID']")
@@ -1359,7 +1388,7 @@ if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
   # secret. STARTTLS against Mailpit (which offers none) forces the PAGE
   # .required=true failure — also proving hazard 2's converse (required set on PAGE).
   T7PW="leaky-$$-secret"
-  T7B=$(curl -s -X POST $MS/test -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"host\":\"localhost\",\"port\":18026,\"security\":\"STARTTLS\",\"from\":\"a@b.co\",\"username\":\"u\",\"password\":\"$T7PW\",\"to\":\"cr14leak.$$@example.com\"}")
+  T7B=$(curl -s -X POST $MS/test -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"STARTTLS\",\"from\":\"a@b.co\",\"username\":\"u\",\"password\":\"$T7PW\",\"to\":\"cr14leak.$$@example.com\"}")
   check "CR14-07d starttls-required fails" "False" "$(echo "$T7B" | jsq "j['ok']")"
   check "CR14-07e error names STARTTLS" "true" "$(echo "$T7B" | jsq "str('STARTTLS' in j.get('error','')).lower()")"
   check "CR14-07f password not leaked"  "False" "$(echo "$T7B" | jsq "str('$T7PW' in j.get('error',''))")"
@@ -1386,7 +1415,7 @@ if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
     check "CR14-09c ENV fallback delivered" "1" "$(mailpit_count "$RTO")"
 
     # row 10: a PAGE row with a distinctive From — the real send reads the row
-    check "CR14-10 PUT page From 200"   "200" "$(JPUT $MS "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"cr14page.$$@memberroll.dev\"}")"
+    check "CR14-10 PUT page From 200"   "200" "$(JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"cr14page.$$@memberroll.dev\"}")"
     code -X POST $API/admin/payments/$MSPAY/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}' >/dev/null
     check "CR14-10b page-From delivered" "yes" "$(mailpit_reaches "$RTO" "2")"
     M10=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$RTO%22" | jsq "j['messages'][0]['ID']")
@@ -1408,19 +1437,19 @@ code -X DELETE $MS -H "Authorization: Bearer $ADMIN" >/dev/null
 check "CR14-12 settings cleared at end" "ENV" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
 
 # --- static pages ---------------------------------------------------------------
-check "CR4-25 pay page served"         "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.html)"
-check "CR4-25b pay.js served"          "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.js)"
+check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
+check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"
 
-check "32 web page 200"                "200" "$(code http://localhost:${PORT:-18080}/server/web/)"
-check "33 admin page 200"              "200" "$(code http://localhost:${PORT:-18080}/server/admin/)"
-check "33b admin users page 200"       "200" "$(code http://localhost:${PORT:-18080}/server/admin/users.html)"
-check "33c admin import page 200"      "200" "$(code http://localhost:${PORT:-18080}/server/admin/import.html)"
-check "33d admin css served"           "200" "$(code http://localhost:${PORT:-18080}/server/admin/admin.css)"
-check "33e admin new-member page 200"  "200" "$(code http://localhost:${PORT:-18080}/server/admin/new-member.html)"
-check "33f admin email page 200"        "200" "$(code http://localhost:${PORT:-18080}/server/admin/email.html)"
-check "33g admin committee page 200"    "200" "$(code http://localhost:${PORT:-18080}/server/admin/committee.html)"
-check "33h admin mail-settings page 200" "200" "$(code http://localhost:${PORT:-18080}/server/admin/mail-settings.html)"
-check "34 auth.js served"              "200" "$(code http://localhost:${PORT:-18080}/server/shared/auth.js)"
+check "32 web page 200"                "200" "$(code $ORIGIN/server/web/)"
+check "33 admin page 200"              "200" "$(code $ORIGIN/server/admin/)"
+check "33b admin users page 200"       "200" "$(code $ORIGIN/server/admin/users.html)"
+check "33c admin import page 200"      "200" "$(code $ORIGIN/server/admin/import.html)"
+check "33d admin css served"           "200" "$(code $ORIGIN/server/admin/admin.css)"
+check "33e admin new-member page 200"  "200" "$(code $ORIGIN/server/admin/new-member.html)"
+check "33f admin email page 200"        "200" "$(code $ORIGIN/server/admin/email.html)"
+check "33g admin committee page 200"    "200" "$(code $ORIGIN/server/admin/committee.html)"
+check "33h admin mail-settings page 200" "200" "$(code $ORIGIN/server/admin/mail-settings.html)"
+check "34 auth.js served"              "200" "$(code $ORIGIN/server/shared/auth.js)"
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

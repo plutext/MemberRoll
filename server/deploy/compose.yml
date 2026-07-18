@@ -51,12 +51,19 @@ services:
       KEYCLOAK_AUDIENCE: memberroll-server
       KEYCLOAK_SERVICE_CLIENT: server-service
       KEYCLOAK_SERVICE_SECRET: ${KEYCLOAK_SERVICE_SECRET}
-      MEMBERROLL_DATA: /data/store
       MEMBERROLL_DB_URL: jdbc:postgresql://postgres:5432/memberroll
       MEMBERROLL_DB_USER: memberroll
       MEMBERROLL_DB_PASSWORD: ${MEMBERROLL_DB_PASSWORD}
-    volumes:
-      - ./data/store:/data/store
+      # Emailed pay links (CR-004) are built from this — derived from
+      # DOMAIN here so the two can never disagree.
+      PUBLIC_BASE_URL: https://${DOMAIN}/server
+      MEMBERROLL_SOCIETY_NAME: ${MEMBERROLL_SOCIETY_NAME:-}
+      # Live Stripe (CR-008): blank-is-unset (checkout/webhook answer 503
+      # until .env carries the live key + the live webhook endpoint's
+      # signing secret). No SMTP_*/MAIL_* here — production mail is the
+      # CR-014 admin Mail settings page, not env.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     depends_on:
       - caddy
       - postgres

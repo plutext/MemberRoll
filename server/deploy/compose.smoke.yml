@@ -8,12 +8,23 @@
 # before starting Catalina.
 #
 # Usage (from a scratch copy of this directory, NOT in the repo tree):
-#   export COMPOSE_FILE=compose.yml:compose.smoke.yml KEYCLOAK_ADMIN_PORT=18081
+#   export COMPOSE_FILE=compose.yml:compose.smoke.yml KEYCLOAK_ADMIN_PORT=28081
 #   KEEP_TEST_FIXTURES=1 ./deploy.sh smoke.localhost
 services:
   tomcat:
+    environment:
+      # The dev-matrix mail/Stripe env (CLAUDE.md), so the full
+      # verify-matrix.sh can run against this stack — smoke-only: the
+      # production compose deliberately carries no SMTP_* (CR-014 page)
+      # and gets its Stripe values from .env. Tomcat is IN the compose
+      # network here, so the relay is the mailpit service itself.
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      MAIL_FROM: noreply@memberroll.dev
+      MAIL_REPLY_TO: treasurer@memberroll.dev
+      MEMBERROLL_SOCIETY_NAME: MemberRoll Dev Society
+      STRIPE_WEBHOOK_SECRET: whsec_devmatrix
     volumes:
-      - ./data/store:/data/store
       # host ./data/caddy is the container's /data, and Caddy nests its
       # storage under a further caddy/ subdirectory
       - ./data/caddy/caddy/pki/authorities/local:/smoke-ca:ro
@@ -25,3 +36,19 @@ services:
         keytool -importcert -noprompt -cacerts -storepass changeit \
             -alias caddy-smoke -file /smoke-ca/root.crt || true
         exec catalina.sh run
+
+  # The relay the matrix's mail rows assert against (and the target of the
+  # realm's smtpServer block, which the KEEP_TEST_FIXTURES render keeps —
+  # same service name as the dev stack, so the checked-in host works).
+  # Loopback 28025 keeps clear of the dev Mailpit on 18025.
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "127.0.0.1:${MAILPIT_UI_PORT:-28025}:8025"
+
+  # The matrix's psql side-effect rows need the app database reachable
+  # from the host — loopback only, smoke only (production publishes
+  # nothing). 25433 keeps clear of the dev Postgres on 5433.
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-25433}:5432"

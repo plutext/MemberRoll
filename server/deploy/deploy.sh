@@ -51,6 +51,14 @@ KEYCLOAK_ADMIN_PASSWORD=$(openssl rand -hex 16)
 KEYCLOAK_SERVICE_SECRET=$(openssl rand -hex 24)
 KEYCLOAK_DB_PASSWORD=$(openssl rand -hex 16)
 MEMBERROLL_DB_PASSWORD=$(openssl rand -hex 16)
+# Mail sender display name — set before go-live (CR-008 runbook).
+MEMBERROLL_SOCIETY_NAME=
+# Live Stripe (CR-008 runbook step 10): the restricted live API key, and
+# the signing secret of the dashboard-registered webhook endpoint
+# https://<domain>/server/api/stripe/webhook. Blank = checkout/webhook
+# answer 503; everything else works.
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
 EOF
     umask 022
     echo "wrote .env for $1 (secrets generated; keep this file — it IS the credentials)"
@@ -58,7 +66,7 @@ fi
 
 set -a; . ./.env; set +a
 
-mkdir -p keycloak-import data/store data/postgres data/caddy backups
+mkdir -p keycloak-import data/postgres data/caddy backups
 
 DOMAIN="$DOMAIN" KEYCLOAK_SERVICE_SECRET="$KEYCLOAK_SERVICE_SECRET" \
 KEEP_TEST_FIXTURES="${KEEP_TEST_FIXTURES:-0}" python3 - <<'EOF'
@@ -80,6 +88,12 @@ if os.environ["KEEP_TEST_FIXTURES"] != "1":
                         if not c["clientId"].startswith("test-cli")]
     realm["users"] = [u for u in realm["users"]
                       if u["username"] == "service-account-server-service"]
+    # The checked-in smtpServer points at the dev/smoke Mailpit, which does
+    # not exist in production — import with NO mail config and enter the
+    # real relay once via the tunnel console (CR-008 §4: like the rotated
+    # secret, relay credentials are environment data the repo JSON never
+    # carries; forgot-password mail is dead until this is done).
+    realm.pop("smtpServer", None)
 
 json.dump(realm, open("keycloak-import/memberroll-realm.json", "w"), indent=2)
 EOF

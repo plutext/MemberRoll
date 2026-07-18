@@ -65,9 +65,19 @@ cd /opt/memberroll
                            # realm, builds the tomcat image, compose up
 ```
 
-`.env` is the credential set (Keycloak bootstrap admin, DB password,
-`server-service` secret) — mode 600, never leaves the box, back it up
-somewhere safe once.
+`.env` is the credential set (Keycloak bootstrap admin, DB passwords,
+`server-service` secret, and — filled in at go-live, CR-008 runbook —
+the live Stripe key + webhook signing secret and the society display
+name) — mode 600, never leaves the box, back it up somewhere safe once.
+Stripe values blank = checkout/webhook answer 503, everything else
+works; after editing `.env`, `docker compose up -d` applies it.
+
+Outbound mail is NOT configured here: the app's relay is the admin
+**Mail settings page** (CR-014 — Exchange Online preset), and Keycloak's
+own sender (forgot-password) is realm config entered once through the
+tunnel console (section 3). The production realm imports with no
+`smtpServer` — the checked-in block points at the dev Mailpit and is
+stripped by the render.
 
 While iterating on a fresh provision, point ACME at the **staging** CA to
 stay clear of Let's Encrypt rate limits, then switch to production:
@@ -124,8 +134,15 @@ therefore the ownership of everything keyed by `sub`) would be reminted.
 
 Note the production realm is **rendered**, not verbatim: `deploy.sh`
 replaces the web client's dev redirect URIs with `https://<domain>/*`,
-rotates the `server-service` secret, and strips the dev-only fixtures
-(`test-cli`, `test-cli-noaud`, the `test*` users).
+rotates the `server-service` secret, strips the dev-only fixtures
+(`test-cli`, `test-cli-noaud`, the `test*` users), and strips the dev
+`smtpServer` block. Enter the real relay once post-import under
+**Realm settings → Email** in the tunnel console (same
+Exchange mailbox/credentials as the app's Mail settings page) — this is
+the ONE deliberate exception to the mirror-back discipline: relay
+credentials are environment data like the rotated secret, and the repo
+JSON keeps the dev Mailpit block. Until it is entered, forgot-password
+mail (the self-serve first-login path, CR-006) does not send.
 
 ## 4. Update loop
 
@@ -168,6 +185,11 @@ sudo systemctl enable --now memberroll-backup.timer
 ./backup.sh                          # run one now; output lands in backups/
 ```
 
+Each run dumps **both** databases — `memberroll` (the financial record)
+and `keycloak` — keeping 14 nights. Before each period rollover, copy
+that night's `memberroll` dump into `backups/archive/` (outside the
+pruning) — the year-boundary register is the AGM/audit artefact.
+
 Also schedule **EBS snapshots** in the AWS console (Data Lifecycle
 Manager, daily, retain 7) — that covers instance loss until an S3
 follow-up.
@@ -178,13 +200,14 @@ Into scratch containers (never the live ones), e.g.:
 
 ```bash
 docker run -d --name restore-pg -e POSTGRES_PASSWORD=x postgres:17
-gunzip -c backups/keycloak-<ts>.sql.gz | docker exec -i restore-pg psql -U postgres
-tar xzf backups/store-<ts>.tar.gz -C /tmp/restore-store
+gunzip -c backups/memberroll-<ts>.sql.gz | docker exec -i restore-pg psql -U postgres
+gunzip -c backups/keycloak-<ts>.sql.gz  | docker exec -i restore-pg psql -U postgres
 ```
 
-then point a scratch war/Keycloak at them and check an API query and a
-login. Full-instance restore = new instance + section 1 + 2 with the
-restored `data/` in place before `deploy.sh`.
+then point a scratch war/Keycloak at them and check a register query
+(e.g. `SELECT count(*) FROM person`) and a login. Full-instance restore
+= new instance + section 1 + 2 with the restored `data/` in place
+before `deploy.sh`.
 
 ## 6. Local smoke (dev machine, no AWS)
 
@@ -213,9 +236,38 @@ Wait for Keycloak's import, then (with `R=https://smoke.localhost`,
   200 with roles (proves the alias + truststore + single-issuer JWKS path)
 - `$CURL -o /dev/null -w '%{redirect_url}' $R/` → `/server/web/`
 
+### The full matrix against the smoke (CR-008)
+
+Production strips the `test-cli` fixtures, so the matrix can never run
+against a real instance — the smoke stack is where the production
+topology gets the full treatment. The smoke override carries the
+matrix's mail/Stripe env and a Mailpit + loopback-Postgres publish;
+every environment coupling in `verify-matrix.sh` is env-overridable
+(defaults = the dev invocation, byte-identical):
+
+```bash
+set -a; . /tmp/memberroll-smoke/.env; set +a
+ORIGIN=https://smoke.localhost \
+KC_BASE=https://smoke.localhost/auth \
+KC_ADMIN_BASE=http://localhost:28081/auth \
+CURL_OPTS="-k --resolve smoke.localhost:443:127.0.0.1" \
+POSTGRES_PORT=25433 MEMBERROLL_DB_PASSWORD="$MEMBERROLL_DB_PASSWORD" \
+MAILPIT_UI_PORT=28025 \
+MAILPIT_COMPOSE="docker compose -f /tmp/memberroll-smoke/compose.yml -f /tmp/memberroll-smoke/compose.smoke.yml --project-directory /tmp/memberroll-smoke" \
+KEYCLOAK_ADMIN_USER="$KEYCLOAK_ADMIN_USER" KEYCLOAK_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" \
+STRIPE_WEBHOOK_SECRET=whsec_devmatrix \
+RELAY_HOST=mailpit RELAY_PORT=1025 \
+server/verify-matrix.sh
+```
+
+(`KC_ADMIN_BASE` uses the loopback admin port because Caddy 403s the
+master realm publicly; `RELAY_HOST=mailpit` is the relay as the
+*server* reaches it — Tomcat is inside the compose network here.)
+
 Tear down with `docker compose down` (add `-v` — the smoke's bind mounts
 live in the scratch dir and die with it).
 
 Port collisions with the dev stack: the smoke publishes 80/443 (dev uses
-neither) and loopback `28081` for Keycloak (dev Keycloak owns 18081 —
-hence `KEYCLOAK_ADMIN_PORT`). Dev Tomcat on 18080 is untouched.
+neither) and loopback `28081` for Keycloak, `28025` for Mailpit, `25433`
+for Postgres (dev owns 18081/18025/5433 — hence the offsets). Dev
+Tomcat on 18080 is untouched.
