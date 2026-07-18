@@ -96,6 +96,7 @@ data too) → **Committed**.
 | 010 | Admin "new member" page (out-of-band) | Verified · committed | One-flow walk-in signup: person → household (person as primary contact) → membership type → second-person dialog for HOUSEHOLD; composite atomic endpoint; first consumer of membership_type min/max people. After 009; independent of 004 |
 | 011 | Constitutional register compliance (out-of-band) | Proposed | Gaps from the 2026-07-18 constitution review, one stage each: register-of-members export (clause 4), clause 4(5) suppression flag, under-18 AGM exclusion (clause 34), documented manual suspension procedure (clause 7). Independent of 007/008 |
 | 012 | Payment receipts (out-of-band) | Verified · committed | On-demand receipt per payment — email or print — covering CR-003 manual payments (clause 38(3)(b): receipt if requested); one shared renderer also backing the CR-004 Stripe receipt. No schema/realm change; independent of 007/008 |
+| 013 | Committee register (out-of-band) | Proposed | Records office-bearers + ordinary members as term-bounded appointments (clauses 14–17): current committee, AGM roll (close-all-open-new, atomic like rollover), mid-year casual vacancies. V7 migration; no Keycloak role (deferred — governance fact lives in the register). Feeds CR-007's committee-approval notification; sibling of 011's compliance work |
 
 Ordering principle: admin value first — after CR-003 the app already
 replaces the spreadsheet-and-bank-statement process with zero
