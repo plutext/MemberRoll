@@ -1,6 +1,6 @@
 # CR 005: Segment email — templates, merge fields, send log, communication preferences
 
-Status: PROPOSED (2026-07-18)
+Status: VERIFIED (2026-07-18)
 
 ## Problem
 
@@ -388,7 +388,72 @@ this CR (SPF/DKIM and production from-address remain CR-008).
 
 ## Results
 
-(to be filled in after implementation)
+Implemented 2026-07-18. Status: **VERIFIED**.
+
+### What shipped
+
+- **V5 migration** (`V5__email_send_log.sql`): `email_template`, `email_send`,
+  `email_send_recipient`, `app_setting` exactly as designed; no change to
+  `communication_preference` (CR-001's table, now first written to).
+- **Backend**: `MergeFields` (closed vocabulary + strict validate/render),
+  `CommunicationPreferenceStore` (person → household → EMAIL resolution,
+  close-current-then-insert writes, no churn when a value equals the inherited
+  default), `EmailStore` (templates, footer via `app_setting`, segment
+  resolution with MEMBER-only + per-address dedup + NO_EMAIL, send-log reads,
+  and the sequential sender on `Mail`'s single thread with abort-after-5 and
+  resume), and `AdminEmailResource` (`/api/admin/email/*`). Preferences ride
+  the existing person/household resources (`GET`/`PUT .../preferences`).
+  `Mail` gained the optional `MAIL_REPLY_TO` header.
+- **Admin UI**: new `admin/email.html` (templates, compose+preview+send, send
+  log with drill-in and Resume) wired in `admin.js`; a preferences table in
+  the household detail dialog and the (editing-only) person form; an "Email"
+  menu entry.
+
+### Scripted matrix
+
+`server/verify-matrix.sh` extended with 75 CR5-* assertions (rows CR5-01…22).
+Full suite **PASS=389 FAIL=0** against the dev stack with the CR-004 mail env
+(`SMTP_HOST=localhost SMTP_PORT=18026 MAIL_FROM=noreply@memberroll.dev
+MAIL_REPLY_TO=treasurer@memberroll.dev MEMBERROLL_SOCIETY_NAME=…`), re-run
+green twice consecutively (the abort/resume rows stop and start the Mailpit
+container mid-run). Notable coverage matching the plan:
+
+- Auth (guest/user 403, noaud 401); template create + `{{payLnk}}` → 400
+  naming the field; duplicate name → 409; footer validate + bogus-field 400.
+- Preferences: person RENEWAL=POST recorded (one current row, source=person);
+  household GENERAL=NONE with a person RENEWAL=EMAIL that resolves EMAIL while
+  GENERAL still inherits NONE (source=household).
+- Preview RENEWAL: 4 memberships → household A deduped to **1** address with
+  the PARTNER address appearing **nowhere**, B skipped-post, C no-email, D
+  included; sample carries a real name, a `$` amount and a pay URL. Preview
+  GENERAL: D excluded (household NONE), A still included.
+- Send: COMPLETE with 2 SENT / 1 SKIPPED_POST / 1 NO_EMAIL; Mailpit shows mail
+  to the two members and **none** to the partner or the post member; body
+  carries the given name, footer and pay URL; `From`=`MAIL_FROM`,
+  `Reply-To`=`MAIL_REPLY_TO`; the emailed link resolves (`GET /pay/{token}` →
+  200, right membership); every SENT row has a `renewal_token_id`.
+- Snapshot: a template edit leaves the send's subject/body unchanged; deleting
+  a used template keeps the snapshot and nulls `templateName`.
+- Test-send delivers sample data (`[pay link appears here]` placeholder) and
+  mints no token.
+- Abort/resume: with Mailpit stopped a 6-recipient send goes ABORTED after 5
+  consecutive FAILED (1 left PENDING); a second POST while a send is RUNNING →
+  409; after Mailpit restarts, Resume completes all 6 with no duplicate to the
+  already-sent addresses. Inline footer overrides per-send without touching the
+  saved footer; history lists the send with per-status counts.
+
+### Headless browser (Playwright)
+
+A Chromium pass on `email.html` (login bypassed by injecting an admin token
+into `localStorage`) confirmed the UI-only behaviours the API matrix can't see:
+the section renders past login with no asset/console errors; the footer
+prefills from the saved default and the "save as default" box starts unchecked;
+merge-field chips insert `{{tokens}}` into the focused body; a template saves
+and lists; **Send is disabled until a preview of the exact same parameters**
+and re-locks on any compose or footer change; preview renders the to-email /
+no-email lists and a sample mail containing a pay URL; the Send label shows the
+recipient count ("Send 1 email"). 12/12 behaviours passed (a lazily-requested
+`favicon.ico` 404 is pre-existing across every admin page, not a regression).
 
 ## Follow-ups / amendments
 

@@ -35,7 +35,10 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
+import org.jdbi.v3.core.Jdbi;
+
 import java.io.StringReader;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -52,7 +55,8 @@ public class AdminHouseholdsResource {
     private static final Set<String> RELATIONSHIP_TYPES =
             Set.of("MEMBER", "PARTNER", "DEPENDANT", "OTHER");
 
-    private final HouseholdStore store = new HouseholdStore(Db.jdbi());
+    private final Jdbi jdbi = Db.jdbi();
+    private final HouseholdStore store = new HouseholdStore(jdbi);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
@@ -156,6 +160,56 @@ public class AdminHouseholdsResource {
                     .entity("{\"error\":\"not a current member\"}").build();
             case IS_PRIMARY_CONTACT -> badRequest("reassign the primary contact before removing them");
         };
+    }
+
+    // ---- communication preferences (CR-005) ----------------------------
+
+    @GET
+    @Path("{id}/preferences")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getPreferences(@PathParam("id") long id) {
+        return jdbi.withHandle(handle -> {
+            if (!CommunicationPreferenceStore.householdExists(handle, id)) return notFound();
+            return Response.ok(AdminPeopleResource.preferencesJson(
+                    CommunicationPreferenceStore.forHousehold(handle, id)).toString()).build();
+        });
+    }
+
+    @PUT
+    @Path("{id}/preferences")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response putPreferences(@PathParam("id") long id, String body) {
+        JsonObject request = readObject(body);
+        if (request == null) return badRequest("body must be a JSON object");
+        String type = upper(request, "communicationType");
+        String method = upper(request, "deliveryMethod");
+        if (type == null || !CommunicationPreferenceStore.COMMUNICATION_TYPES.contains(type)) {
+            return badRequest("communicationType must be one of "
+                    + CommunicationPreferenceStore.COMMUNICATION_TYPES);
+        }
+        if (method == null || !CommunicationPreferenceStore.DELIVERY_METHODS.contains(method)) {
+            return badRequest("deliveryMethod must be one of "
+                    + CommunicationPreferenceStore.DELIVERY_METHODS);
+        }
+        Response guard = jdbi.inTransaction(handle -> {
+            if (!CommunicationPreferenceStore.householdExists(handle, id)) return notFound();
+            CommunicationPreferenceStore.putHousehold(handle, id, type, method);
+            return null;
+        });
+        if (guard != null) return guard;
+        return jdbi.withHandle(handle -> Response.ok(AdminPeopleResource.preferencesJson(
+                CommunicationPreferenceStore.forHousehold(handle, id)).toString()).build());
+    }
+
+    private static String upper(JsonObject o, String key) {
+        if (!o.containsKey(key) || o.isNull(key)) return null;
+        try {
+            String v = o.getString(key).trim();
+            return v.isEmpty() ? null : v.toUpperCase(Locale.ROOT);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ---- helpers ---------------------------------------------------------

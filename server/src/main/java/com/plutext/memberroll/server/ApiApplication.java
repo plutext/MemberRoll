@@ -40,7 +40,7 @@ public class ApiApplication extends Application {
                 AdminPeopleResource.class, AdminHouseholdsResource.class,
                 AdminImportResource.class, AdminPeriodsResource.class,
                 AdminMembershipsResource.class, AdminPaymentsResource.class,
-                AdminNewMemberResource.class,
+                AdminNewMemberResource.class, AdminEmailResource.class,
                 PayResource.class, StripeWebhookResource.class,
                 AuthFilter.class, RolesAllowedDynamicFeature.class);
     }

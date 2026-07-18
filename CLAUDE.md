@@ -26,15 +26,18 @@ mvn -pl server cargo:run       # dev Tomcat 10.1: http://localhost:18080/server/
                                       # (project name "memberroll")
 (cd server && docker compose down)    # discard dev state; next up re-imports realm, Flyway re-creates schema
 
-# for the CR-004 rows of the matrix, start cargo with the dev Stripe/mail env
-# (STRIPE_SECRET_KEY optional — without it checkout answers 503, all else works):
+# for the CR-004/CR-005 rows of the matrix, start cargo with the dev Stripe/mail env
+# (STRIPE_SECRET_KEY optional — without it checkout answers 503, all else works;
+# MAIL_REPLY_TO exercises CR-005's Reply-To header):
 STRIPE_WEBHOOK_SECRET=whsec_devmatrix SMTP_HOST=localhost SMTP_PORT=18026 \
-  MAIL_FROM=noreply@memberroll.dev mvn -pl server cargo:run
+  MAIL_FROM=noreply@memberroll.dev MAIL_REPLY_TO=treasurer@memberroll.dev \
+  MEMBERROLL_SOCIETY_NAME="MemberRoll Dev Society" mvn -pl server cargo:run
 
-server/verify-matrix.sh         # the role x endpoint matrix (266 checks with a Stripe key,
-                                # 265 offline) against the running
-                                # dev stack (ports via PORT / KEYCLOAK_PORT); extend it
-                                # alongside new endpoints — it must stay green
+server/verify-matrix.sh         # the role x endpoint matrix (389 checks offline / +1 with a
+                                # Stripe key) against the running dev stack (ports via
+                                # PORT / KEYCLOAK_PORT); extend it alongside new endpoints —
+                                # it must stay green. The CR-005 abort/resume rows stop and
+                                # start the Mailpit container mid-run.
 
 # token for scripted verification (dev realm only)
 curl -s -X POST http://localhost:18081/realms/memberroll/protocol/openid-connect/token \
@@ -121,6 +124,39 @@ never from initial page population — HOUSEHOLD sorts first
 alphabetically and is therefore the type select's default on every
 load, and popping a native `<dialog>` there steals modal focus (backing
 inputs go inert) before the admin has typed anything.
+
+CR-005 added segment email (templates, merge fields, send log,
+communication preferences). A "segment" is not a new concept: it is the
+CR-003 financial-status view (a period + the same status/type filters),
+so `EmailStore.resolveSegment` targets exactly what the Renewals table
+shows. Per membership it takes the household's **current MEMBER-relationship
+people only** (PARTNER/DEPENDANT/OTHER never receive segment mail — the
+voting-rights correction below), resolves each to a delivery method
+(`CommunicationPreferenceStore`: person → household → the EMAIL default),
+dedups EMAIL addresses within the membership (couples share one — primary
+contact wins attribution, else lower person id), and records a `NO_EMAIL`
+row for a membership that yields neither an address nor a skip. Merge
+fields (`MergeFields`) are a CLOSED vocabulary validated STRICTLY at both
+template save and send creation (an unknown `{{field}}` is a 400 — a
+belt-and-braces guard against leaking a typo'd token into a hundred
+mailboxes). `email_send` snapshots the composed subject/body (footer
+included, tokens intact) so a later template edit never rewrites a past
+send; `{{payLink}}` mints a fresh token per recipient at send time
+(CR-004 amendment) and the `renewal_token_id` lands on the recipient row.
+The sender runs SEQUENTIALLY on `Mail`'s single thread (no queue — the
+2026-07-17 decision): `POST /api/admin/email/sends` writes the send +
+all recipient rows in one transaction (409 if one is already RUNNING),
+then `EmailStore.startSending` walks the PENDING rows; 5 consecutive
+failures flip it to ABORTED (remaining rows stay PENDING), and
+`.../resume` re-enqueues PENDING+FAILED (never SENT) — the recovery for
+both a dead relay and a JVM restart mid-send. The saved footer is the
+first `app_setting` row (`email_footer`), editable per-send with a
+"save as default" checkbox that is just a `PUT .../email/footer`, not a
+send parameter. `Mail` gained the optional `MAIL_REPLY_TO` header.
+Preferences ride the person/household resources
+(`GET`/`PUT .../preferences`), default EMAIL, and are written
+insert-don't-overwrite (close the current row, insert the new — no churn
+when the value already equals the inherited default).
 
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):

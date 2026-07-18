@@ -732,6 +732,225 @@ else
   echo "note: psql not found — skipping CR-010 data cases (household/membership_person assertions need psql)"
 fi
 
+# --- segment email: templates, merge fields, send log, preferences (CR-005) --
+# Fixtures need psql (household composition + preferences) and Mailpit for the
+# delivery rows. A DEDICATED period isolates the segment from the many
+# memberships earlier blocks left in the seeded periods. Mailpit assertions are
+# per-address (the shared instance accumulates mail across runs), so unique
+# per-run addresses (Em$$) key every search.
+mailpit_count() { # to-address -> number of matching messages (polls briefly for one)
+  for _ in 1 2 3 4 5 6; do
+    local n
+    n=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$1%22" | jsq "j['messages_count']")
+    [ "${n:-0}" != "0" ] && { echo "$n"; return; }
+    sleep 0.5
+  done
+  echo 0
+}
+poll_send_status() { # send-id -> final status (waits out RUNNING, ~60s cap)
+  for _ in $(seq 1 120); do
+    local s
+    s=$(curl -s "$API/admin/email/sends/$1" -H "Authorization: Bearer $ADMIN" | jsq "j['status']")
+    [ "$s" != "RUNNING" ] && { echo "$s"; return; }
+    sleep 0.5
+  done
+  echo RUNNING
+}
+
+# auth (guest/user 403, noaud 401 — the admin-endpoint convention)
+check "CR5-01 templates guest 403"     "403" "$(code $API/admin/email/templates)"
+check "CR5-01b templates user 403"     "403" "$(code $API/admin/email/templates -H "Authorization: Bearer $USER")"
+check "CR5-01c templates noaud 401"    "401" "$(code $API/admin/email/templates -H "Authorization: Bearer $NOAUD")"
+check "CR5-01d sends guest 403"        "403" "$(code -X POST $API/admin/email/sends -H 'Content-Type: application/json' -d '{}')"
+check "CR5-01e sends user 403"         "403" "$(code -X POST $API/admin/email/sends -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
+
+# template create + merge-field validation + duplicate name
+EM="Em$$"
+check "CR5-02 create template 201"     "201" "$(JPOST $API/admin/email/templates "{\"name\":\"$EM tpl\",\"subject\":\"$EM Renewal {{periodName}}\",\"body\":\"Dear {{givenName}}, your balance is {{balance}}. Pay: {{payLink}}\"}")"
+EMTPL=$(body | jsq "j['id']")
+check "CR5-03 bad merge field 400"     "400" "$(JPOST $API/admin/email/templates "{\"name\":\"$EM bad\",\"subject\":\"x\",\"body\":\"hi {{payLnk}}\"}")"
+check "CR5-03b names the bad field"    "true" "$(body | jsq "str('payLnk' in j['error']).lower()")"
+check "CR5-04 duplicate name 409"      "409" "$(JPOST $API/admin/email/templates "{\"name\":\"$EM tpl\",\"subject\":\"x\",\"body\":\"y\"}")"
+
+# footer (row 21): merge fields validated; bogus rejected
+check "CR5-21 footer PUT 200"          "200" "$(JPUT $API/admin/email/footer "{\"text\":\"Regards, {{societyName}}\"}")"
+check "CR5-21b footer GET echoes"      "Regards, {{societyName}}" "$(curl -s $API/admin/email/footer -H "Authorization: Bearer $ADMIN" | jsq "j['text']")"
+check "CR5-21c footer bogus field 400" "400" "$(JPUT $API/admin/email/footer "{\"text\":\"{{bogus}}\"}")"
+
+if [ "$PSQL_OK" = 1 ]; then
+  # self-heal: a crashed prior run may have left a test guard row RUNNING, which
+  # would 409-wedge every send below. Only ever touches matrix guard rows.
+  psqlq "UPDATE email_send SET status='COMPLETE', finished_at=now() WHERE created_by LIKE 'matrix-guard-%' AND status='RUNNING'" >/dev/null
+  T_SINGLE=$(psqlq "SELECT membership_type_id FROM membership_type WHERE name='SINGLE'")
+  T_HH=$(psqlq "SELECT membership_type_id FROM membership_type WHERE name='HOUSEHOLD'")
+  psqlq "INSERT INTO membership_type (name, description, minimum_people, maximum_people) SELECT 'LIFE','Life member',1,NULL WHERE NOT EXISTS (SELECT 1 FROM membership_type WHERE name='LIFE')" >/dev/null
+  JPOST $API/admin/periods "{\"name\":\"$EM period\",\"startDate\":\"$(date -d '-10 days' +%F)\",\"endDate\":\"$(date -d '+355 days' +%F)\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}" >/dev/null
+  EMPID=$(body | jsq "j['id']")
+
+  # household A: HOUSEHOLD, two MEMBER adults sharing one address + a PARTNER with a distinct address
+  SHARED="shared.$$@em.test"; CLEO="cleo.$$@em.test"
+  JPOST $API/admin/people "{\"givenName\":\"Ada\",\"familyName\":\"$EM\",\"emails\":[{\"email\":\"$SHARED\",\"isPrimary\":true}]}" >/dev/null; EMA1=$(body | jsq "j['id']")
+  JPOST $API/admin/people "{\"givenName\":\"Bert\",\"familyName\":\"$EM\",\"emails\":[{\"email\":\"$SHARED\",\"isPrimary\":true}]}" >/dev/null; EMA2=$(body | jsq "j['id']")
+  JPOST $API/admin/people "{\"givenName\":\"Cleo\",\"familyName\":\"$EM\",\"emails\":[{\"email\":\"$CLEO\",\"isPrimary\":true}]}" >/dev/null; EMA3=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$EM A\",\"primaryContactPersonId\":$EMA1}" >/dev/null; EMHA=$(body | jsq "j['id']")
+  JPOST $API/admin/households/$EMHA/people "{\"personId\":$EMA2,\"relationshipType\":\"MEMBER\"}" >/dev/null
+  JPOST $API/admin/households/$EMHA/people "{\"personId\":$EMA3,\"relationshipType\":\"PARTNER\"}" >/dev/null
+  JPOST $API/admin/memberships "{\"householdId\":$EMHA,\"membershipPeriodId\":$EMPID,\"membershipTypeId\":$T_HH}" >/dev/null; EMMA=$(body | jsq "j['id']")
+
+  # household B: one MEMBER with an email, RENEWAL preference POST
+  BEA="bea.$$@em.test"
+  JPOST $API/admin/people "{\"givenName\":\"Bea\",\"familyName\":\"$EM\",\"emails\":[{\"email\":\"$BEA\",\"isPrimary\":true}]}" >/dev/null; EMB1=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$EM B\",\"primaryContactPersonId\":$EMB1}" >/dev/null; EMHB=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$EMHB,\"membershipPeriodId\":$EMPID,\"membershipTypeId\":$T_SINGLE}" >/dev/null; EMMB=$(body | jsq "j['id']")
+  check "CR5-05 person pref RENEWAL POST 200" "200" "$(JPUT $API/admin/people/$EMB1/preferences "{\"communicationType\":\"RENEWAL\",\"deliveryMethod\":\"POST\"}")"
+  check "CR5-05b GET echoes person=POST"  "POST" "$(curl -s $API/admin/people/$EMB1/preferences -H "Authorization: Bearer $ADMIN" | jsq "j['preferences']['RENEWAL']['method']")"
+  check "CR5-05c source is person"        "person" "$(curl -s $API/admin/people/$EMB1/preferences -H "Authorization: Bearer $ADMIN" | jsq "j['preferences']['RENEWAL']['source']")"
+  check "CR5-05d one current row in db"   "1" "$(psqlq "SELECT count(*) FROM communication_preference WHERE person_id=$EMB1 AND communication_type='RENEWAL' AND effective_to IS NULL")"
+
+  # household C: one MEMBER, NO email at all
+  JPOST $API/admin/people "{\"givenName\":\"Cass\",\"familyName\":\"$EM\"}" >/dev/null; EMC1=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$EM C\",\"primaryContactPersonId\":$EMC1}" >/dev/null; EMHC=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$EMHC,\"membershipPeriodId\":$EMPID,\"membershipTypeId\":$T_SINGLE}" >/dev/null; EMMC=$(body | jsq "j['id']")
+
+  # household D: household GENERAL=NONE, person override RENEWAL=EMAIL (precedence)
+  DOT="dot.$$@em.test"
+  JPOST $API/admin/people "{\"givenName\":\"Dot\",\"familyName\":\"$EM\",\"emails\":[{\"email\":\"$DOT\",\"isPrimary\":true}]}" >/dev/null; EMD1=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$EM D\",\"primaryContactPersonId\":$EMD1}" >/dev/null; EMHD=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$EMHD,\"membershipPeriodId\":$EMPID,\"membershipTypeId\":$T_SINGLE}" >/dev/null; EMMD=$(body | jsq "j['id']")
+  check "CR5-06 household GENERAL NONE 200" "200" "$(JPUT $API/admin/households/$EMHD/preferences "{\"communicationType\":\"GENERAL\",\"deliveryMethod\":\"NONE\"}")"
+  check "CR5-06b person RENEWAL EMAIL 200"  "200" "$(JPUT $API/admin/people/$EMD1/preferences "{\"communicationType\":\"RENEWAL\",\"deliveryMethod\":\"EMAIL\"}")"
+  check "CR5-06c person RENEWAL effective EMAIL" "EMAIL" "$(curl -s $API/admin/people/$EMD1/preferences -H "Authorization: Bearer $ADMIN" | jsq "j['preferences']['RENEWAL']['method']")"
+  check "CR5-06d person GENERAL inherits NONE"  "NONE" "$(curl -s $API/admin/people/$EMD1/preferences -H "Authorization: Bearer $ADMIN" | jsq "j['preferences']['GENERAL']['method']")"
+  check "CR5-06e GENERAL source household"      "household" "$(curl -s $API/admin/people/$EMD1/preferences -H "Authorization: Bearer $ADMIN" | jsq "j['preferences']['GENERAL']['source']")"
+
+  # preview RENEWAL (row 7): A deduped to 1, PARTNER nowhere, B post, C no-email, D included
+  check "CR5-07 preview RENEWAL 200"     "200" "$(JPOST $API/admin/email/preview "{\"templateId\":$EMTPL,\"periodId\":$EMPID,\"statusFilter\":\"PENDING_PAYMENT\",\"communicationType\":\"RENEWAL\"}")"
+  check "CR5-07b memberships 4"          "4" "$(body | jsq "j['counts']['memberships']")"
+  check "CR5-07c toSend 2"               "2" "$(body | jsq "j['counts']['toSend']")"
+  check "CR5-07d skippedPost 1"          "1" "$(body | jsq "j['counts']['skippedPost']")"
+  check "CR5-07e noEmail 1"              "1" "$(body | jsq "j['counts']['noEmail']")"
+  check "CR5-07f partner address nowhere" "false" "$(body | jsq "str(any(r['email']=='$CLEO' for r in j['toSend'])).lower()")"
+  check "CR5-07g shared address present" "true" "$(body | jsq "str(any(r['email']=='$SHARED' for r in j['toSend'])).lower()")"
+  check "CR5-07h D address present"      "true" "$(body | jsq "str(any(r['email']=='$DOT' for r in j['toSend'])).lower()")"
+  check "CR5-07i B in skipped-post"      "true" "$(body | jsq "str(any(r['email']=='$BEA' for r in j['skippedPost'])).lower()")"
+  check "CR5-07j sample has a pay URL"   "true" "$(body | jsq "str('/web/pay.html?t=' in j['sample']['body']).lower()")"
+  check "CR5-07k sample has dollar amt"  "true" "$(body | jsq "str('\$' in j['sample']['body']).lower()")"
+
+  # preview GENERAL (row 8): D excluded (household NONE), A still included
+  check "CR5-08 preview GENERAL 200"     "200" "$(JPOST $API/admin/email/preview "{\"templateId\":$EMTPL,\"periodId\":$EMPID,\"communicationType\":\"GENERAL\"}")"
+  check "CR5-08b D not in toSend"        "false" "$(body | jsq "str(any(r['email']=='$DOT' for r in j['toSend'])).lower()")"
+  check "CR5-08c D in skipped-none"      "true" "$(body | jsq "str(any(r['email']=='$DOT' for r in j['skippedNone'])).lower()")"
+  check "CR5-08d A still in toSend"      "true" "$(body | jsq "str(any(r['email']=='$SHARED' for r in j['toSend'])).lower()")"
+
+  RTOK_BEFORE=$(psqlq "SELECT count(*) FROM renewal_token")
+
+  if curl -s "$MAILPIT/api/v1/messages" >/dev/null 2>&1; then
+    # send (row 10): RENEWAL to the PENDING_PAYMENT segment
+    check "CR5-10 create send 201"       "201" "$(JPOST $API/admin/email/sends "{\"templateId\":$EMTPL,\"periodId\":$EMPID,\"statusFilter\":\"PENDING_PAYMENT\",\"communicationType\":\"RENEWAL\"}")"
+    EMSEND=$(body | jsq "j['id']")
+    check "CR5-10b send completes"       "COMPLETE" "$(poll_send_status $EMSEND)"
+    SENDJSON=$(curl -s $API/admin/email/sends/$EMSEND -H "Authorization: Bearer $ADMIN")
+    check "CR5-10c 2 SENT"               "2" "$(echo "$SENDJSON" | jsq "j['counts'].get('SENT',0)")"
+    check "CR5-10d 1 SKIPPED_POST"       "1" "$(echo "$SENDJSON" | jsq "j['counts'].get('SKIPPED_POST',0)")"
+    check "CR5-10e 1 NO_EMAIL"           "1" "$(echo "$SENDJSON" | jsq "j['counts'].get('NO_EMAIL',0)")"
+
+    # Mailpit (row 11): the two members mailed, partner + post member NOT
+    check "CR5-11 shared address got mail"  "1" "$(mailpit_count "$SHARED")"
+    check "CR5-11b D address got mail"      "1" "$(mailpit_count "$DOT")"
+    check "CR5-11c partner NOT mailed"      "0" "$(curl -s "$MAILPIT/api/v1/search?query=to:%22$CLEO%22" | jsq "j['messages_count']")"
+    check "CR5-11d post member NOT mailed"  "0" "$(curl -s "$MAILPIT/api/v1/search?query=to:%22$BEA%22" | jsq "j['messages_count']")"
+    ABODY=$(mailpit_text "$SHARED")
+    check "CR5-11e body has given name"     "true" "$(python3 -c "print(str('Ada' in '''$ABODY''').lower())")"
+    check "CR5-11f body has the footer"     "true" "$(python3 -c "print(str('Regards,' in '''$ABODY''').lower())")"
+    check "CR5-11g body has a pay URL"      "true" "$(python3 -c "print(str('/web/pay.html?t=' in '''$ABODY''').lower())")"
+    # From + Reply-To headers
+    AMSGID=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$SHARED%22" | jsq "j['messages'][0]['ID']")
+    AHDRS=$(curl -s "$MAILPIT/api/v1/message/$AMSGID")
+    check "CR5-11h From is MAIL_FROM"       "noreply@memberroll.dev" "$(echo "$AHDRS" | jsq "j['From']['Address']")"
+    check "CR5-11i Reply-To is MAIL_REPLY_TO" "treasurer@memberroll.dev" "$(echo "$AHDRS" | jsq "j['ReplyTo'][0]['Address']")"
+
+    # row 12: the emailed pay link actually resolves
+    EMURL=$(python3 -c "import re;m=re.search(r'(http\S*/web/pay.html\?t=\S+)','''$ABODY''');print(m.group(1) if m else '')")
+    EMTOKEN=${EMURL##*t=}
+    check "CR5-12 emailed pay link works"   "200" "$(code $API/pay/$EMTOKEN)"
+    check "CR5-12b resolves household A membership" "$EMMA" "$(psqlq "SELECT membership_id FROM renewal_token WHERE token_hash='$(sha "$EMTOKEN")'")"
+
+    # row 13: each SENT row carries a renewal_token_id
+    check "CR5-13 SENT rows have tokens"    "0" "$(psqlq "SELECT count(*) FROM email_send_recipient WHERE email_send_id=$EMSEND AND status='SENT' AND renewal_token_id IS NULL")"
+
+    # row 14: template edit does not rewrite the send snapshot
+    SNAP_BEFORE=$(echo "$SENDJSON" | jsq "j['subject']")
+    JPUT $API/admin/email/templates/$EMTPL "{\"name\":\"$EM tpl\",\"subject\":\"CHANGED {{periodName}}\",\"body\":\"changed {{payLink}}\"}" >/dev/null
+    check "CR5-14 send snapshot unchanged"  "$SNAP_BEFORE" "$(curl -s $API/admin/email/sends/$EMSEND -H "Authorization: Bearer $ADMIN" | jsq "j['subject']")"
+
+    # row 15: test-send uses sample data, mints no token
+    RTOK_BEFORE_15=$(psqlq "SELECT count(*) FROM renewal_token")
+    check "CR5-15 test-send 200"            "200" "$(JPOST $API/admin/email/templates/$EMTPL/test "{\"to\":\"probe.$$@example.org\"}")"
+    check "CR5-15b test mail delivered"     "1" "$(mailpit_count "probe.$$@example.org")"
+    PROBEBODY=$(mailpit_text "probe.$$@example.org")
+    # the edited template (CR5-14) no longer carries {{givenName}}, but the fake
+    # pay-link placeholder is the definitive "sample data, no token minted" signal
+    check "CR5-15c test uses sample placeholder" "true" "$(python3 -c "print(str('[pay link appears here]' in '''$PROBEBODY''').lower())")"
+    check "CR5-15d no real token minted by test" "$RTOK_BEFORE_15" "$(psqlq "SELECT count(*) FROM renewal_token")"
+
+    # row 22: inline footer overrides the saved one for this send only
+    check "CR5-22 send inline footer 201"   "201" "$(JPOST $API/admin/email/sends "{\"templateId\":$EMTPL,\"periodId\":$EMPID,\"statusFilter\":\"ACTIVE\",\"communicationType\":\"RENEWAL\",\"footer\":\"INLINEFOOTER\"}")"
+    EMSEND22=$(body | jsq "j['id']")
+    poll_send_status $EMSEND22 >/dev/null
+    check "CR5-22b saved footer unchanged"  "Regards, {{societyName}}" "$(curl -s $API/admin/email/footer -H "Authorization: Bearer $ADMIN" | jsq "j['text']")"
+    check "CR5-22c send body has inline footer" "true" "$(curl -s $API/admin/email/sends/$EMSEND22 -H "Authorization: Bearer $ADMIN" | jsq "str('INLINEFOOTER' in j['body']).lower()")"
+
+    # rows 16-17: abort then resume. A dedicated period of 6 sendable memberships;
+    # stop Mailpit so every attempt fails, expect ABORTED after 5 consecutive.
+    JPOST $API/admin/periods "{\"name\":\"$EM abort\",\"startDate\":\"$(date -d '-10 days' +%F)\",\"endDate\":\"$(date -d '+355 days' +%F)\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}" >/dev/null
+    ABPID=$(body | jsq "j['id']")
+    for i in 1 2 3 4 5 6; do
+      JPOST $API/admin/people "{\"givenName\":\"Ab$i\",\"familyName\":\"$EM Ab\",\"emails\":[{\"email\":\"abort.$i.$$@em.test\",\"isPrimary\":true}]}" >/dev/null; AP=$(body | jsq "j['id']")
+      JPOST $API/admin/households "{\"householdName\":\"$EM Ab$i\",\"primaryContactPersonId\":$AP}" >/dev/null; AH=$(body | jsq "j['id']")
+      JPOST $API/admin/memberships "{\"householdId\":$AH,\"membershipPeriodId\":$ABPID,\"membershipTypeId\":$T_SINGLE}" >/dev/null
+    done
+    docker compose -f server/docker-compose.yml stop mailpit >/dev/null 2>&1
+    check "CR5-16 abort send 201"           "201" "$(JPOST $API/admin/email/sends "{\"templateId\":$EMTPL,\"periodId\":$ABPID,\"communicationType\":\"RENEWAL\"}")"
+    ABSEND=$(body | jsq "j['id']")
+    check "CR5-16b aborts"                  "ABORTED" "$(poll_send_status $ABSEND)"
+    ABJSON=$(curl -s $API/admin/email/sends/$ABSEND -H "Authorization: Bearer $ADMIN")
+    check "CR5-16c 5 consecutive FAILED"    "5" "$(echo "$ABJSON" | jsq "j['counts'].get('FAILED',0)")"
+    check "CR5-16d 1 left PENDING"          "1" "$(echo "$ABJSON" | jsq "j['counts'].get('PENDING',0)")"
+
+    # row 18: a second send while one is RUNNING -> 409 (seed a RUNNING row so the
+    # guard is tested deterministically, not against the fast-aborting send above)
+    # seed by a UNIQUE created_by marker and clean up by that marker — psql -tAc
+    # can't cleanly capture INSERT...RETURNING (the command tag rides along), so
+    # id-based cleanup would silently fail and wedge the one-running guard
+    GUARD="matrix-guard-$$"
+    psqlq "INSERT INTO email_send (subject, body, membership_period_id, communication_type, status, created_by) VALUES ('guard','y',$EMPID,'RENEWAL','RUNNING','$GUARD')" >/dev/null
+    check "CR5-18 second send while RUNNING 409" "409" "$(JPOST $API/admin/email/sends "{\"templateId\":$EMTPL,\"periodId\":$EMPID,\"communicationType\":\"RENEWAL\"}")"
+    psqlq "UPDATE email_send SET status='COMPLETE', finished_at=now() WHERE created_by='$GUARD' AND status='RUNNING'" >/dev/null
+
+    # row 17: bring Mailpit back, resume, expect COMPLETE with all 6 delivered
+    docker compose -f server/docker-compose.yml start mailpit >/dev/null 2>&1
+    for _ in 1 2 3 4 5 6 7 8; do curl -s "$MAILPIT/api/v1/messages" >/dev/null 2>&1 && break; sleep 1; done
+    check "CR5-17 resume 200"               "200" "$(code -X POST $API/admin/email/sends/$ABSEND/resume -H "Authorization: Bearer $ADMIN")"
+    check "CR5-17b resumed completes"       "COMPLETE" "$(poll_send_status $ABSEND)"
+    check "CR5-17c all 6 SENT"              "6" "$(curl -s $API/admin/email/sends/$ABSEND -H "Authorization: Bearer $ADMIN" | jsq "j['counts'].get('SENT',0)")"
+    check "CR5-17d first abort address delivered" "1" "$(mailpit_count "abort.1.$$@em.test")"
+    check "CR5-17e no duplicate to first address" "1" "$(curl -s "$MAILPIT/api/v1/search?query=to:%22abort.1.$$@em.test%22" | jsq "j['messages_count']")"
+
+    # row 19: delete a template used by a past send -> snapshot survives, FK nulled
+    check "CR5-19 delete used template 200" "200" "$(code -X DELETE $API/admin/email/templates/$EMTPL -H "Authorization: Bearer $ADMIN")"
+    check "CR5-19b send still intact"       "$SNAP_BEFORE" "$(curl -s $API/admin/email/sends/$EMSEND -H "Authorization: Bearer $ADMIN" | jsq "j['subject']")"
+    check "CR5-19c templateName now null"   "None" "$(curl -s $API/admin/email/sends/$EMSEND -H "Authorization: Bearer $ADMIN" | jsq "j['templateName']")"
+
+    # row 20: history lists the send with per-status counts
+    check "CR5-20 history lists send"       "true" "$(curl -s $API/admin/email/sends -H "Authorization: Bearer $ADMIN" | jsq "str(any(s['id']==$EMSEND and s['counts'].get('SENT',0)==2 for s in j['sends'])).lower()")"
+  else
+    echo "SKIP CR5-10..20 send/delivery rows (Mailpit not reachable at $MAILPIT)"
+  fi
+else
+  echo "note: psql not found — skipping CR-005 data cases (fixtures + preferences need psql)"
+fi
+
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.js)"
@@ -742,6 +961,7 @@ check "33b admin users page 200"       "200" "$(code http://localhost:${PORT:-18
 check "33c admin import page 200"      "200" "$(code http://localhost:${PORT:-18080}/server/admin/import.html)"
 check "33d admin css served"           "200" "$(code http://localhost:${PORT:-18080}/server/admin/admin.css)"
 check "33e admin new-member page 200"  "200" "$(code http://localhost:${PORT:-18080}/server/admin/new-member.html)"
+check "33f admin email page 200"        "200" "$(code http://localhost:${PORT:-18080}/server/admin/email.html)"
 check "34 auth.js served"              "200" "$(code http://localhost:${PORT:-18080}/server/shared/auth.js)"
 
 echo

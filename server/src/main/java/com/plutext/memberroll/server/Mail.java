@@ -110,6 +110,10 @@ final class Mail {
             MimeMessage message = new MimeMessage(session);
             String from = env("MAIL_FROM");
             message.setFrom(new InternetAddress(from != null ? from : "noreply@localhost"));
+            // renewal replies should reach the treasurer, not noreply@ (CR-005);
+            // unset → no Reply-To header, exactly the prior behaviour
+            String replyTo = env("MAIL_REPLY_TO");
+            if (replyTo != null) message.setReplyTo(InternetAddress.parse(replyTo));
             message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(to));
             message.setSubject(subject, "UTF-8");
             message.setText(body, "UTF-8");

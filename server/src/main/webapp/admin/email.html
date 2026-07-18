@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — email</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
+
+<section id="emailSection" hidden>
+    <h2>Email</h2>
+    <div id="mailDisabledBanner" class="warn-note" hidden>
+        Mail is not configured on this server (SMTP unset). You can still compose,
+        preview and record sends as a dry run, but every attempt will FAIL until
+        SMTP is set.
+    </div>
+
+    <!-- Templates ---------------------------------------------------------->
+    <h3>Templates</h3>
+    <p class="muted">Plain-text templates. Subject and body may use
+        <code>{{mergeFields}}</code>; an unknown field is refused on save.</p>
+    <button id="tplNew">New template</button>
+    <table id="templates">
+        <thead>
+        <tr><th>Name</th><th>Subject</th><th>Updated</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <dialog id="templateForm">
+        <article>
+            <header><h3 id="tplFormTitle">New template</h3></header>
+            <label>Name <input id="tplName" placeholder="e.g. Renewal notice"></label>
+            <label>Subject <input id="tplSubject" placeholder="Your {{societyName}} membership {{periodName}}"></label>
+            <label>Body
+                <textarea id="tplBody" rows="12"
+                    placeholder="Dear {{givenName}},&#10;&#10;Your {{typeName}} membership for {{periodName}} is due: {{balance}}.&#10;Pay online: {{payLink}}&#10;&#10;Thank you,&#10;{{societyName}}"></textarea></label>
+            <p class="muted">Merge fields (click to insert):</p>
+            <div id="tplFields" class="field-chips"></div>
+            <footer>
+                <button id="tplTest" type="button" class="secondary">Send test…</button>
+                <button id="tplCancel" type="button" class="secondary">Cancel</button>
+                <button id="tplSave">Save template</button>
+            </footer>
+        </article>
+    </dialog>
+
+    <!-- Compose ------------------------------------------------------------>
+    <h3>Compose a send</h3>
+    <p class="muted">A segment is a period plus the same Unpaid/Paid status and
+        type filters as the Renewals table — what you preview is exactly who is
+        emailed. Only formal (MEMBER) people receive segment mail; partners and
+        dependants never do.</p>
+    <div class="grid">
+        <label>Template <select id="emTemplate"></select></label>
+        <label>Period <select id="emPeriod"></select></label>
+    </div>
+    <div class="grid">
+        <label>Status
+            <select id="emStatus">
+                <option value="">All</option>
+                <option value="PENDING_PAYMENT">Unpaid</option>
+                <option value="ACTIVE">Paid</option>
+                <option value="LAPSED">Lapsed</option>
+                <option value="APPLIED">Applied</option>
+                <option value="CEASED">Ceased</option>
+            </select></label>
+        <label>Type <select id="emType"></select></label>
+        <label>Communication type
+            <select id="emCommType">
+                <option value="RENEWAL" selected>RENEWAL</option>
+                <option value="NEWSLETTER">NEWSLETTER</option>
+                <option value="EVENTS">EVENTS</option>
+                <option value="GENERAL">GENERAL</option>
+            </select></label>
+    </div>
+    <label>Footer (appended to every email; editable per send)
+        <textarea id="emFooter" rows="4"></textarea></label>
+    <label><input type="checkbox" id="emFooterSave"> Save this as the default footer</label>
+    <div>
+        <button id="emPreview">Preview</button>
+        <button id="emSend" disabled>Send</button>
+    </div>
+    <div id="emPreviewReport"></div>
+
+    <!-- Log ---------------------------------------------------------------->
+    <h3>Send log</h3>
+    <button id="emRefreshLog" class="secondary">Refresh</button>
+    <table id="sends">
+        <thead>
+        <tr><th>#</th><th>When</th><th>Template</th><th>Segment</th>
+            <th>Counts</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <dialog id="sendDetail">
+        <article>
+            <header><h3 id="sendDetailTitle">Send</h3></header>
+            <div id="sendDetailSummary" class="muted"></div>
+            <div id="sendDetailActions"></div>
+            <table id="sendRecipients">
+                <thead>
+                <tr><th>Household</th><th>Person</th><th>Email</th><th>Status</th><th>Detail</th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <footer>
+                <button id="sendDetailClose" type="button" class="secondary">Close</button>
+            </footer>
+        </article>
+    </dialog>
+</section>
+</main>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

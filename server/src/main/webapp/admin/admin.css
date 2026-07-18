@@ -76,3 +76,11 @@ button.badge:disabled { opacity: .5; cursor: not-allowed; }
 /* a payment allocation line: type select + amount, laid out in a row */
 .allocLine { display: flex; gap: .5rem; align-items: center; margin: .3rem 0; }
 .allocLine input { max-width: 8rem; }
+
+/* email (CR-005): merge-field chips, the preview sample, greyed inherited prefs */
+.field-chips { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: var(--pico-spacing); }
+.field-chip { font-size: .75rem; padding: .1rem .5rem; margin: 0; width: auto; }
+.mail-sample { white-space: pre-wrap; word-break: break-word; font-size: .85rem;
+    background: var(--pico-card-sectioning-background-color); padding: .8rem; border-radius: var(--pico-border-radius); }
+/* an inherited (household/default) preference reads muted; a real override is full-strength */
+select.muted { opacity: .55; }

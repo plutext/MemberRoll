@@ -25,6 +25,7 @@
 
 const statusBox = document.getElementById("status");
 const message = document.getElementById("message");
+let adminEmail = ""; // best-effort default for the test-send prompt (whoami has no email today)
 
 Auth.onFresh401 = (text) => {
     statusBox.textContent = text;
@@ -244,6 +245,13 @@ function openPersonForm(person) {
     document.getElementById("pfPhones").value =
         (person?.phones || []).map(ph => ph.number + (ph.type ? " " + ph.type : "")).join("\n");
     document.getElementById("pfNotes").value = person?.notes || "";
+    // preferences need a persisted person id: shown only when editing (CR-005)
+    const prefsWrap = document.getElementById("pfPrefsWrap");
+    if (prefsWrap) {
+        prefsWrap.hidden = !person;
+        if (person) renderPreferences("pfPrefs", "people", person.id);
+        else document.getElementById("pfPrefs").innerHTML = "";
+    }
     openDialog("personForm");
 }
 
@@ -397,6 +405,7 @@ async function openHousehold(id) {
     }
     fillPeriodTypeSelects(); // the household's "New membership" period/type pickers
     resetPicker("hdPersonId");
+    renderPreferences("hdPrefs", "households", id); // CR-005 household-level defaults
     openDialog("householdDetail");
 }
 
@@ -1346,6 +1355,427 @@ function wireNewMember() {
     document.getElementById("newMemberSection").hidden = false;
 }
 
+// ---- communication preferences (CR-005) ------------------------------------
+
+const COMM_TYPES = ["NEWSLETTER", "RENEWAL", "EVENTS", "GENERAL"];
+const DELIVERY_METHODS = ["EMAIL", "POST", "SMS", "NONE"];
+
+// a compact per-scope preferences table (communication type × delivery); the
+// effective value shows its source (person / household / default), and a value
+// that only inherits is styled muted so a real override stands out
+async function renderPreferences(containerId, scope, id) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = "";
+    const response = await registerCall(`/admin/${scope}/${id}/preferences`);
+    if (!response) return;
+    const prefs = (await response.json()).preferences;
+    const table = document.createElement("table");
+    const head = table.createTHead().insertRow();
+    for (const label of ["Communication", "Delivery", "Source"]) {
+        const th = document.createElement("th");
+        th.textContent = label;
+        head.appendChild(th);
+    }
+    const tbody = table.createTBody();
+    for (const type of COMM_TYPES) {
+        const row = tbody.insertRow();
+        row.insertCell().textContent = type;
+        const current = prefs[type] || {method: "EMAIL", source: "default"};
+        const select = document.createElement("select");
+        for (const m of DELIVERY_METHODS) {
+            const o = document.createElement("option");
+            o.value = o.textContent = m;
+            o.selected = m === current.method;
+            select.appendChild(o);
+        }
+        const sourceCell = document.createElement("td");
+        const setSource = (src) => {
+            sourceCell.textContent = src;
+            select.classList.toggle("muted", src === "default" || src === "household");
+        };
+        setSource(current.source);
+        select.onchange = async () => {
+            const r = await registerCall(`/admin/${scope}/${id}/preferences`, {
+                method: "PUT", headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({communicationType: type, deliveryMethod: select.value}),
+            });
+            if (!r) return;
+            say(`${type} → ${select.value}.`);
+            renderPreferences(containerId, scope, id); // re-read: source may now be person/household
+        };
+        row.insertCell().appendChild(select);
+        row.appendChild(sourceCell);
+    }
+    container.appendChild(table);
+}
+
+// ---- email: templates, compose, send log (CR-005) ---------------------------
+
+let emFields = [];
+let editingTemplateId = null;
+let lastTemplateField = "tplBody"; // which input the merge-field chips insert into
+let emPreviewSig = null;           // params last previewed; Send is gated on a match
+let sendPollTimer = null;
+
+async function loadEmail() {
+    const response = await registerCall("/admin/email/templates");
+    if (!response) return;
+    const data = await response.json();
+    emFields = data.fields;
+    document.getElementById("mailDisabledBanner").hidden = !!data.mailEnabled;
+    renderTemplates(data.templates);
+    const tplSelect = document.getElementById("emTemplate");
+    tplSelect.innerHTML = "";
+    for (const t of data.templates) {
+        const o = document.createElement("option");
+        o.value = t.id;
+        o.textContent = t.name;
+        tplSelect.appendChild(o);
+    }
+    renderFieldChips();
+}
+
+function renderTemplates(templates) {
+    const body = document.querySelector("#templates tbody");
+    body.innerHTML = "";
+    for (const t of templates) {
+        const row = body.insertRow();
+        row.insertCell().textContent = t.name;
+        row.insertCell().textContent = t.subject;
+        row.insertCell().textContent = t.updatedAt.slice(0, 10);
+        const cell = row.insertCell();
+        const edit = document.createElement("button");
+        edit.textContent = "Edit";
+        edit.onclick = () => openTemplateForm(t);
+        const del = document.createElement("button");
+        del.textContent = "Delete";
+        del.className = "secondary";
+        del.style.marginLeft = ".4rem";
+        del.onclick = () => deleteTemplate(t);
+        cell.append(edit, del);
+    }
+}
+
+function renderFieldChips() {
+    const box = document.getElementById("tplFields");
+    box.innerHTML = "";
+    for (const f of emFields) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "secondary field-chip";
+        chip.textContent = `{{${f}}}`;
+        chip.onclick = () => insertMergeField(f);
+        box.appendChild(chip);
+    }
+}
+
+function insertMergeField(field) {
+    const el = document.getElementById(lastTemplateField);
+    const token = `{{${field}}}`;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0, start) + token + el.value.slice(end);
+    el.focus();
+    el.selectionStart = el.selectionEnd = start + token.length;
+}
+
+function openTemplateForm(t) {
+    editingTemplateId = t ? t.id : null;
+    document.getElementById("tplFormTitle").textContent = t ? `Edit template “${t.name}”` : "New template";
+    document.getElementById("tplName").value = t?.name || "";
+    document.getElementById("tplSubject").value = t?.subject || "";
+    document.getElementById("tplBody").value = t?.body || "";
+    openDialog("templateForm");
+}
+
+async function saveTemplate() {
+    const name = document.getElementById("tplName").value.trim();
+    const subject = document.getElementById("tplSubject").value.trim();
+    const body = document.getElementById("tplBody").value;
+    if (!name || !subject || !body.trim()) return say("Name, subject and body are all required.", true);
+    const path = editingTemplateId ? `/admin/email/templates/${editingTemplateId}` : "/admin/email/templates";
+    const response = await registerCall(path, {
+        method: editingTemplateId ? "PUT" : "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name, subject, body}),
+    });
+    if (!response) return;
+    const t = await response.json();
+    say(`Saved template “${t.name}”.`);
+    closeDialog("templateForm");
+    loadEmail();
+}
+
+async function deleteTemplate(t) {
+    if (!confirm(`Delete template “${t.name}”? Past sends keep their snapshot.`)) return;
+    const response = await registerCall(`/admin/email/templates/${t.id}`, {method: "DELETE"});
+    if (!response) return;
+    say(`Deleted template “${t.name}”.`);
+    loadEmail();
+}
+
+async function testSendTemplate() {
+    if (!editingTemplateId) return say("Save the template first, then send a test.", true);
+    const to = prompt("Send a test to which address?", adminEmail || "");
+    if (!to) return;
+    const response = await registerCall(`/admin/email/templates/${editingTemplateId}/test`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({to}),
+    });
+    if (!response) return;
+    const r = await response.json();
+    say(`Test email queued to ${to}. Subject: ${r.subject}`);
+}
+
+// ---- compose / preview / send ----------------------------------------------
+
+function emComposeParams() {
+    const typeVal = document.getElementById("emType").value;
+    return {
+        templateId: Number(document.getElementById("emTemplate").value) || null,
+        periodId: Number(document.getElementById("emPeriod").value) || null,
+        statusFilter: document.getElementById("emStatus").value || null,
+        typeFilter: typeVal ? Number(typeVal) : null,
+        communicationType: document.getElementById("emCommType").value,
+        footer: document.getElementById("emFooter").value,
+    };
+}
+
+// any compose change invalidates a prior preview — Send re-locks until the
+// exact same parameters have been previewed again
+function invalidatePreview() {
+    emPreviewSig = null;
+    const send = document.getElementById("emSend");
+    send.disabled = true;
+    send.textContent = "Send";
+}
+
+async function previewSend() {
+    const params = emComposeParams();
+    if (!params.templateId || !params.periodId) return say("Pick a template and a period.", true);
+    const response = await registerCall("/admin/email/preview", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(params),
+    });
+    if (!response) return;
+    const report = await response.json();
+    renderPreviewReport(report);
+    emPreviewSig = JSON.stringify(params);
+    const send = document.getElementById("emSend");
+    send.disabled = report.counts.toSend === 0;
+    send.textContent = `Send ${report.counts.toSend} email${report.counts.toSend === 1 ? "" : "s"}`;
+    if (report.counts.toSend === 0) say("Nobody in this segment can be emailed — nothing to send.", true);
+}
+
+function renderPreviewReport(report) {
+    const el = document.getElementById("emPreviewReport");
+    el.innerHTML = "";
+    const line = (html) => { const p = document.createElement("p"); p.innerHTML = html; el.appendChild(p); };
+    const c = report.counts;
+    line(`<strong>${c.memberships}</strong> membership(s) in this segment → `
+        + `<strong>${c.toSend}</strong> to email, ${c.skippedPost} post, `
+        + `${c.skippedNone} opted out, ${c.noEmail} with no email.`);
+    if (report.smsWarning) line(`<span class="warn-note">Some members have an SMS preference — `
+        + `SMS is not implemented, so they are treated as opted out.</span>`);
+    emList(el, "To email", report.toSend, r => `${r.personName} · ${r.email} (${r.displayName})`);
+    emList(el, "Skipped — post", report.skippedPost, r => `${r.personName} (${r.displayName})`);
+    emList(el, "Skipped — opted out", report.skippedNone, r => `${r.personName} (${r.displayName})`);
+    emList(el, "No email on file", report.noEmail, r => r.displayName);
+    if (report.sample) {
+        const h = document.createElement("h4");
+        h.textContent = "Sample (first recipient)";
+        el.appendChild(h);
+        const pre = document.createElement("pre");
+        pre.className = "mail-sample";
+        pre.textContent = `Subject: ${report.sample.subject}\n\n${report.sample.body}`;
+        el.appendChild(pre);
+    }
+}
+
+function emList(parent, title, rows, fmt) {
+    if (!rows.length) return;
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = `${title} (${rows.length})`;
+    details.appendChild(summary);
+    const ul = document.createElement("ul");
+    for (const r of rows) {
+        const li = document.createElement("li");
+        li.textContent = fmt(r);
+        ul.appendChild(li);
+    }
+    details.appendChild(ul);
+    parent.appendChild(details);
+}
+
+async function doSend() {
+    const params = emComposeParams();
+    if (emPreviewSig !== JSON.stringify(params)) {
+        return say("Preview these exact parameters before sending.", true);
+    }
+    if (!confirm(document.getElementById("emSend").textContent + "?")) return;
+    // "save as default footer" is a separate PUT, not a send parameter
+    if (document.getElementById("emFooterSave").checked) {
+        await registerCall("/admin/email/footer", {
+            method: "PUT", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({text: params.footer}),
+        });
+    }
+    const response = await registerCall("/admin/email/sends", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(params),
+    });
+    if (!response) return;
+    const {id} = await response.json();
+    say(`Send #${id} started.`);
+    invalidatePreview();
+    await renderSends();
+    openSend(id);
+}
+
+async function renderSends() {
+    const response = await registerCall("/admin/email/sends");
+    if (!response) return;
+    const sends = (await response.json()).sends;
+    const body = document.querySelector("#sends tbody");
+    body.innerHTML = "";
+    for (const s of sends) {
+        const row = body.insertRow();
+        row.insertCell().textContent = s.id;
+        row.insertCell().textContent = s.createdAt.slice(0, 16).replace("T", " ");
+        row.insertCell().textContent = s.templateName || "(deleted)";
+        row.insertCell().textContent = `${s.periodName}${s.statusFilter ? " · " + statusLabel(s.statusFilter) : ""}`
+            + `${s.typeName ? " · " + s.typeName : ""} · ${s.communicationType}`;
+        row.insertCell().textContent = emCountsText(s.counts);
+        row.insertCell().appendChild(sendStatusBadge(s.status));
+        const open = document.createElement("button");
+        open.textContent = "Open";
+        open.onclick = () => openSend(s.id);
+        row.insertCell().appendChild(open);
+    }
+}
+
+function emCountsText(counts) {
+    return Object.entries(counts).map(([k, v]) => `${emStatusLabel(k)} ${v}`).join(", ") || "—";
+}
+
+const EM_STATUS_LABELS = {
+    SENT: "sent", FAILED: "failed", PENDING: "pending",
+    SKIPPED_POST: "post", SKIPPED_NONE: "opted out", NO_EMAIL: "no email",
+};
+const emStatusLabel = (s) => EM_STATUS_LABELS[s] || s;
+
+function sendStatusBadge(status) {
+    const span = document.createElement("span");
+    const colour = status === "COMPLETE" ? "green" : status === "RUNNING" ? "blue" : "amber";
+    span.className = `badge badge-${colour}`;
+    span.textContent = status;
+    return span;
+}
+
+async function openSend(id) {
+    clearTimeout(sendPollTimer);
+    const response = await registerCall(`/admin/email/sends/${id}`);
+    if (!response) return;
+    const s = await response.json();
+    document.getElementById("sendDetailTitle").textContent = `Send #${s.id} — ${s.status}`;
+    document.getElementById("sendDetailSummary").textContent =
+        `${s.templateName || "(deleted template)"} · ${s.periodName} · ${s.communicationType}. `
+        + emCountsText(s.counts);
+    const actions = document.getElementById("sendDetailActions");
+    actions.innerHTML = "";
+    if (s.status !== "RUNNING") {
+        const pending = (s.counts.PENDING || 0) + (s.counts.FAILED || 0);
+        if (pending > 0) {
+            const resume = document.createElement("button");
+            resume.textContent = `Resume (${pending} pending/failed)`;
+            resume.onclick = () => resumeSend(id);
+            actions.appendChild(resume);
+        }
+    }
+    const body = document.querySelector("#sendRecipients tbody");
+    body.innerHTML = "";
+    for (const r of s.recipients) {
+        const row = body.insertRow();
+        row.insertCell().textContent = r.displayName;
+        row.insertCell().textContent = r.personName || "—";
+        row.insertCell().textContent = r.email || "—";
+        row.insertCell().appendChild(recipientBadge(r.status));
+        row.insertCell().textContent = r.error || (r.sentAt ? r.sentAt.slice(0, 19).replace("T", " ") : "");
+    }
+    openDialog("sendDetail");
+    if (s.status === "RUNNING") sendPollTimer = setTimeout(() => openSend(id), 1500); // live progress
+    else renderSends();
+}
+
+function recipientBadge(status) {
+    const span = document.createElement("span");
+    const colour = status === "SENT" ? "green" : status === "FAILED" ? "amber"
+        : status === "PENDING" ? "blue" : "grey";
+    span.className = `badge badge-${colour}`;
+    span.textContent = emStatusLabel(status);
+    return span;
+}
+
+async function resumeSend(id) {
+    const response = await registerCall(`/admin/email/sends/${id}/resume`, {method: "POST"});
+    if (!response) return;
+    say(`Resumed send #${id}.`);
+    openSend(id);
+}
+
+async function loadFooter() {
+    const response = await registerCall("/admin/email/footer");
+    if (!response) return;
+    document.getElementById("emFooter").value = (await response.json()).text;
+}
+
+function wireEmail() {
+    const on = (id, handler) => { document.getElementById(id).onclick = handler; };
+    on("tplNew", () => openTemplateForm(null));
+    on("tplSave", saveTemplate);
+    on("tplTest", testSendTemplate);
+    on("tplCancel", () => closeDialog("templateForm"));
+    for (const f of ["tplSubject", "tplBody"]) {
+        document.getElementById(f).addEventListener("focus", () => { lastTemplateField = f; });
+    }
+    on("emPreview", previewSend);
+    on("emSend", doSend);
+    on("emRefreshLog", renderSends);
+    on("sendDetailClose", () => { clearTimeout(sendPollTimer); closeDialog("sendDetail"); });
+    for (const id of ["emTemplate", "emPeriod", "emStatus", "emType", "emCommType", "emFooter"]) {
+        document.getElementById(id).addEventListener("input", invalidatePreview);
+    }
+    document.getElementById("emailSection").hidden = false;
+}
+
+// the compose period/type selects (email page has no Renewals table of its own)
+function emFillSelects() {
+    const periodSel = document.getElementById("emPeriod");
+    if (!periodSel) return;
+    periodSel.innerHTML = "";
+    const todayStr = today();
+    const covering = periodsCache.find(p => p.startDate <= todayStr && todayStr <= p.endDate);
+    const defaultId = covering ? covering.id : (periodsCache[0] && periodsCache[0].id);
+    for (const p of periodsCache) {
+        const o = document.createElement("option");
+        o.value = p.id;
+        o.textContent = p.name;
+        o.selected = p.id === defaultId;
+        periodSel.appendChild(o);
+    }
+    const typeSel = document.getElementById("emType");
+    typeSel.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "All";
+    typeSel.appendChild(all);
+    for (const t of allTypes()) {
+        const o = document.createElement("option");
+        o.value = t.typeId;
+        o.textContent = t.type;
+        typeSel.appendChild(o);
+    }
+}
+
 // ---- menu + per-page wiring -------------------------------------------------
 
 // the admin panel is split across pages that share this script; each page
@@ -1353,6 +1783,7 @@ function wireNewMember() {
 const MENU = [
     {href: "index.html", label: "Register & renewals"},
     {href: "new-member.html", label: "New member"},
+    {href: "email.html", label: "Email"},
     {href: "import.html", label: "Import members"},
     {href: "users.html", label: "Users"},
 ];
@@ -1392,6 +1823,14 @@ async function wireUsers() {
                 wireNewMember();
                 await loadPeriods();
                 nmResetForm();
+            }
+            if (document.getElementById("emailSection")) {
+                wireEmail();
+                await loadPeriods(); // fills periodsCache (no Renewals table on this page)
+                emFillSelects();
+                await loadEmail();
+                await loadFooter();
+                await renderSends();
             }
             // CR-010 success-screen deep links: index.html?household=<id> and
             // ?membership=<id>&period=<id> open straight to that detail dialog

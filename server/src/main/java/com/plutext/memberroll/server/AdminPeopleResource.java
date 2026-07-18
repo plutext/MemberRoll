@@ -35,10 +35,13 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
+import org.jdbi.v3.core.Jdbi;
+
 import java.io.StringReader;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -54,7 +57,8 @@ public class AdminPeopleResource {
 
     private static final Set<String> PHONE_TYPES = Set.of("MOBILE", "HOME", "WORK");
 
-    private final PersonStore store = new PersonStore(Db.jdbi());
+    private final Jdbi jdbi = Db.jdbi();
+    private final PersonStore store = new PersonStore(jdbi);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
@@ -111,6 +115,69 @@ public class AdminPeopleResource {
         return store.update(id, draft)
                 .map(person -> Response.ok(toJson(person).toString()).build())
                 .orElseGet(AdminPeopleResource::notFound);
+    }
+
+    // ---- communication preferences (CR-005) ----------------------------
+
+    @GET
+    @Path("{id}/preferences")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getPreferences(@PathParam("id") long id) {
+        return jdbi.withHandle(handle -> {
+            if (!CommunicationPreferenceStore.personExists(handle, id)) return notFound();
+            Long householdId = CommunicationPreferenceStore.currentHouseholdOf(handle, id);
+            return Response.ok(preferencesJson(
+                    CommunicationPreferenceStore.forPerson(handle, id, householdId)).toString()).build();
+        });
+    }
+
+    @PUT
+    @Path("{id}/preferences")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response putPreferences(@PathParam("id") long id, String body) {
+        JsonObject request = readObject(body);
+        if (request == null) return badRequest("body must be a JSON object");
+        String type = upper(optString(request, "communicationType"));
+        String method = upper(optString(request, "deliveryMethod"));
+        if (type == null || !CommunicationPreferenceStore.COMMUNICATION_TYPES.contains(type)) {
+            return badRequest("communicationType must be one of "
+                    + CommunicationPreferenceStore.COMMUNICATION_TYPES);
+        }
+        if (method == null || !CommunicationPreferenceStore.DELIVERY_METHODS.contains(method)) {
+            return badRequest("deliveryMethod must be one of "
+                    + CommunicationPreferenceStore.DELIVERY_METHODS);
+        }
+        Response guard = jdbi.inTransaction(handle -> {
+            if (!CommunicationPreferenceStore.personExists(handle, id)) return notFound();
+            Long householdId = CommunicationPreferenceStore.currentHouseholdOf(handle, id);
+            CommunicationPreferenceStore.putPerson(handle, id, householdId, type, method);
+            return null;
+        });
+        if (guard != null) return guard;
+        return jdbi.withHandle(handle -> Response.ok(preferencesJson(
+                CommunicationPreferenceStore.forPerson(handle, id,
+                        CommunicationPreferenceStore.currentHouseholdOf(handle, id))).toString()).build());
+    }
+
+    /** {type: {method, source}} for each of the four communication types — shared with households. */
+    static JsonObject preferencesJson(Map<String, CommunicationPreferenceStore.Resolved> prefs) {
+        JsonObjectBuilder inner = Json.createObjectBuilder();
+        prefs.forEach((type, r) -> inner.add(type,
+                Json.createObjectBuilder().add("method", r.method()).add("source", r.source())));
+        return Json.createObjectBuilder().add("preferences", inner).build();
+    }
+
+    private static JsonObject readObject(String body) {
+        try (JsonReader reader = Json.createReader(new StringReader(body == null ? "" : body))) {
+            return reader.readObject();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String upper(String s) {
+        return s == null ? null : s.toUpperCase(java.util.Locale.ROOT);
     }
 
     // ---- payload <-> record --------------------------------------------

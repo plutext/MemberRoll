@@ -45,6 +45,12 @@
             <label>Phones (one per line: number, optionally followed by MOBILE/HOME/WORK)
                 <textarea id="pfPhones" rows="2"></textarea></label>
             <label>Notes <textarea id="pfNotes" rows="2"></textarea></label>
+            <div id="pfPrefsWrap" hidden>
+                <h4>Communication preferences</h4>
+                <p class="muted">A greyed row is the inherited default (household, else EMAIL).
+                    Change one to record a personal exception.</p>
+                <div id="pfPrefs"></div>
+            </div>
             <footer>
                 <button id="personCancel" type="button" class="secondary">Cancel</button>
                 <button id="personSave">Save</button>
@@ -105,6 +111,11 @@
             <label>New membership — period <select id="hmPeriod"></select></label>
             <label>Type <select id="hmType"></select></label>
             <button id="hmCreate">Create membership</button>
+            <hr>
+            <h4>Communication preferences (household default)</h4>
+            <p class="muted">The household-level default for each communication type;
+                a person's own exception (in their record) overrides it. A greyed row is EMAIL by default.</p>
+            <div id="hdPrefs"></div>
             <footer>
                 <button id="hdClose" type="button" class="secondary">Close</button>
             </footer>

@@ -57,6 +57,7 @@ registration are CR-008):
 | `PUBLIC_BASE_URL` | defaults to `http://localhost:18080/server` | base for pay links and Checkout return URLs; leaving it unset in production means emailed links point at localhost (a loud WARN is logged) |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_STARTTLS` | `localhost` / `18026` (Mailpit), no auth | receipt + lost-link email; `SMTP_HOST` unset disables mail |
 | `MAIL_FROM` | `noreply@memberroll.dev` | From address (SPF/DKIM for it is CR-008) |
+| `MAIL_REPLY_TO` | unset (no Reply-To header) | CR-005: where renewal replies should land (the treasurer, not `noreply@`); unset keeps the prior behaviour |
 | `MEMBERROLL_SOCIETY_NAME` | `memberroll dev` | email + pay-page branding (the single-tenant rule: no society name in code) |
 
 ## The webapps
