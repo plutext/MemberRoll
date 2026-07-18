@@ -91,7 +91,7 @@ data too) → **Committed**.
 | 005 | Segment email | Verified · committed | Templates, merge fields, segment sends with embedded magic links, send log; communication preferences: admin preferences UI (default EMAIL, manual POST exceptions) and sends honouring it |
 | 006 | Member self-serve | Implemented (2026-07-18, verified) | Keycloak-linked "my membership" page, pay from there; register-push account provisioning; retired the NotesResource placeholder |
 | 007 | Public application form | Planned (pre-proposal notes 2026-07-18) | New-member APPLIED workflow with committee approval — constitutional constraints (clause 3: committee decision, 28-day payment window, no money at application) recorded in the CR doc ahead of the proposal; entrance-fee question deferred |
-| 008 | Production hardening | Planned | Prod DB provisioning, Stripe live keys, SPF/DKIM/from-address, backup coverage, deploy docs |
+| 008 | Production deployment | Proposed (2026-07-19) | Go-live for the Yass instance: close the deploy-asset drift (post-CR-001 env in prod compose, both databases in backup.sh, realm smtpServer render, matrix runnable against the local smoke), live Stripe keys + webhook, Exchange Online mail (app via CR-014 page, Keycloak via console) with SPF/DKIM verified, real member-list import + go-live runbook, backup/restore drill. See [008-production-deployment.md](change-requests/008-production-deployment.md) — society decisions recorded 2026-07-19 (domain members.yasshistory.org.au, prices unchanged, secretary@ mailbox, provisioning deferred); still pending: society Stripe account + operator access, SMTP AUTH enablement |
 | 009 | UI polish (out-of-band) | Verified · committed | Pico CSS baseline across all static pages, dialog-based forms, person picker, status badges — orthogonal to the sequence. Implementation order decided 2026-07-18: 009 lands before 004, so the public pay page starts on the new baseline |
 | 010 | Admin "new member" page (out-of-band) | Verified · committed | One-flow walk-in signup: person → household (person as primary contact) → membership type → second-person dialog for HOUSEHOLD; composite atomic endpoint; first consumer of membership_type min/max people. After 009; independent of 004 |
 | 011 | Constitutional register compliance (out-of-band) | Proposed | Gaps from the 2026-07-18 constitution review, one stage each: register-of-members export (clause 4), clause 4(5) suppression flag, under-18 AGM exclusion (clause 34), documented manual suspension procedure (clause 7). Independent of 007/008 |
@@ -115,6 +115,10 @@ more effective carrying a pay-now link.
   financial year is 1 September – 31 August (clauses 5(2)(a), 44), and
   the "1 July rule" is clause 5(2)(c)'s discretionary last-2-months
   rule — prices still to confirm.*
+  *Answered by the society 2026-07-19 (recorded in
+  [CR-008](change-requests/008-production-deployment.md) Decisions):
+  prices unchanged (Single $45, Household $65, journal +$10), year
+  1 Sep – 31 Aug confirmed, renewal-open date 1 July.*
 - Whether the society passes the Stripe fee on to the payer.
 - **Entrance fee — DEFERRED (2026-07-18).** Constitution clause 5(1)
   prescribes a $20 entrance fee for approved applicants ("or another
