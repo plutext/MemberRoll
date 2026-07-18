@@ -25,7 +25,10 @@ mvn -pl server cargo:run       # dev Tomcat 10.1: http://localhost:18080/server/
                                       # (project name "memberroll")
 (cd server && docker compose down)    # discard dev state; next up re-imports realm, Flyway re-creates schema
 
-# for the CR-004/CR-005 rows of the matrix, start cargo with the dev Stripe/mail env
+# for the CR-004/CR-005 rows of the matrix, start cargo with the dev Stripe/mail env.
+# Since CR-014 these SMTP_*/MAIL_* vars are the FALLBACK (the admin Mail settings
+# page, when saved, takes precedence); with no page row saved they are the config,
+# and the dev stack + verify-matrix rely on that ENV path (Mailpit at :18026).
 # (STRIPE_SECRET_KEY optional — without it checkout answers 503, all else works;
 # MAIL_REPLY_TO exercises CR-005's Reply-To header):
 STRIPE_WEBHOOK_SECRET=whsec_devmatrix SMTP_HOST=localhost SMTP_PORT=18026 \
@@ -244,6 +247,33 @@ surface ever exists). `GET /api/admin/committee/contacts` is the seam
 CR-007 will consume — current committee members' primary emails and the
 current secretary specifically, for routing the application-referral
 notice.
+
+CR-014 made the SMTP relay admin-configurable. `Mail` resolves its settings
+**per send, uncached**, in the order PAGE → ENV → NONE: `AdminMailSettingsResource`
+(`/api/admin/mail-settings`, admin-only) writes ONE `app_setting` row
+(`smtp_settings`, a JSON blob — settings change as a unit, so one atomic value
+beats seven rows and no migration is earned), and when that row is absent the
+CR-004 `SMTP_*`/`MAIL_*` env vars remain the fallback (dev, bootstrap, or an
+operator who wants the secret out of the DB). `Mail.resolve()` returns a
+`Settings` record + `source`; `enabled()` is `resolve().source != NONE`, so
+every existing gate (checkout 503, CR-012 `mailEnabled`, CR-005 banner) reflects
+the page for free. Per-use resolution is deliberate — a saved change applies to
+the next message with no restart (a CR-005 send ABORTED on a dead relay is fixed
+from the page and resumed). A DB read failure falls back to ENV (logged once).
+The ENV path is **byte-for-byte the CR-004 behaviour** (starttls.enable ONLY,
+no `.required`; port default 25; `noreply@localhost` from-default) — proven by
+the whole mail suite staying green with an empty `app_setting` table; a PAGE
+`STARTTLS` additionally sets `.required=true` (no silent cleartext downgrade).
+The password is stored plaintext (single-host topology — app-layer encryption
+changes no threat model, only adds a key to lose), NEVER returned (only
+`passwordSet`) and NEVER logged; `POST .../test` is the ONE place a send error
+reaches a human (verbatim SMTP reply — "535 5.7.139 …" is the product for an
+admin debugging a tenant) and even there the password is scrubbed from the error
+string. Re-save semantics: an absent `password` keeps the stored one, `""`
+clears it — the host can change without retyping the secret. `admin/mail-
+settings.html` adds the Microsoft 365 preset (a client-side form-filler — the
+server knows no vendors). Keycloak's own forgot-password mail stays a separate
+realm-config concern.
 
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):

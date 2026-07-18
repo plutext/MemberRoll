@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — mail settings</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
+
+<section id="mailSettingsSection" hidden>
+    <h2>Mail settings</h2>
+    <p class="muted">How the society sends email — payment receipts, lost-link
+        replies and segment sends all use this relay. Settings saved here take
+        effect on the very next message; if you save nothing, the server's
+        environment configuration is used (the bootstrap/dev fallback).</p>
+
+    <div id="msBanner" class="muted"></div>
+
+    <button id="msPreset" type="button" class="secondary">Microsoft 365 / Exchange Online preset</button>
+    <details>
+        <summary class="muted">Microsoft 365 notes</summary>
+        <ul class="muted">
+            <li>The <strong>username</strong> must be the full mailbox address
+                (e.g. <code>noreply@society.org.au</code>).</li>
+            <li>The <strong>From</strong> address must be that mailbox, or one it
+                has Send As rights over.</li>
+            <li>The mailbox needs <strong>Authenticated SMTP</strong> enabled in
+                the Microsoft 365 admin center (off by default on newer tenants).</li>
+            <li>Basic (password) auth works through December 2026; from then it is
+                default-disabled per tenant (re-enableable). OAuth is a later
+                follow-up.</li>
+        </ul>
+    </details>
+
+    <div class="grid">
+        <label>Host <input id="msHost" placeholder="smtp.office365.com"></label>
+        <label>Port <input id="msPort" type="number" min="1" max="65535" placeholder="587"></label>
+    </div>
+    <div class="grid">
+        <label>Security
+            <select id="msSecurity">
+                <option value="NONE">None (plain)</option>
+                <option value="STARTTLS">STARTTLS</option>
+                <option value="SSL">SSL / implicit TLS</option>
+            </select></label>
+        <label>From address <input id="msFrom" placeholder="noreply@society.org.au"></label>
+    </div>
+    <div class="grid">
+        <label>Username (optional) <input id="msUsername" autocomplete="off" placeholder="noreply@society.org.au"></label>
+        <label>Password
+            <input id="msPassword" type="password" autocomplete="new-password">
+            <button id="msClearPassword" type="button" class="secondary" hidden>Clear stored password</button>
+        </label>
+    </div>
+    <label>Reply-To (optional) <input id="msReplyTo" placeholder="treasurer@society.org.au"></label>
+
+    <div>
+        <button id="msSave">Save settings</button>
+        <button id="msDelete" type="button" class="secondary">Use server defaults</button>
+    </div>
+
+    <h3>Send a test email</h3>
+    <p class="muted">Sends one message with the values above (no need to save
+        first). The relay's own reply — including an authentication error — is
+        shown verbatim, so this is how you confirm a tenant setting.</p>
+    <div class="grid">
+        <label>To <input id="msTestTo" type="email" placeholder="you@example.com"></label>
+        <button id="msTest" type="button" class="secondary">Send test email</button>
+    </div>
+    <div id="msTestResult"></div>
+
+    <p class="muted">Keycloak's own forgot-password / verification email is
+        configured separately, in the realm — not here.</p>
+</section>
+</main>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

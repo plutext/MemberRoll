@@ -1280,6 +1280,133 @@ CT=$(curl -s "$API/admin/committee/contacts" -H "Authorization: Bearer $ADMIN")
 check "CR13-14 secretary email = B"    "sec.$$@example.com" "$(echo "$CT" | jsq "j['secretary']['email']")"
 check "CR13-14b members carry offices" "true" "$(echo "$CT" | jsq "str(any(m['office']=='SECRETARY' for m in j['members'])).lower()")"
 
+# --- CR-014: SMTP settings page ---------------------------------------------
+# Mail.resolve() precedence PAGE → ENV → NONE. The dev stack's env points at
+# Mailpit, so ENV is the resting source; every mutating row cleans up (end
+# state: no smtp_settings row) so the matrix stays re-runnable and every earlier
+# mail row (CR4/CR5/CR12, all before this block) rode ENV. Rows 8–10 (dead-port
+# precedence → DELETE restore → page-From end-to-end) run in that order and the
+# block's unconditional cleanup restores ENV before the script ends.
+MS=$API/admin/mail-settings
+# true if the count of messages to $1 stays == $2 over ~3s (a negative-delivery
+# assertion: a dead-port PAGE send that must produce nothing)
+mailpit_stays() { for _ in 1 2 3 4 5 6; do
+    n=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$1%22" | jsq "j['messages_count']")
+    [ "$n" != "$2" ] && { echo "no"; return; }; sleep 0.5; done; echo "yes"; }
+# "yes" once the count of messages to $1 reaches >= $2 (mailpit_count returns the
+# first non-zero it sees, so it can't assert a 1→2 increase)
+mailpit_reaches() { local n; for _ in $(seq 1 12); do
+    n=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$1%22" | jsq "j['messages_count']")
+    [ "${n:-0}" -ge "$2" ] 2>/dev/null && { echo "yes"; return; }; sleep 0.5; done; echo "no ($n)"; }
+
+# row 1: role gate — guest/user 403, noaud 401, across the verbs
+check "CR14-01 GET guest 403"          "403" "$(code $MS)"
+check "CR14-01b GET user 403"          "403" "$(code $MS -H "Authorization: Bearer $USER")"
+check "CR14-01c GET noaud 401"         "401" "$(code $MS -H "Authorization: Bearer $NOAUD")"
+check "CR14-01d PUT user 403"          "403" "$(code -X PUT $MS -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
+check "CR14-01e DELETE user 403"       "403" "$(code -X DELETE $MS -H "Authorization: Bearer $USER")"
+check "CR14-01f POST test user 403"    "403" "$(code -X POST $MS/test -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
+check "CR14-01g POST test noaud 401"   "401" "$(code -X POST $MS/test -H "Authorization: Bearer $NOAUD" -H 'Content-Type: application/json' -d '{}')"
+
+# row 2: admin GET with no row → source=ENV, host mirrors env, no password
+G0=$(curl -s $MS -H "Authorization: Bearer $ADMIN")
+check "CR14-02 source ENV (no row)"    "ENV" "$(echo "$G0" | jsq "j['source']")"
+check "CR14-02b host mirrors env"      "localhost" "$(echo "$G0" | jsq "j['host']")"
+check "CR14-02c passwordSet false"     "False" "$(echo "$G0" | jsq "j['passwordSet']")"
+check "CR14-02d no password key"       "False" "$(echo "$G0" | jsq "str('password' in j)")"
+
+# row 3: PUT page settings (Mailpit host/port, NONE, username+password)
+check "CR14-03 PUT settings 200"       "200" "$(JPUT $MS "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"page.$$@memberroll.dev\",\"username\":\"pageuser\",\"password\":\"s3cret-$$\"}")"
+G1=$(curl -s $MS -H "Authorization: Bearer $ADMIN")
+check "CR14-03b source PAGE"           "PAGE" "$(echo "$G1" | jsq "j['source']")"
+check "CR14-03c from echoed"           "page.$$@memberroll.dev" "$(echo "$G1" | jsq "j['from']")"
+check "CR14-03d username echoed"       "pageuser" "$(echo "$G1" | jsq "j['username']")"
+check "CR14-03e passwordSet true"      "True" "$(echo "$G1" | jsq "j['passwordSet']")"
+check "CR14-03f no password key"       "False" "$(echo "$G1" | jsq "str('password' in j)")"
+
+# row 4: five invalid PUTs each 400; GET unchanged (still the row-3 PAGE settings)
+check "CR14-04 missing host 400"       "400" "$(JPUT $MS "{\"port\":587,\"security\":\"STARTTLS\",\"from\":\"a@b.co\"}")"
+check "CR14-04b port 0 → 400"          "400" "$(JPUT $MS "{\"host\":\"h\",\"port\":0,\"security\":\"NONE\",\"from\":\"a@b.co\"}")"
+check "CR14-04c port 70000 → 400"      "400" "$(JPUT $MS "{\"host\":\"h\",\"port\":70000,\"security\":\"NONE\",\"from\":\"a@b.co\"}")"
+check "CR14-04d security BOGUS → 400"  "400" "$(JPUT $MS "{\"host\":\"h\",\"port\":587,\"security\":\"BOGUS\",\"from\":\"a@b.co\"}")"
+check "CR14-04e unparseable from → 400" "400" "$(JPUT $MS "{\"host\":\"h\",\"port\":587,\"security\":\"NONE\",\"from\":\"not-an-email\"}")"
+check "CR14-04f GET still PAGE"        "PAGE" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
+check "CR14-04g GET still Mailpit host" "localhost" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['host']")"
+
+# row 5: password kept when absent; cleared on empty string
+check "CR14-05 re-PUT no password 200" "200" "$(JPUT $MS "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"page.$$@memberroll.dev\",\"username\":\"pageuser\"}")"
+check "CR14-05b password kept"         "True" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['passwordSet']")"
+check "CR14-05c PUT password:'' 200"   "200" "$(JPUT $MS "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"page.$$@memberroll.dev\",\"username\":\"pageuser\",\"password\":\"\"}")"
+check "CR14-05d password cleared"      "False" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['passwordSet']")"
+
+# rows 6/7: synchronous test sends (need Mailpit; the saved row-5 PAGE row stands)
+if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
+  T6TO="cr14test.$$@example.com"
+  T6=$(curl -s -X POST $MS/test -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"cr14from.$$@memberroll.dev\",\"to\":\"$T6TO\"}")
+  check "CR14-06 test ok true"         "True" "$(echo "$T6" | jsq "j['ok']")"
+  check "CR14-06b test delivered"      "1" "$(mailpit_count "$T6TO")"
+  T6ID=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$T6TO%22" | jsq "j['messages'][0]['ID']")
+  check "CR14-06c candidate From used" "true" "$(curl -s "$MAILPIT/api/v1/message/$T6ID" | jsq "str('cr14from.$$' in j['From']['Address']).lower()")"
+  check "CR14-06d saved row untouched" "PAGE" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
+
+  # row 7: dead port → ok:false, error names the connection failure, nothing sent
+  T7=$(curl -s -X POST $MS/test -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"host\":\"localhost\",\"port\":59999,\"security\":\"NONE\",\"from\":\"a@b.co\",\"to\":\"cr14dead.$$@example.com\"}")
+  check "CR14-07 test ok false"        "False" "$(echo "$T7" | jsq "j['ok']")"
+  check "CR14-07b error names refusal" "true" "$(echo "$T7" | jsq "str('Connection refused' in j.get('error','')).lower()")"
+  check "CR14-07c nothing delivered"   "0" "$(curl -s "$MAILPIT/api/v1/search?query=to:%22cr14dead.$$@example.com%22" | jsq "j['messages_count']")"
+
+  # row 7b (hazard 1): a password-bearing send that fails must NOT echo the
+  # secret. STARTTLS against Mailpit (which offers none) forces the PAGE
+  # .required=true failure — also proving hazard 2's converse (required set on PAGE).
+  T7PW="leaky-$$-secret"
+  T7B=$(curl -s -X POST $MS/test -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"host\":\"localhost\",\"port\":18026,\"security\":\"STARTTLS\",\"from\":\"a@b.co\",\"username\":\"u\",\"password\":\"$T7PW\",\"to\":\"cr14leak.$$@example.com\"}")
+  check "CR14-07d starttls-required fails" "False" "$(echo "$T7B" | jsq "j['ok']")"
+  check "CR14-07e error names STARTTLS" "true" "$(echo "$T7B" | jsq "str('STARTTLS' in j.get('error','')).lower()")"
+  check "CR14-07f password not leaked"  "False" "$(echo "$T7B" | jsq "str('$T7PW' in j.get('error',''))")"
+
+  # rows 8–10: precedence proven through the real CR-012 receipt send path
+  # (needs psql for the payment fixture)
+  if [ "$PSQL_OK" = 1 ]; then
+    RTO="cr14rcpt.$$@example.com"
+    JPOST $API/admin/people "{\"givenName\":\"Mel\",\"familyName\":\"Mail$$\",\"emails\":[{\"email\":\"$RTO\",\"isPrimary\":true}]}" >/dev/null; MSP=$(body | jsq "j['id']")
+    JPOST $API/admin/households "{\"householdName\":\"Mail$$ HH\",\"primaryContactPersonId\":$MSP}" >/dev/null; MSHH=$(body | jsq "j['id']")
+    JPOST $API/admin/memberships "{\"householdId\":$MSHH,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; MSMEM=$(body | jsq "j['id']")
+    JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-19\",\"amountCents\":4500,\"method\":\"BANK_TRANSFER\",\"bankReference\":\"CR14-$$\",\"payerPersonId\":$MSP,\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MSMEM,\"amountCents\":4500}]}" >/dev/null; MSPAY=$(body | jsq "j['id']")
+
+    # row 8: PAGE at a dead port beats ENV — the receipt POST is accepted
+    # (async best-effort) but nothing arrives
+    JPUT $MS "{\"host\":\"localhost\",\"port\":59999,\"security\":\"NONE\",\"from\":\"dead.$$@memberroll.dev\"}" >/dev/null
+    check "CR14-08 receipt POST accepted" "202" "$(code -X POST $API/admin/payments/$MSPAY/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}')"
+    check "CR14-08b PAGE beat ENV (no mail)" "yes" "$(mailpit_stays "$RTO" "0")"
+
+    # row 9: DELETE restores ENV — the same receipt now arrives
+    check "CR14-09 DELETE 200"          "200" "$(code -X DELETE $MS -H "Authorization: Bearer $ADMIN")"
+    check "CR14-09b source ENV again"   "ENV" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
+    code -X POST $API/admin/payments/$MSPAY/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}' >/dev/null
+    check "CR14-09c ENV fallback delivered" "1" "$(mailpit_count "$RTO")"
+
+    # row 10: a PAGE row with a distinctive From — the real send reads the row
+    check "CR14-10 PUT page From 200"   "200" "$(JPUT $MS "{\"host\":\"localhost\",\"port\":18026,\"security\":\"NONE\",\"from\":\"cr14page.$$@memberroll.dev\"}")"
+    code -X POST $API/admin/payments/$MSPAY/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}' >/dev/null
+    check "CR14-10b page-From delivered" "yes" "$(mailpit_reaches "$RTO" "2")"
+    M10=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$RTO%22" | jsq "j['messages'][0]['ID']")
+    check "CR14-10c real send used page From" "true" "$(curl -s "$MAILPIT/api/v1/message/$M10" | jsq "str('cr14page.$$' in j['From']['Address']).lower()")"
+  else
+    echo "SKIP CR14-08..10 (precedence via receipt email — needs psql fixtures)"
+  fi
+else
+  echo "SKIP CR14-06..10 mail rows (Mailpit not reachable at $MAILPIT)"
+fi
+
+# row 11: upsert not append — the run's many PUTs left exactly one row
+if [ "$PSQL_OK" = 1 ]; then
+  check "CR14-11 single settings row"  "1" "$(psqlq "SELECT count(*) FROM app_setting WHERE key='smtp_settings'")"
+fi
+# unconditional cleanup: no smtp_settings row may survive, so a re-run and every
+# ENV-based mail row starts clean again
+code -X DELETE $MS -H "Authorization: Bearer $ADMIN" >/dev/null
+check "CR14-12 settings cleared at end" "ENV" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code http://localhost:${PORT:-18080}/server/web/pay.js)"
@@ -1292,6 +1419,7 @@ check "33d admin css served"           "200" "$(code http://localhost:${PORT:-18
 check "33e admin new-member page 200"  "200" "$(code http://localhost:${PORT:-18080}/server/admin/new-member.html)"
 check "33f admin email page 200"        "200" "$(code http://localhost:${PORT:-18080}/server/admin/email.html)"
 check "33g admin committee page 200"    "200" "$(code http://localhost:${PORT:-18080}/server/admin/committee.html)"
+check "33h admin mail-settings page 200" "200" "$(code http://localhost:${PORT:-18080}/server/admin/mail-settings.html)"
 check "34 auth.js served"              "200" "$(code http://localhost:${PORT:-18080}/server/shared/auth.js)"
 
 echo

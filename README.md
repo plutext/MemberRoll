@@ -28,6 +28,23 @@ SMTP_HOST=localhost SMTP_PORT=18026 MAIL_FROM=noreply@memberroll.dev \
 # without it the app still runs — the checkout endpoint answers 503, all else works
 ```
 
+### Mail configuration
+
+Outbound mail (payment receipts, lost-link replies, segment sends) is
+configured **from the admin panel first** — the *Mail settings* page
+(admin → Mail settings) saves the SMTP relay (host/port/security/credentials/
+from) and takes effect on the very next message, with a "Send test email"
+button that shows the relay's own error verbatim. There is a one-click
+Microsoft 365 / Exchange Online preset (`smtp.office365.com:587`, STARTTLS).
+
+The `SMTP_*` / `MAIL_FROM` / `MAIL_REPLY_TO` environment variables above are the
+**fallback**: used when nothing is saved on that page (so the dev stack and a
+fresh install can send before anyone opens it, and an operator who prefers the
+password out of the database can stay on env). Resolution order is
+page → environment → disabled; with mail disabled, every send is a logged
+no-op and the send-dependent endpoints answer 503. Keycloak's own
+forgot-password/verification mail is configured separately, in the realm.
+
 Fresh start (wipe the dev database and Keycloak state back to a clean slate):
 
 ```bash

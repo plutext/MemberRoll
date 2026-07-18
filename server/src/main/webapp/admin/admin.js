@@ -2130,6 +2130,128 @@ function wireCommittee() {
     document.getElementById("committeeSection").hidden = false;
 }
 
+// ---- mail settings (CR-014) -------------------------------------------------
+
+const MS_SOURCE_TEXT = {
+    PAGE: "Using the SMTP settings saved on this page.",
+    ENV: "Using the server environment configuration (nothing saved on this page).",
+    NONE: "Mail is disabled — no page settings and no server environment.",
+};
+
+async function loadMailSettings() {
+    const response = await registerCall("/admin/mail-settings");
+    if (!response) return;
+    const s = await response.json();
+    const banner = document.getElementById("msBanner");
+    banner.textContent = MS_SOURCE_TEXT[s.source] || "";
+    banner.className = s.source === "NONE" ? "warn-note" : "muted";
+    // the effective values seed the form so the ENV config is visible and
+    // editable; source stays whatever it was until a Save
+    document.getElementById("msHost").value = s.host || "";
+    document.getElementById("msPort").value = s.port || "";
+    document.getElementById("msSecurity").value = s.security || "STARTTLS";
+    document.getElementById("msFrom").value = s.from || "";
+    document.getElementById("msUsername").value = s.username || "";
+    document.getElementById("msReplyTo").value = s.replyTo || "";
+    // the password is never returned; placeholder signals a stored one, and an
+    // empty field means "keep it" — clearing needs the explicit action below
+    const pw = document.getElementById("msPassword");
+    pw.value = "";
+    pw.placeholder = s.passwordSet ? "(unchanged — leave blank to keep)" : "";
+    document.getElementById("msClearPassword").hidden = !s.passwordSet;
+    document.getElementById("msTestResult").textContent = "";
+}
+
+// the shared payload: an EMPTY password field means "absent" (keep the stored
+// one) so a re-save never needs the secret retyped; explicit clearing is the
+// "Clear stored password" action, which sends "".
+function msFormBody(passwordOverride) {
+    const body = {
+        host: document.getElementById("msHost").value.trim(),
+        port: Number(document.getElementById("msPort").value),
+        security: document.getElementById("msSecurity").value,
+        from: document.getElementById("msFrom").value.trim(),
+        username: document.getElementById("msUsername").value.trim() || null,
+        replyTo: document.getElementById("msReplyTo").value.trim() || null,
+    };
+    const typed = document.getElementById("msPassword").value;
+    if (passwordOverride !== undefined) body.password = passwordOverride;
+    else if (typed !== "") body.password = typed;
+    return body;
+}
+
+function msApplyPreset() {
+    document.getElementById("msHost").value = "smtp.office365.com";
+    document.getElementById("msPort").value = "587";
+    document.getElementById("msSecurity").value = "STARTTLS";
+    // Exchange Online authenticates as the sending mailbox — mirror From into
+    // username unless the admin has already set one
+    const from = document.getElementById("msFrom").value.trim();
+    const user = document.getElementById("msUsername");
+    if (from && !user.value.trim()) user.value = from;
+    say("Filled the Microsoft 365 preset — set From/username to your mailbox, then test.");
+}
+
+async function saveMailSettings() {
+    const response = await registerCall("/admin/mail-settings", {
+        method: "PUT", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(msFormBody()),
+    });
+    if (!response) return;
+    say("Saved.");
+    await loadMailSettings();
+}
+
+async function deleteMailSettings() {
+    if (!confirm("Discard the saved SMTP settings and use the server environment (or disable mail if none)?")) return;
+    const response = await registerCall("/admin/mail-settings", {method: "DELETE"});
+    if (!response) return;
+    say("Reverted to the server environment.");
+    await loadMailSettings();
+}
+
+async function clearMailPassword() {
+    const response = await registerCall("/admin/mail-settings", {
+        method: "PUT", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(msFormBody("")), // explicit empty string = clear
+    });
+    if (!response) return;
+    say("Cleared the stored password.");
+    await loadMailSettings();
+}
+
+async function testMailSettings() {
+    const to = document.getElementById("msTestTo").value.trim();
+    const result = document.getElementById("msTestResult");
+    if (!to.includes("@")) { result.textContent = "Enter a To address."; result.className = "warn-note"; return; }
+    result.textContent = "Sending…";
+    result.className = "muted";
+    const body = msFormBody();
+    body.to = to;
+    const response = await registerCall("/admin/mail-settings/test", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body),
+    });
+    if (!response) { result.textContent = ""; return; }
+    const r = await response.json();
+    if (r.ok) {
+        result.textContent = "Test message sent to " + to + ".";
+        result.className = "muted";
+    } else {
+        result.textContent = "Send failed: " + (r.error || "unknown error");
+        result.className = "warn-note";
+    }
+}
+
+function wireMailSettings() {
+    document.getElementById("msPreset").onclick = msApplyPreset;
+    document.getElementById("msSave").onclick = saveMailSettings;
+    document.getElementById("msDelete").onclick = deleteMailSettings;
+    document.getElementById("msClearPassword").onclick = clearMailPassword;
+    document.getElementById("msTest").onclick = testMailSettings;
+    document.getElementById("mailSettingsSection").hidden = false;
+}
+
 // ---- menu + per-page wiring -------------------------------------------------
 
 // the admin panel is split across pages that share this script; each page
@@ -2141,6 +2263,7 @@ const MENU = [
     {href: "committee.html", label: "Committee"},
     {href: "import.html", label: "Import members"},
     {href: "users.html", label: "Users"},
+    {href: "mail-settings.html", label: "Mail settings"},
 ];
 
 function renderMenu() {
@@ -2191,6 +2314,10 @@ async function wireUsers() {
             if (document.getElementById("committeeSection")) {
                 wireCommittee();
                 await renderCommittee();
+            }
+            if (document.getElementById("mailSettingsSection")) {
+                wireMailSettings();
+                await loadMailSettings();
             }
             // CR-010 success-screen deep links: index.html?household=<id> and
             // ?membership=<id>&period=<id> open straight to that detail dialog

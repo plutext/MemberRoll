@@ -1,6 +1,6 @@
 # CR 014: SMTP settings page — configure mail from the admin panel
 
-Status: PROPOSED (2026-07-19)
+Status: VERIFIED (2026-07-19)
 
 ## Problem
 
@@ -247,6 +247,65 @@ Mechanics and house patterns:
 - `README` / `GETTING-STARTED`: mail configuration section — the page
   first, env as bootstrap/dev.
 - `docs/ROADMAP.md`: CR-014 row.
+
+## Verification results (2026-07-19)
+
+Implemented and verified against the dev stack (cargo on 18080 with the dev
+SMTP env → Mailpit at localhost:18026; Keycloak 18081; Postgres 5433; Mailpit
+18025/18026).
+
+**Matrix** (`server/verify-matrix.sh`): `PASS=537 FAIL=3`. All **50 new
+`CR14-*` checks pass**, and the block is re-runnable (ran green twice
+back-to-back; the unconditional cleanup leaves no `smtp_settings` row, so every
+ENV-based mail row keeps riding ENV). The 3 failures are the pre-existing
+environmental flakes unrelated to this additive CR — `27b` (Keycloak
+user-listing eventual consistency) and `CR10-04g2`/`CR10-12c` (UTC-vs-local
+"joined/approved today" date rows). Mapping to the plan's rows:
+
+- Row 1 → `CR14-01*` (role gate: guest/user 403, noaud 401 across GET/PUT/
+  DELETE/test).
+- Row 2 → `CR14-02*` (`source=ENV`, host mirrors env, `passwordSet=false`, no
+  `password` key).
+- Row 3 → `CR14-03*` (PUT PAGE settings; GET echoes fields, `passwordSet=true`,
+  still no `password` key).
+- Row 4 → `CR14-04*` (missing host / port 0 / port 70000 / security BOGUS /
+  unparseable from each 400; GET unchanged after all five).
+- Row 5 → `CR14-05*` (re-PUT with `password` absent keeps it; `password:""`
+  clears it).
+- Row 6 → `CR14-06*` (test send to Mailpit `{ok:true}`, delivered, candidate
+  From used, saved row untouched).
+- Row 7 → `CR14-07*` (dead port `{ok:false}` naming "Connection refused",
+  nothing delivered) **plus `CR14-07d/e/f`, the hazard-1 leak check**: a
+  password-bearing send that fails (STARTTLS forced against Mailpit, which
+  offers none — also exercising hazard-2's converse, `.required=true` on the
+  PAGE path) returns an error that names STARTTLS but does **not** contain the
+  candidate password.
+- Rows 8–10 → `CR14-08*..10*` (precedence through the real CR-012 receipt send
+  path: PAGE at a dead port is accepted 202 but delivers nothing → DELETE
+  restores ENV and the same receipt arrives → a PAGE row with a distinctive
+  From proves the real send reads the row). Run in that order; ENV restored
+  before the block ends.
+- Row 11 → `CR14-11` (exactly one `smtp_settings` row after the run's many PUTs
+  — upsert, not append) then `CR14-12` (unconditional cleanup → `source=ENV`).
+- Static page → `33h` (`mail-settings.html` served 200).
+
+`source=NONE` remains the documented manual row (env is fixed at cargo start,
+so it can't be shown inside a single matrix run): start cargo without the SMTP
+env → GET shows `NONE`, the CR-012 Email button disables, `POST .../receipt`
+answers 503 — the existing gates, now driven by `resolve()`. **Not re-run this
+session** (would require a second cargo with no SMTP env); the `Mail.enabled()`
+= `resolve().source != NONE` wiring is exercised indirectly by the whole
+mail-gate suite continuing green on the ENV path.
+
+**Browser walkthrough** (Playwright, `tmp/cr014-fixtures/cr014-walkthrough.js`):
+`PASS=12 FAIL=0`. ENV banner at rest → Microsoft 365 preset fills
+`smtp.office365.com`/587/STARTTLS → overwrite with Mailpit values + a password →
+test send shows the success line and the message lands in Mailpit → Save flips
+the banner to "settings saved on this page" → reload shows the password
+placeholder "(unchanged — leave blank to keep)" with an empty value and the
+Clear-password button visible → Use server defaults reverts the banner to the
+server environment. Screenshots: `CR14-A-preset` / `-B-test-send` /
+`-C-saved-page` / `-D-reverted-env`.
 
 ## Follow-ups / amendments
 
