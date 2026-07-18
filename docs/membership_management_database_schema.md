@@ -530,9 +530,13 @@ Membership
   status: ACTIVE
 
 MembershipPerson
-  M3001  P1001  statutory_member=true  voting=true
-  M3001  P1002  statutory_member=true  voting=true
+  M3001  P1001  statutory_member=true   voting=true
+  M3001  P1002  statutory_member=false  voting=false
 ```
+
+John (`relationship_type` MEMBER) is the formal, statutory voting
+member; Mary (PARTNER) is covered by the membership but does not vote
+(see "Formal member status" above, corrected 2026-07-18).
 
 When the household renews for 2027–2028, a new `Membership` is created. The previous membership and its membership-person rows remain unchanged as the historical record.
 

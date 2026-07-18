@@ -36,6 +36,7 @@ decisions and the planned change-request sequence; individual CRs in
 | 2026-07-18 | **Communication preferences default to EMAIL.** Only a handful of members receive *Yandoo*/*Boongaroon* by post, so no preference row = email; the exceptions are set manually to POST through an admin preferences UI (CR-005 — the `communication_preference` table shipped empty in CR-001 and nothing manages it before then). No re-import of the member list for this: the post members are entered by hand. |
 | 2026-07-18 | **Segment email addresses MEMBER people only** (CR-005): renewal/newsletter emails go to a household's current `relationship_type` MEMBER people (deduped when they share an address), never PARTNER/DEPENDANT/OTHER — the formal member is who the society corresponds with, mirroring the voting-rights correction below. |
 | 2026-07-18 | **Voting rights, corrected**: only the household member recorded with `relationship_type` MEMBER is a formal, statutory voting member. PARTNER/DEPENDANT/OTHER receive membership benefits (covered by the membership, counted for the household's occupancy) but do not vote, hold statutory-member status, or stand for committee. Also settles the CR-010 question of whether a PARTNER/DEPENDANT/OTHER second person counts against a membership type's `maximum_people`: it does not — only a second MEMBER does, since `maximum_people` caps formal members, not household occupants. |
+| 2026-07-18 | **Keycloak↔Person linking is provision-time, register-push** (CR-006, superseding the match-at-login working assumption): an idempotent admin-triggered step creates (or adopts, verified-email only) a Keycloak account per qualifying member email and writes `person.keycloak_subject` at that moment — no match-at-login heuristic, no confirmation queue. Imported addresses count as verified; self-registered accounts must verify (realm Verify Email on). One email address may be in use in at most one household; within a household the shared address's account goes to the CR-005-attributed person (primary contact, else lower person id). **Self-serve is MEMBER-only** (the correspondence principle above). Rollout is **silent + forgot-password** — no invite blast; first login goes through Keycloak's password reset. Self-serve endpoints authorize on the link, not the self-claimed `member` role; Keycloak account lifecycle is not used for authorization (per-request DB checks are). Principles recorded in full in [CR-006](change-requests/006-member-self-serve.md). |
 
 ## In scope
 
@@ -86,13 +87,13 @@ data too) → **Committed**.
 | 001 | Membership register data layer | Verified · committed | Postgres + Flyway + JDBI, core schema, admin people/household CRUD API, minimal admin register UI |
 | 002 | Import | Verified · committed | CSV import with preview/dedup; synthetic dev fixture shaped like the real list |
 | 003 | Renewals and manual payments | Verified · committed | Period rollover, cash/cheque/transfer payment entry, financial-status filters, CSV exports |
-| 004 | Stripe | Verified | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
-| 005 | Segment email | Proposed | Templates, merge fields, segment sends with embedded magic links, send log; communication preferences: admin preferences UI (default EMAIL, manual POST exceptions) and sends honouring it |
-| 006 | Member self-serve | Planned | Keycloak-linked "my membership" page, pay from there |
+| 004 | Stripe | Verified · committed | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
+| 005 | Segment email | Verified · committed | Templates, merge fields, segment sends with embedded magic links, send log; communication preferences: admin preferences UI (default EMAIL, manual POST exceptions) and sends honouring it |
+| 006 | Member self-serve | Proposed | Keycloak-linked "my membership" page, pay from there; register-push account provisioning; retires the NotesResource placeholder |
 | 007 | Public application form | Planned | New-member APPLIED workflow with admin approval |
 | 008 | Production hardening | Planned | Prod DB provisioning, Stripe live keys, SPF/DKIM/from-address, backup coverage, deploy docs |
-| 009 | UI polish (out-of-band) | Proposed | Pico CSS baseline across all static pages, dialog-based forms, person picker, status badges — orthogonal to the sequence. Implementation order decided 2026-07-18: 009 lands before 004, so the public pay page starts on the new baseline |
-| 010 | Admin "new member" page (out-of-band) | Verified | One-flow walk-in signup: person → household (person as primary contact) → membership type → second-person dialog for HOUSEHOLD; composite atomic endpoint; first consumer of membership_type min/max people. After 009; independent of 004 |
+| 009 | UI polish (out-of-band) | Verified · committed | Pico CSS baseline across all static pages, dialog-based forms, person picker, status badges — orthogonal to the sequence. Implementation order decided 2026-07-18: 009 lands before 004, so the public pay page starts on the new baseline |
+| 010 | Admin "new member" page (out-of-band) | Verified · committed | One-flow walk-in signup: person → household (person as primary contact) → membership type → second-person dialog for HOUSEHOLD; composite atomic endpoint; first consumer of membership_type min/max people. After 009; independent of 004 |
 
 Ordering principle: admin value first — after CR-003 the app already
 replaces the spreadsheet-and-bank-statement process with zero
@@ -107,7 +108,8 @@ more effective carrying a pay-now link.
   implies a 1 July rule and lists "2025/2026" fees; confirm the period
   start/end and the current year's prices with the society).
 - Whether the society passes the Stripe fee on to the payer.
-- Keycloak↔Person linking rule for CR-006 (email match with admin
-  confirmation is the working assumption), and whether the existing
-  self-claimed `member` role stays meaningful once "linked to a
-  financial membership" exists.
+
+Answered 2026-07-18: the Keycloak↔Person linking rule and the fate of
+the self-claimed `member` role — see the decision above and CR-006
+(linking is provision-time; the claimed role stays as informal
+self-description, with self-serve gated on the link).
