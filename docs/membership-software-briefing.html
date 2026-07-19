@@ -1,0 +1,397 @@
+<title>Membership software — committee briefing</title>
+<style>
+  :root {
+    /* Heritage ledger palette — warm archival paper, ink, brass & ledger-green */
+    --paper:      #FBFAF6;
+    --paper-2:    #F4F1E8;
+    --card:       #FFFFFF;
+    --ink:        #23261F;
+    --ink-soft:   #565A4E;
+    --hair:       #E3DECF;
+    --hair-strong:#CFC7AF;
+    --accent:     #3B6B57;   /* ledger green */
+    --accent-ink: #2C503F;
+    --brass:      #9A7420;   /* aged brass — our-solution highlight */
+    --brass-wash: #F6EFDC;
+    --good:       #3B6B57;
+    --warn:       #A6741B;
+    --miss:       #B24A3B;
+    --shadow:     0 1px 2px rgba(35,38,31,.05), 0 8px 28px rgba(35,38,31,.06);
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:#181A15; --paper-2:#1F221B; --card:#20231C; --ink:#ECE9DC; --ink-soft:#A7A692;
+      --hair:#33372C; --hair-strong:#454A3A; --accent:#7FBFA2; --accent-ink:#9FD2B8;
+      --brass:#D8B25A; --brass-wash:#2A2617;
+      --good:#7FBFA2; --warn:#D8B25A; --miss:#E0897A;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#181A15; --paper-2:#1F221B; --card:#20231C; --ink:#ECE9DC; --ink-soft:#A7A692;
+    --hair:#33372C; --hair-strong:#454A3A; --accent:#7FBFA2; --accent-ink:#9FD2B8;
+    --brass:#D8B25A; --brass-wash:#2A2617;
+    --good:#7FBFA2; --warn:#D8B25A; --miss:#E0897A;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+  :root[data-theme="light"] {
+    --paper:#FBFAF6; --paper-2:#F4F1E8; --card:#FFFFFF; --ink:#23261F; --ink-soft:#565A4E;
+    --hair:#E3DECF; --hair-strong:#CFC7AF; --accent:#3B6B57; --accent-ink:#2C503F;
+    --brass:#9A7420; --brass-wash:#F6EFDC;
+    --good:#3B6B57; --warn:#A6741B; --miss:#B24A3B;
+    --shadow:0 1px 2px rgba(35,38,31,.05), 0 8px 28px rgba(35,38,31,.06);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .page {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    padding: clamp(20px, 5vw, 64px) 20px 72px;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; }
+
+  /* ---- Masthead ---- */
+  .eyebrow {
+    font-size: 12px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--accent-ink); font-weight: 650;
+    display: flex; align-items: center; gap: 12px; margin-bottom: 18px;
+  }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--hair-strong); }
+  h1 {
+    font-family: var(--serif); font-weight: 600;
+    font-size: clamp(30px, 5vw, 46px); line-height: 1.08; letter-spacing: -.01em;
+    margin: 0 0 14px; text-wrap: balance;
+  }
+  .standfirst {
+    font-size: clamp(16px, 2.2vw, 19px); color: var(--ink-soft);
+    max-width: 62ch; margin: 0 0 20px;
+  }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13px; color: var(--ink-soft);
+    padding-top: 16px; border-top: 1px solid var(--hair);
+  }
+  .meta b { color: var(--ink); font-weight: 600; }
+
+  /* ---- Bottom line box ---- */
+  .verdict {
+    margin: 34px 0 40px; background: var(--card); border: 1px solid var(--hair-strong);
+    border-left: 4px solid var(--accent); border-radius: 10px; box-shadow: var(--shadow);
+    padding: clamp(20px, 3.5vw, 30px);
+  }
+  .verdict h2 {
+    font-family: var(--sans); font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent-ink); margin: 0 0 12px; font-weight: 700;
+  }
+  .verdict p { margin: 0 0 12px; font-size: 16.5px; }
+  .verdict p:last-child { margin-bottom: 0; }
+  .verdict strong { color: var(--ink); }
+
+  /* ---- Section ---- */
+  section { margin: 44px 0 0; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+  .sec-num {
+    font-family: var(--serif); font-size: 15px; color: var(--brass); font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  h3 {
+    font-family: var(--serif); font-weight: 600; font-size: clamp(21px, 3vw, 27px);
+    margin: 0; letter-spacing: -.01em;
+  }
+  .sec-intro { color: var(--ink-soft); margin: 8px 0 22px; max-width: 68ch; }
+
+  /* ---- Table ---- */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--hair-strong); border-radius: 10px; box-shadow: var(--shadow); }
+  table { width: 100%; border-collapse: collapse; min-width: 720px; background: var(--card); font-size: 14.5px; }
+  thead th {
+    text-align: left; font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--ink-soft); font-weight: 650; padding: 14px 16px; background: var(--paper-2);
+    border-bottom: 1px solid var(--hair-strong); white-space: nowrap;
+  }
+  thead th.num, tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody td { padding: 14px 16px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  .prod { font-weight: 650; color: var(--ink); white-space: nowrap; }
+  .origin { font-size: 12px; color: var(--ink-soft); display: block; margin-top: 2px; font-weight: 400; }
+  .note-cell { color: var(--ink-soft); font-size: 13.5px; }
+  .cost { font-weight: 650; white-space: nowrap; }
+  .rowus { background: var(--brass-wash); }
+  .rowus td { border-bottom-color: var(--hair-strong); }
+  .rowus .prod { color: var(--brass); }
+  .tag-ours {
+    display: inline-block; font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--brass); border: 1px solid var(--brass); border-radius: 4px;
+    padding: 1px 6px; margin-top: 5px; font-weight: 700;
+  }
+  .fee-hi { color: var(--miss); font-weight: 600; }
+
+  /* feature marks */
+  .mk { font-weight: 700; }
+  .mk.y { color: var(--good); }
+  .mk.n { color: var(--miss); }
+  .mk.p { color: var(--warn); }
+
+  /* ---- Two-col reasons ---- */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .cols { grid-template-columns: 1fr; } }
+  .reason {
+    background: var(--card); border: 1px solid var(--hair); border-radius: 9px; padding: 18px 20px;
+  }
+  .reason h4 {
+    margin: 0 0 6px; font-size: 15.5px; font-weight: 650; color: var(--ink);
+    display: flex; align-items: center; gap: 9px;
+  }
+  .reason h4 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+  .reason p { margin: 0; font-size: 14px; color: var(--ink-soft); }
+  .reason.future { border-color: var(--brass); background: var(--brass-wash); }
+  .reason.future h4 .dot { background: var(--brass); }
+
+  ul.tight { margin: 6px 0 0; padding-left: 20px; }
+  ul.tight li { margin-bottom: 7px; color: var(--ink-soft); font-size: 14.5px; }
+  ul.tight li b { color: var(--ink); }
+
+  .callout-note {
+    margin-top: 18px; font-size: 14px; color: var(--ink-soft);
+    background: var(--paper-2); border-radius: 8px; padding: 14px 18px; border: 1px solid var(--hair);
+  }
+
+  footer {
+    margin-top: 52px; padding-top: 18px; border-top: 1px solid var(--hair);
+    font-size: 12.5px; color: var(--ink-soft); line-height: 1.7;
+  }
+  footer a { color: var(--accent-ink); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 14px 0 0; font-size: 12.5px; color: var(--ink-soft); }
+  .legend span { white-space: nowrap; }
+</style>
+
+<div class="page">
+  <div class="wrap">
+
+    <p class="eyebrow">🗃️ Committee briefing</p>
+    <h1>Our membership system, weighed against what we could have bought</h1>
+    <p class="standfirst">
+      A plain-English comparison of our in-house membership &amp; renewals system with the cheaper
+      products Australian associations commonly use — and the free open-source alternatives — costed
+      for a society of about 150 members.
+    </p>
+    <div class="meta">
+      <span><b>Prepared for</b> the Committee</span>
+      <span><b>Scenario</b> ~150 members · ~$30 renewals</span>
+      <span><b>Prices current</b> July 2026</span>
+    </div>
+
+    <div class="verdict">
+      <h2>The bottom line</h2>
+      <p>
+        The cheap headline options don't really fit us. <strong>TidyHQ's free tier is capped at 100
+        emails a month</strong> — not enough to email a 150-member society even once — so in practice
+        we'd be on its paid plan. The genuinely usable products cluster around
+        <strong>A$540 to A$2,000 a year</strong>, several taking a percentage cut of every renewal on top.
+      </p>
+      <p>
+        <strong>Xero integration is not a point of difference</strong> — several products have it, the
+        best of them New Zealand-made (Hello Club, Friendly Manager, ClubHub). What our own system buys
+        us is <strong>fit, ownership and freedom</strong>: it works exactly the way our constitution
+        does, keeps members' data in our hands with no per-member fees or transaction rake, runs on
+        little more than hosting — and, crucially, <strong>we can keep extending it as new needs come
+        up</strong> rather than waiting on a vendor's roadmap.
+      </p>
+    </div>
+
+    <!-- 1. Pricing table -->
+    <section>
+      <div class="sec-head"><span class="sec-num">01</span><h3>What each option would cost us</h3></div>
+      <p class="sec-intro">
+        Annual figures are the subscription for ~150 members, converted to Australian dollars where the
+        vendor prices in US dollars (≈1.55, approximate). The <b>transaction fee</b> column is what gets
+        skimmed off every online payment <em>on top of</em> Stripe's normal bank fee — at our size that
+        can matter as much as the subscription.
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th class="num">Approx. per year</th>
+              <th>Extra fee per payment</th>
+              <th>Xero integration</th>
+              <th>What to know</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="rowus">
+              <td>
+                <span class="prod">Our own system</span>
+                <span class="origin">Built for us</span>
+                <span class="tag-ours">In-house</span>
+              </td>
+              <td class="num cost">Hosting only<br><span class="origin">(modest)</span></td>
+              <td><span class="mk y">None</span><br><span class="note-cell">just Stripe 1.7% + 30c</span></td>
+              <td><span class="mk y">✓ Yes</span></td>
+              <td class="note-cell">Full data ownership, no per-member cost, exact fit to our rules.</td>
+            </tr>
+            <tr>
+              <td><span class="prod">TidyHQ</span><span class="origin">🇦🇺 Australian</span></td>
+              <td class="num cost">A$890<br><span class="origin">(free tier too limited)</span></td>
+              <td><span class="note-cell">+1% + 20c (paid plan)</span></td>
+              <td><span class="mk n">✗ No</span></td>
+              <td class="note-cell">Free tier caps at <b>100 emails/month</b> — can't email 150 members even once — so we'd need the paid plan.</td>
+            </tr>
+            <tr>
+              <td><span class="prod">Join It</span><span class="origin">🇺🇸 US</span></td>
+              <td class="num cost">~A$540</td>
+              <td><span class="fee-hi">+3.0%</span> <span class="note-cell">service fee</span></td>
+              <td><span class="mk n">✗ No</span></td>
+              <td class="note-cell">Cheapest sticker price, but the highest cut of each renewal.</td>
+            </tr>
+            <tr>
+              <td><span class="prod">Member Jungle</span><span class="origin">🇦🇺 Australian</span></td>
+              <td class="num cost">~A$1,440 +GST</td>
+              <td><span class="note-cell">Stripe only</span></td>
+              <td><span class="mk n">✗ No</span></td>
+              <td class="note-cell">Includes a website &amp; branded app. Mandatory setup fee A$399–1,499.</td>
+            </tr>
+            <tr>
+              <td><span class="prod">Wild Apricot</span><span class="origin">🇨🇦 Canada</span></td>
+              <td class="num cost">~A$1,490</td>
+              <td><span class="fee-hi">+20%</span> <span class="note-cell">on sub if using Stripe</span></td>
+              <td><span class="mk n">✗ No</span></td>
+              <td class="note-cell">Bills by <em>contacts</em>, not members — lapsed members &amp; event guests count, so cost creeps up.</td>
+            </tr>
+            <tr>
+              <td><span class="prod">Hello Club</span><span class="origin">🇳🇿 New Zealand</span></td>
+              <td class="num cost">~A$1,970</td>
+              <td><span class="note-cell">Stripe only</span></td>
+              <td><span class="mk y">✓ Yes</span></td>
+              <td class="note-cell">Auto-syncs invoices &amp; payments to Xero. Cheapest tier caps at 100 members, so 150 forces the dearer plan.</td>
+            </tr>
+            <tr>
+              <td><span class="prod">Friendly Manager</span><span class="origin">🇳🇿 New Zealand</span></td>
+              <td class="num cost">~A$1,540</td>
+              <td><span class="note-cell">Stripe only</span></td>
+              <td><span class="mk y">✓ Yes</span></td>
+              <td class="note-cell">Free two-way Xero sync of all transactions. The NZ$139/mo tier covers up to 250 members.</td>
+            </tr>
+            <tr>
+              <td><span class="prod">ClubHub</span><span class="origin">🇳🇿 New Zealand</span></td>
+              <td class="num cost">~A$970<br><span class="origin">(≈NZ$7/member)</span></td>
+              <td><span class="note-cell">Stripe only</span></td>
+              <td><span class="mk y">✓ Yes</span></td>
+              <td class="note-cell">Strong two-way link: member balances become Xero invoices; Xero-reconciled payments flow back. Priced per member.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="legend">
+        <span><b class="mk y">✓</b> has it</span>
+        <span><b class="mk n">✗</b> doesn't</span>
+        <span><b class="mk p">~</b> partial</span>
+        <span>GST extra where noted · figures re-checked July 2026</span>
+      </p>
+    </section>
+
+    <!-- 2. Open source -->
+    <section>
+      <div class="sec-head"><span class="sec-num">02</span><h3>The free, open-source route</h3></div>
+      <p class="sec-intro">
+        Two mature open-source systems could, in principle, run our membership for no licence fee. Both
+        are the same kind of thing we built ourselves — self-hosted, data owned, Stripe-capable — which
+        makes them the fairest "did we need to build our own?" comparison.
+      </p>
+      <div class="cols">
+        <div class="reason">
+          <h4><span class="dot"></span>Tendenci</h4>
+          <p>A purpose-built association system on the same technology family as ours (Python/Postgres),
+          free to self-host, with Stripe and recurring renewals. Its managed-hosting option, however,
+          runs ~A$310+/month — dearer than TidyHQ. The catch with self-hosting is identical to ours:
+          it needs someone technical to keep it running.</p>
+        </div>
+        <div class="reason">
+          <h4><span class="dot"></span>CiviCRM</h4>
+          <p>The best-known open-source system for non-profits — no member cap, no monthly fee, with
+          renewal reminders and a Stripe add-on. But it rides on top of a WordPress or Drupal website
+          and needs ongoing technical upkeep. Powerful, but a bigger machine than a 150-member society
+          usually wants to feed.</p>
+        </div>
+      </div>
+      <p class="callout-note">
+        <b>The honest point:</b> if we were starting today with "we want open-source and self-hosted,"
+        Tendenci or CiviCRM would deserve a serious trial before writing any code. Both, however, are
+        large generic systems we'd have to configure <em>down</em> to fit — where ours already fits — and
+        each still needs a technical hand to keep running, just as ours does.
+      </p>
+    </section>
+
+    <!-- 3. Why keep ours -->
+    <section>
+      <div class="sec-head"><span class="sec-num">03</span><h3>Why our own system still earns its place</h3></div>
+      <p class="sec-intro">
+        Xero aside, the case for continuing with what we've built rests on things the cheaper products
+        can't give us — and one that only grows in value over time.
+      </p>
+      <div class="cols">
+        <div class="reason">
+          <h4><span class="dot"></span>Built to our constitution</h4>
+          <p>Member-only voting, AGM-to-AGM committee terms, and no-login renewal links all work the way
+          <em>our</em> rules say — not a generic club template we'd bend to fit.</p>
+        </div>
+        <div class="reason">
+          <h4><span class="dot"></span>Xero on our own terms</h4>
+          <p>It produces a reconciliation journal that balances against a Stripe clearing account, at no
+          added cost. Xero itself isn't unique to us (the NZ products above have it too) — but ours is
+          tailored to exactly how our treasurer already works.</p>
+        </div>
+        <div class="reason">
+          <h4><span class="dot"></span>Our data, no metering</h4>
+          <p>Members' details stay in our hands. No per-member pricing, no "contact count" creep, no
+          20% surcharge for using our own payment provider.</p>
+        </div>
+        <div class="reason">
+          <h4><span class="dot"></span>Only the bank's fee</h4>
+          <p>Renewals carry Stripe's standard 1.7% + 30c and nothing more — no platform taking an extra
+          1–3% of every membership payment.</p>
+        </div>
+      </div>
+
+      <div class="cols" style="margin-top:16px;">
+        <div class="reason future" style="grid-column: 1 / -1;">
+          <h4><span class="dot"></span>It grows with us — the freedom to add what we need next</h4>
+          <p style="font-size:14.5px;">
+            Because we own it, we can keep extending it as new needs surface, on our own timetable and at
+            no per-feature licence cost. A concrete example already within reach: a
+            <b style="color:var(--ink)">members-only area on our website</b> — protected sign-ins built
+            on the very same secure login system (Keycloak) our membership system already runs, so
+            members would use one account across both. That kind of enhancement simply isn't on offer
+            with a fixed off-the-shelf product; with ours it's a natural next step rather than a wait for
+            a vendor's roadmap.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Recommendation -->
+    <section>
+      <div class="sec-head"><span class="sec-num">04</span><h3>In short</h3></div>
+      <ul class="tight">
+        <li><b>No off-the-shelf product is a clear bargain for us:</b> TidyHQ's free tier can't send enough email, and the usable plans run A$540–2,000/year, several skimming a percentage of every renewal.</li>
+        <li><b>Xero integration isn't the deciding factor</b> — several products (especially the NZ ones) offer it, so we shouldn't lean on it as our reason.</li>
+        <li><b>Our system wins on fit, data ownership and the lowest ongoing cost</b> — hosting only, no per-member fees, no transaction rake.</li>
+        <li><b>Its real long-term advantage is extensibility:</b> we can keep shaping it to the society (starting with a members-only web area) instead of paying more each year for someone else's fixed feature set.</li>
+      </ul>
+    </section>
+
+    <footer>
+      Prices and features re-checked July 2026 and change frequently — treat figures as indicative and
+      re-confirm before any decision. Currency conversions are approximate (USD ≈1.55, NZD ≈0.92 to AUD).
+      Sources include the vendors' own pricing pages and Xero App Store listings: TidyHQ, Member Jungle,
+      Hello Club, Friendly Manager, ClubHub, Wild Apricot, Join It, Tendenci and CiviCRM.
+    </footer>
+
+  </div>
+</div>
