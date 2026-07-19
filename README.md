@@ -8,6 +8,7 @@ A Tomcat/Jersey/Keycloak webapp (from webapp-template).
 - Server details and Keycloak primer: [server/README.md](server/README.md)
 - Deployment: [server/deploy/README.md](server/deploy/README.md)
 - Workflow: [docs/change-requests/](docs/change-requests/)
+- Adapting MemberRoll to your organisation: [docs/fork-philosophy.md](docs/fork-philosophy.md) (worked example: [docs/forks/](docs/forks/))
 
 Dev loop:
 
