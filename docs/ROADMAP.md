@@ -69,7 +69,9 @@ decisions and the planned change-request sequence; individual CRs in
 - Bank-feed / statement-CSV reconciliation (admin marks transfers
   manually).
 - Events, volunteering, shop sales, donation (DGR) receipting,
-  accounting exports (Xero), SMS.
+  accounting exports (Xero), SMS. *(Partially revisited 2026-07-19:
+  CR-015 proposes a categorised reconciliation export the treasurer
+  books from — a Xero API integration stays out.)*
 - Member self-service editing of contact details (view + pay only in
   v1).
 - WordPress integration beyond a link from the society website.
@@ -92,6 +94,7 @@ data too) → **Committed**.
 | 006 | Member self-serve | Implemented (2026-07-18, verified) | Keycloak-linked "my membership" page, pay from there; register-push account provisioning; retired the NotesResource placeholder |
 | 007 | Public application form | Planned (pre-proposal notes 2026-07-18) | New-member APPLIED workflow with committee approval — constitutional constraints (clause 3: committee decision, 28-day payment window, no money at application) recorded in the CR doc ahead of the proposal; entrance-fee question deferred |
 | 008 | Production deployment | Implemented (2026-07-19, local half verified) | Go-live for the Yass instance: close the deploy-asset drift (post-CR-001 env in prod compose, both databases in backup.sh, realm smtpServer render, matrix runnable against the local smoke), live Stripe keys + webhook, Exchange Online mail (app via CR-014 page, Keycloak via console) with SPF/DKIM verified, real member-list import + go-live runbook, backup/restore drill. See [008-production-deployment.md](change-requests/008-production-deployment.md) — society decisions recorded 2026-07-19 (domain members.yasshistory.org.au, prices unchanged, secretary@ mailbox, provisioning deferred); still pending: society Stripe account + operator access, SMTP AUTH enablement |
+| 015 | Reconciliation export (out-of-band) | Proposed | Xero-ready payment categorisation: date-range/method/unreconciled-only CSV with per-payment allocation split + net totals by type, JSON preview, and an explicit bounded mark-reconciled step — the first consumer of V1's `reconciliation_status` column. No Xero API, no account codes, no schema change; Stripe fee/payout-id capture recorded as the follow-up. Independent of 007/011; useful from the first live payout |
 | 009 | UI polish (out-of-band) | Verified · committed | Pico CSS baseline across all static pages, dialog-based forms, person picker, status badges — orthogonal to the sequence. Implementation order decided 2026-07-18: 009 lands before 004, so the public pay page starts on the new baseline |
 | 010 | Admin "new member" page (out-of-band) | Verified · committed | One-flow walk-in signup: person → household (person as primary contact) → membership type → second-person dialog for HOUSEHOLD; composite atomic endpoint; first consumer of membership_type min/max people. After 009; independent of 004 |
 | 011 | Constitutional register compliance (out-of-band) | Proposed | Gaps from the 2026-07-18 constitution review, one stage each: register-of-members export (clause 4), clause 4(5) suppression flag, under-18 AGM exclusion (clause 34), documented manual suspension procedure (clause 7). Independent of 007/008 |
