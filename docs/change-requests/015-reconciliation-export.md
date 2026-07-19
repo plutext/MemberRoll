@@ -1,7 +1,11 @@
 # Change Request 015: Reconciliation Export — Xero-ready payment categorisation
 
 **Status:** Proposed
-**Date:** 2026-07-19
+**Date:** 2026-07-19 (revised same day at review: the Xero side is now
+built around the clearing-account + manual-journal pattern — §3 — and
+the CR gains an optional ready-to-import journal CSV; the original
+"split each payout line by hand in Xero" workflow moved to the
+rejected-alternatives list)
 **Builds on:** [001](001-membership-register-data-layer.md) (the `payment`
 table — including `reconciliation_status`, designed then and unused by
 any code since: this CR is the consumer it was waiting for — and typed
@@ -45,8 +49,10 @@ A treasurer sitting down with the Xero bank feed can, in minutes:
 1. pull a CSV of payments for a chosen window (optionally: one method,
    or only not-yet-reconciled payments) with each payment's allocation
    split in columns, plus net totals by allocation type;
-2. split/code the corresponding bank lines in Xero by transcribing the
-   totals (or line-by-line for bank transfers, matched on reference);
+2. book the Stripe side with **one manual journal** (typed from the
+   summary totals, or imported from the generated journal CSV) against
+   a clearing account the bank feed's payout lines drain into (§3) —
+   bank transfers stay line-by-line, matched on the reference column;
 3. mark the exported payments **reconciled**, so next month's
    "unreconciled only" export starts where this one ended — no
    remembered dates, no double-booking.
@@ -88,6 +94,29 @@ All admin-only (`@RolesAllowed("admin")`), on `AdminPaymentsResource`
   gross}}`. The UI shows this before download (no client-side CSV
   parsing), and it carries `maxPaymentId` for the mark step.
 
+- **`GET /api/admin/payments/export/xero-journal.csv`** — the same
+  filters, emitting Xero's **manual-journal import format** (one line
+  per journal row: Narration, Date, AccountCode, TaxRate, Amount —
+  positive = debit, negative = credit; a shared Narration + Date
+  groups the lines into one journal on import). The journal it writes
+  is §3's: debit the clearing account for the gross Stripe total,
+  credit each income account its net type total (a refund-heavy
+  window flips a line's sign naturally — Xero reads a negative amount
+  as the other side). Only STRIPE-method payments belong in this file
+  (the clearing pattern is a payout pattern); the endpoint forces
+  `method=STRIPE` regardless of the filter given. Answers **409 until
+  the account mapping below is saved** — never a guessed account code.
+
+- **`GET`/`PUT /api/admin/payments/xero-account-mapping`** — one
+  `app_setting` row (`xero_accounts`, a JSON blob: account codes for
+  membership / journal / donation / other income and the clearing
+  account, plus the tax-rate string, e.g. `BAS Excluded`). The CR-014
+  `smtp_settings` pattern exactly: settings change as a unit, one
+  atomic value, no migration; absent = the journal CSV feature is
+  dormant and everything else works. The codes are **opaque strings**
+  — the server validates presence, not chart-of-accounts sense; a
+  wrong code fails loudly at Xero's import, the right place.
+
 - **`POST /api/admin/payments/reconcile`** with
   `{from?, to?, method?, maxPaymentId}` — sets
   `reconciliation_status = 'RECONCILED'` on **UNRECONCILED** payments
@@ -108,25 +137,93 @@ All admin-only (`@RolesAllowed("admin")`), on `AdminPaymentsResource`
 Next to the CR-003 exports (same page the treasurer already uses):
 from/to date inputs, a method select (All/Stripe/Bank transfer/…), an
 "unreconciled only" checkbox (default on), a **Preview** showing the
-JSON summary (count + net totals by type), **Download CSV**, and —
-enabled only after a preview — **Mark these reconciled**, which posts
-with the previewed `maxPaymentId` and confirms with the marked count.
+JSON summary (count + net totals by type), **Download CSV**,
+**Download Xero journal** (shown only when the account mapping is
+saved; an **Accounts…** button opens the mapping dialog — the CR-014
+settings-form pattern), and — enabled only after a preview — **Mark
+these reconciled**, which posts with the previewed `maxPaymentId` and
+confirms with the marked count.
 Payments already listed per-membership in the admin UI gain a small
 RECONCILED badge (the CR-009 `.badge` pattern) so the state is visible
 where payments are edited.
 
-### 3. What the treasurer does in Xero (documented, not coded)
+### 3. The Xero pattern: clearing account + monthly manual journal
 
-A short section in the user manual, not software: optionally enable
-Xero's **native Stripe feed** (Stripe as its own account in Xero,
-showing gross charges and fees — solves the payout-untangling half
-with zero code from us); code the gross side from this CR's export
-totals (membership income / donations / journal / fees accounts);
-bank transfers coded line-by-line against the export's reference
-column. MemberRoll deliberately knows **no Xero account codes** — the
-mapping lives in the treasurer's head or Xero's own rules, so a chart
-of accounts change never touches the app (the CR-014 "server knows no
-vendors" principle).
+This is the load-bearing design of the CR — the software above exists
+to feed it. It goes in the user manual as the documented procedure;
+one-time Xero setup plus a monthly rhythm.
+
+**Why a clearing account at all.** Xero manual journals cannot post to
+bank-type accounts — a deliberate Xero rule (bank balances must come
+from statements). So the money's arrival and its categorisation are
+forced into two separate, individually simple steps, hinged on an
+intermediate account:
+
+**One-time setup (treasurer, in Xero):**
+
+- Add a **"Stripe Clearing"** account — type *Current Asset* (not
+  bank-type; that's what makes it journal-able).
+- Add a **bank rule** on the society's bank account: any line from
+  Stripe (the payout descriptions are uniform) → code the whole line
+  to Stripe Clearing. No splitting, no judgement — so the rule can do
+  it, and the bank-feed side of Stripe reconciliation becomes
+  one-click confirmations.
+- Have the income accounts ready (membership, donations, journal — and
+  a Stripe-fees expense account), and enter their codes plus the
+  clearing account's into MemberRoll's account mapping (§1).
+
+**Monthly rhythm:**
+
+1. Bank lines: the rule has coded every Stripe payout to the clearing
+   account; confirm them. (Bank transfers are unaffected by any of
+   this — they remain individual lines, coded line-by-line against the
+   detail export's reference column.)
+2. In MemberRoll: preview the window (unreconciled STRIPE payments),
+   download the journal CSV, mark reconciled.
+3. In Xero: import the journal (Accounting → Manual Journals →
+   Import), review, post. Shape, using the summary's numbers:
+
+   | Line | Debit | Credit |
+   |---|---|---|
+   | Stripe Clearing | gross total | |
+   | Membership income | | net membership total |
+   | Donation income | | net donation total |
+   | Journal income | | net journal total |
+   | Stripe fees (expense) | month's fees | |
+   | Stripe Clearing | | month's fees |
+
+   (The fee pair is the treasurer's own line until the fee-capture
+   follow-up lands — see below. A refund-heavy window can flip an
+   income line to the debit side; the generated CSV's signed amounts
+   already say so.)
+4. **Read the clearing account's balance. Zero is the proof.** The
+   bank feed drained *net payouts* out of clearing; the journal pushed
+   *gross − fees* in. If every payment was recorded, every payout
+   banked, and the fees right, they cancel exactly — and a non-zero
+   remainder is localised to one month's window with a known set of
+   payments (the export) and payouts (the bank statement) to compare,
+   instead of being smeared invisibly across dozens of hand-split
+   bank lines. This audit property is the pattern's real payoff; the
+   reduced clicking is a bonus.
+
+**Fees, until the follow-up.** MemberRoll doesn't yet know Stripe's
+fees, so the generated journal covers the gross splits and the
+clearing account is left holding exactly the window's fees. Two
+equally fine ways to clear it: the treasurer adds the fee pair to the
+imported journal from Stripe's dashboard total for the month, or the
+society enables **Xero's native Stripe feed** (Stripe as its own
+account in Xero, gross charges + fees) and lets it book the fees. With
+the fee/payout capture follow-up built, the generated journal includes
+the fee lines itself and clearing zeroes with no hands at all.
+
+**On account codes in the app.** CR-014's "the server knows no
+vendors" principle bends here, deliberately and narrowly: generating
+an importable journal needs the society's codes, so they live in one
+admin-edited settings blob as opaque strings. The server still knows
+no Xero semantics — no API, no validation of the chart of accounts, no
+behaviour keyed on what a code means. A chart change is a settings
+edit, never a code change; with the mapping unset, the feature is
+dormant and the plain CSV workflow stands alone.
 
 ## Why not alternatives
 
@@ -140,6 +237,13 @@ vendors" principle).
 - **Auto-marking payments reconciled at export time**: an export is a
   read; making it a write means a curious click silently consumes the
   "what's new" state. Separate, explicit, bounded mark step instead.
+- **Splitting each payout bank line by hand in Xero** (this CR's own
+  first draft): works, but every payout is a multi-way split done
+  under time pressure, errors hide inside individual lines, and
+  nothing ever proves the month reconciled. The clearing-account
+  pattern replaces N splits with one rule + one journal and adds the
+  zero-balance proof — same data, strictly better ergonomics.
+  Superseded at review, same day.
 - **Importing the bank statement to match from our side**: the roadmap
   already rejected bank-feed reconciliation; this CR keeps the match
   in Xero where the bank data already is.
@@ -149,15 +253,18 @@ vendors" principle).
 
 ## What this CR does NOT do
 
-- **No Stripe fee / payout-id capture** — the recorded follow-up. The
-  webhook event carries neither (the fee lives on the balance
-  transaction, the payout id only exists at T+2), so capturing them
-  means a second Stripe API surface (`payout.paid` webhook or per-
-  payment balance-transaction fetch). With them, the export could
-  group exactly by payout and pre-compute the net-to-the-cent bank
-  line match. Design the columns so this slots in (payout id would
-  become a grouping column); build it only if the treasurer finds the
-  date-window workflow insufficient.
+- **No Stripe fee / payout-id capture** — the recorded follow-up, now
+  with a sharper payoff than when first noted: the webhook event
+  carries neither (the fee lives on the balance transaction, the
+  payout id only exists at T+2), so capturing them means a second
+  Stripe API surface (`payout.paid` webhook or per-payment
+  balance-transaction fetch). With them, the generated journal gains
+  its fee lines and §3's clearing account zeroes with no manual fee
+  entry — the fully mechanical month. Until then the fee residue is
+  the treasurer's one hand-entered number. Design the columns so this
+  slots in (payout id as a grouping column, fees as a summary line);
+  build it when the treasurer's first few real months say it's worth
+  a second Stripe surface.
 - **No Xero API, no account codes, no DGR donation receipts** (the
   roadmap's DGR caution stands: confirm the society's DGR status
   before donations become an official document anywhere).
@@ -187,25 +294,44 @@ allocation, spread across two received dates.
    unmarked; re-POST marks 0 (idempotence); `unreconciledOnly=true`
    export then excludes the marked rows and includes the straggler;
    psql confirms exactly the expected rows flipped RECONCILED.
-6. Validation: `maxPaymentId` absent → 400; bad dates → 400.
-7. Regression: the whole matrix stays green (dev invocation).
-8. Browser walkthrough (Playwright + eyeball): preview totals render,
-   CSV downloads and opens, mark button gated on preview, confirmation
-   count, RECONCILED badge appears on the payment list.
+6. Journal CSV: 409 with no mapping saved; after PUT mapping, the file
+   **balances** (sum of signed amounts = 0 is asserted arithmetically),
+   carries one shared Narration+Date, uses exactly the mapped codes
+   and tax-rate string, includes only STRIPE payments even when called
+   with `method=BANK_TRANSFER`, and a refund-dominated fixture window
+   flips the affected income line's sign. Mapping endpoints get the
+   standing role-gate triple; PUT with a missing code → 400; GET
+   echoes the blob.
+7. Validation: `maxPaymentId` absent → 400; bad dates → 400.
+8. Regression: the whole matrix stays green (dev invocation).
+9. Browser walkthrough (Playwright + eyeball): preview totals render,
+   CSV downloads and opens, Accounts… dialog saves and reveals the
+   journal button, mark button gated on preview, confirmation count,
+   RECONCILED badge appears on the payment list. Real-Xero import of
+   a generated journal file is a go-live-time check with the
+   treasurer (records in Results when it happens), not a dev-loop
+   gate.
 
 Matrix rows land as `CR15-*` in `verify-matrix.sh`, self-cleaning
 (fixtures keyed by `$$`; reconciliation marks are confined to fixture
 payments — the mark endpoint's filters make that natural).
 
-## Open questions
+## Open questions (for the treasurer)
 
+- Account codes for membership / donations / journal / other income,
+  the clearing account, and fees — and whether they're happy to add
+  the Stripe Clearing account + bank rule per §3.
+- The tax-rate string for journal lines (expected: `BAS Excluded` for
+  a non-GST-registered society — confirm registration status; if the
+  society IS GST-registered this CR's journal needs a per-type tax
+  answer before building).
 - Does the treasurer want a per-period membership-income split (income
   by 2025-26 vs 2026-27 within one window — matters at rollover when
   both years' payments arrive together)? The `Period` column carries
-  the data; the question is whether the summary block should subtotal
-  by it. Cheap to add now if wanted.
-- Confirm with the treasurer that trailing summary rows in the CSV are
-  helpful rather than annoying (the alternative: two files, or
+  the data; the question is whether the summary block and the journal
+  should subtotal by it. Cheap to add now if wanted.
+- Confirm that trailing summary rows in the detail CSV are helpful
+  rather than annoying (the alternative: two files, or
   summary-in-UI only).
 
 ## Results
