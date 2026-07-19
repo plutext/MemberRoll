@@ -318,21 +318,27 @@ payments — the mark endpoint's filters make that natural).
 
 ## Open questions (for the treasurer)
 
-- Account codes for membership / donations / journal / other income,
-  the clearing account, and fees — and whether they're happy to add
-  the Stripe Clearing account + bank rule per §3.
-- The tax-rate string for journal lines (expected: `BAS Excluded` for
-  a non-GST-registered society — confirm registration status; if the
-  society IS GST-registered this CR's journal needs a per-type tax
-  answer before building).
-- Does the treasurer want a per-period membership-income split (income
-  by 2025-26 vs 2026-27 within one window — matters at rollover when
-  both years' payments arrive together)? The `Period` column carries
-  the data; the question is whether the summary block and the journal
-  should subtotal by it. Cheap to add now if wanted.
-- Confirm that trailing summary rows in the detail CSV are helpful
-  rather than annoying (the alternative: two files, or
-  summary-in-UI only).
+Answered 2026-07-19:
+
+- **Clearing account + bank rule: agreed** — the treasurer is happy to
+  add the Stripe Clearing account and the payout bank rule per §3.
+- **Not registered for GST** — so the journal's tax treatment is the
+  simple case: `BAS Excluded` on every line, and it becomes the
+  mapping form's pre-filled default (still stored in the blob, still
+  editable — registration status can change; no code keys on it).
+
+Still open (none blocks implementation — the mapping is runtime
+config, and the two format questions have safe defaults):
+
+- The actual account codes for membership / donations / journal /
+  other income, the clearing account, and fees — entered into the
+  mapping form whenever they arrive; the journal export stays dormant
+  until then by design.
+- Per-period membership-income split in the summary/journal (matters
+  at rollover when two years' payments share a window). Default:
+  not subtotalled; the `Period` column carries the data either way.
+- Trailing summary rows in the detail CSV vs summary-in-UI only.
+  Default: trailing rows, clearly labelled.
 
 ## Results
 
