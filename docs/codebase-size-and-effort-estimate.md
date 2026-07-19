@@ -16,10 +16,10 @@ Measured, git-tracked, non-generated source:
 | Shell | ~1,820 | of which `verify-matrix.sh` is **1,596** — the test harness |
 | Keycloak realm / compose / pom / deploy | ~740 | JSON + YAML + XML |
 | **Source total** | **~17,300** | |
-| Design docs (Markdown) | ~7,260 | 27 change-request / schema docs |
+| Design docs (Markdown) | ~7,870 | 30 change-request / schema / research docs (re-measured 2026-07-20 after the CR-016 + research docs landed; was ~7,260/27 when first written) |
 
-So **~17k lines of production/config/test code, plus ~7k lines of genuine
-engineering documentation** — call it ~24k lines of deliverable artifact.
+So **~17k lines of production/config/test code, plus ~8k lines of genuine
+engineering documentation** — call it ~25k lines of deliverable artifact.
 
 ## Why line-count understates this one
 
@@ -89,7 +89,8 @@ are exactly what AI compresses most).
 - **LOC is a weak proxy** — the estimate anchors on scope and integration
   count, not the line total.
 - **This codebase is unusually disciplined** (design-doc-first, a maintained
-  540-check matrix, insert-only ledgers). Most human teams under deadline would
+  600-check matrix — 602 on the dev stack, 540 on the prod-topology smoke
+  where test fixtures are stripped — insert-only ledgers). Most human teams under deadline would
   *cut* the docs and the matrix — landing at maybe 5–8 months but with a
   lower-quality, less-maintainable result. Matching *this* rigor is what pushes
   toward the upper end.
@@ -100,3 +101,59 @@ are exactly what AI compresses most).
 **Short version:** a realistic, defensible figure is **on the order of a
 person-year of skilled effort — roughly half a year of calendar time for a
 solid two-person team** to reach the same production-ready, documented state.
+
+## What actually happened — the record since repo inception
+
+*Added 2026-07-20; every figure below is measured from git history, not
+recalled.*
+
+The comparison the estimate above exists to enable:
+
+| | Old-school 2-person team (estimated) | This repo (measured) |
+|---|---|---|
+| Calendar time | ~4–7 months | **under 4 days** (first commit 2026-07-17 12:58 → 2026-07-20 06:43) |
+| Effort | ~8–14 person-months (≈170–290 person-days) | **≤4 long person-days** of one human, working with AI |
+| Commits | — | 40 (10 / 15 / 11 / 4 across the four days) |
+| Deliverable | the same target | ~17.3k source lines, ~7.9k doc lines, 600-check matrix, real member data imported, prod-topology smoke green 540/0 |
+
+Delivered in those four days: **thirteen change requests implemented and
+verified** — CR-001 (register data layer), 002 (import of the society's real
+member list), 003 (renewals + payments ledger), 004 (Stripe + magic links),
+005 (segment email), 006 (self-serve + Keycloak provisioning), 008 repo-side
+(production deployment, first-ever fully green smoke run), 009 (UI polish),
+010 (new-member wizard), 012 (receipts), 013 (committee register), 014 (SMTP
+settings), 015 (Xero reconciliation export) — each with its design doc
+written *first*, a scripted verification matrix extended and run green, and
+for UI work a browser walkthrough. Plus three proposals in review flight
+(007, 011, 016), a constitution compliance review, a competitor analysis,
+and the SMS research. 39 of the 40 commits carry an AI co-author trailer
+(Fable 5: 23, Opus 4.8: 15, Sonnet 5: 1); the human contribution was
+direction, design decisions (the voting-rights correction, the
+provision-time linking rule, the clearing-account pattern), manual
+walkthroughs (Stripe sandbox end-to-end), and society-side answers.
+
+Against the estimate's own numbers that is roughly a **40–70× reduction in
+person-days and a 30–50× compression of calendar time** — while *keeping*
+the docs-and-matrix rigor the caveats above say a human team under deadline
+would have been first to cut. That inversion is the finding worth stating
+plainly: with AI doing the writing, the documentation and the 600-check
+regression matrix were not a tax on velocity, they were what *made* the pace
+safe — each CR session could run to "matrix green + walkthrough recorded"
+because producing and re-running the harness cost minutes, not days.
+
+Honest deductions, same spirit as the caveats above:
+
+- **The identity foundation predates the repo.** The initial commit imported
+  ~1.9k lines of webapp-template (AuthFilter/JWKS, the hand-rolled PKCE
+  `auth.js`, the realm scaffold) plus the hard-won Keycloak operational
+  knowledge from a prior project — so the estimate's "identity + scaffold,
+  3–5 weeks" row was largely pre-paid, and several CLAUDE.md "bites" arrived
+  already documented. Discount the comparison accordingly: the in-repo build
+  is everything *except* that row (~15.4k of the 17.3k source lines).
+- **The human was not idle time-sliced across a team** — these were long,
+  focused days by someone who knew the domain (the society, its
+  constitution) and could answer design questions in minutes that would cost
+  a contracted team an email round-trip each.
+- **Not everything is done**: CR-008's on-instance half (DNS, live Stripe,
+  Exchange SMTP AUTH) waits on third parties — the residual is
+  organisational lead time, which AI does not compress.
