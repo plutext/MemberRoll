@@ -281,6 +281,37 @@ settings.html` adds the Microsoft 365 preset (a client-side form-filler — the
 server knows no vendors). Keycloak's own forgot-password mail stays a separate
 realm-config concern.
 
+CR-015 added the reconciliation export (Xero-ready payment categorisation) and
+is the FIRST and only writer of `payment.reconciliation_status` — the column
+CR-001 provisioned in V1 and left unused. `ReconciliationStore` reads the
+CR-001 `payment`/`payment_allocation` tables into one row per payment with the
+allocation split projected into MEMBERSHIP/JOURNAL/DONATION/OTHER columns
+(base rows materialised with `.list()` BEFORE the allocation query runs on the
+same handle, then folded — a mapper-side-effect during a lazy `.forEach` does
+NOT reliably mutate), and its `reconcile(handle,…)` is the bounded mark. The
+same `Filter` (from/to/method/unreconciledOnly) drives export and mark, and
+the `maxPaymentId` the export hands back bounds the mark so a payment recorded
+between export and mark is never swept in unseen — flipping this operational-
+state column is NOT a breach of the payment rows' insert-only discipline
+(corrections stay negative payments). All on `AdminPaymentsResource` (the
+payments surface, no new resource): the two reads
+(`export/reconciliation.csv` with a labelled trailing summary block +
+`export/reconciliation` JSON carrying `maxPaymentId`), `export/xero-journal.csv`
+(the §3 clearing-account journal — clearing +gross debit vs each income −net
+credit, so it BALANCES to 0 by construction; STRIPE forced regardless of the
+method param; **409 until the account mapping is saved**, never a guessed
+code), `GET`/`PUT xero-account-mapping` (one `xero_accounts` `app_setting`
+JSON blob of five OPAQUE codes + tax rate, the CR-014 pattern exactly — absent
+= journal feature dormant, plain CSV still works; `BAS Excluded` the GST-free
+default), and `POST reconcile`. `XeroAccounts.read` returns empty unless all
+five codes are present. UI: a Reconciliation card on the Renewals page
+(preview → download CSV → mark, the Xero-journal button shown only once the
+mapping is saved) plus a RECONCILED badge on the payment list. Deliberately
+NO Xero API and NO unmark endpoint (a mis-mark's remedy is the filterless
+export). The recorded follow-up — Stripe fee/payout-id capture — would let the
+generated journal include its fee lines and §3's clearing account zero with no
+hands.
+
 CR-008 readied production (docs/change-requests/008-production-deployment.md,
 go-live runbook included there): the deploy assets — frozen at CR-001 —
 caught up with the app. Prod compose now passes `PUBLIC_BASE_URL`

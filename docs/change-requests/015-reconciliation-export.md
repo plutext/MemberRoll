@@ -1,6 +1,6 @@
 # Change Request 015: Reconciliation Export — Xero-ready payment categorisation
 
-**Status:** Proposed
+**Status:** Implemented and verified (2026-07-19)
 **Date:** 2026-07-19 (revised same day at review: the Xero side is now
 built around the clearing-account + manual-journal pattern — §3 — and
 the CR gains an optional ready-to-import journal CSV; the original
@@ -342,4 +342,75 @@ config, and the two format questions have safe defaults):
 
 ## Results
 
-*(to be recorded during implementation)*
+**Implemented and verified 2026-07-19** (Opus 4.8, 1M).
+
+### What shipped
+
+- **`ReconciliationStore`** — the export query (one `Acc` per payment, base
+  rows materialised then allocations folded into the MEMBERSHIP/JOURNAL/
+  DONATION/OTHER columns + household/period sets) and the bounded `reconcile`
+  UPDATE. The same `Filter` (from/to/method/unreconciledOnly) drives both.
+- **`XeroAccounts`** — the `xero_accounts` `app_setting` blob (five opaque
+  codes + tax rate), `read()` returns empty unless all five codes present
+  (feature dormant → journal 409). CR-014's `smtp_settings` pattern exactly.
+- **`AdminPaymentsResource`** gained the two reads (`export/reconciliation.csv`
+  with the trailing summary block, `export/reconciliation` JSON), the
+  `export/xero-journal.csv` (STRIPE-forced, 409 without mapping, balanced by
+  construction — clearing +gross debit vs each income −net credit, zero lines
+  skipped), `GET`/`PUT xero-account-mapping`, and `POST reconcile`.
+- **`PaymentStore.Payment`** gained `reconciliationStatus` (list/find/attach +
+  `paymentJson`), surfaced as a **RECONCILED** badge on the payment list.
+- **UI** — the Reconciliation card on the Renewals page (from/to/method/
+  unreconciled-only, Preview, Download CSV, Accounts… dialog, Download Xero
+  journal shown only when mapped, Mark-gated-on-preview) in `index.html` +
+  `admin.js`.
+
+The treasurer's answers landed as built-in defaults: `BAS Excluded` prefills
+the mapping form's tax rate; the account codes stay blank until entered (the
+journal export is dormant until then, by design).
+
+### Verification
+
+- **Matrix**: 63 `CR15-*` rows, self-cleaning (2098/2099 windows unique to the
+  CR, every export/journal call passes `unreconciledOnly=true`, the block ends
+  by marking the whole window reconciled + dropping the mapping — a re-run
+  starts with zero unreconciled residue and no saved mapping so the 409 test
+  stays valid). Covers: the role-gate triple ×5 surfaces; validation
+  (`maxPaymentId` required, bad date/method 400); CSV header + content-type +
+  the mixed-payment split (45/10/5 → gross 60) + every-row split-sums-to-gross
+  + negative refund row + summary block; filters (narrow date, `method=STRIPE`
+  excludes bank, combined); the journal (409 → PUT mapping → **balances to
+  0.00** arithmetically, 4 lines, clearing debit = gross, membership credit,
+  tax rate every line, one shared narration, STRIPE forced even with
+  `method=BANK_TRANSFER`, and a refund-only April window flipping the
+  membership line to the debit side); reconcile (marks exactly the 5 ≤
+  `maxPaymentId`, a straggler recorded after preview survives, re-post marks 0,
+  the unreconciled window then shows only the straggler). **Whole matrix
+  PASS=602 FAIL=1** — the one failure (`27b list has testuser`) is the
+  pre-existing Keycloak-listing flake (the admin/users list caps at 50 and
+  testuser has been pushed past it by accumulated KC accounts in the long-lived
+  dev stack; testuser authenticates fine throughout), unrelated to this
+  additive CR.
+- **Browser (Playwright + eyeball)**: 17/17 — preview totals render
+  ($50.00 gross, membership $45.00, donation $5.00), CSV downloads and carries
+  the payment row, Accounts… dialog saves and reveals the journal button (tax
+  rate prefilled `BAS Excluded`), journal downloads, Mark gated on preview and
+  confirms "Marked 1 payment", and the **RECONCILED badge** lands on the
+  payment in its membership detail. `tmp/cr015-fixtures/cr015-walkthrough.js`.
+
+### A gotcha worth recording
+
+The matrix fixtures seed STRIPE payments via psql (positive STRIPE can't be
+POSTed — webhook-only). `psql -tAc "INSERT … RETURNING payment_id"` prints the
+value **and** the `INSERT 0 1` command tag, so a naive `$(…)` capture yields
+`"235\nINSERT 0 1"` — which then corrupts the dependent allocation inserts
+(they silently fail → the type columns read 0). `pay()` filters to the numeric
+line (`grep -oE '^[0-9]+' | head -1`).
+
+### Real-Xero import (deferred to go-live)
+
+Importing a generated journal into the society's actual Xero is a
+go-live-time check with the treasurer (records here when it happens), not a
+dev-loop gate — as the plan noted. The account codes and the two format
+questions (per-period subtotal, trailing-summary shape) remain the treasurer's
+to answer; the mapping form and the CSV work with the safe defaults until then.

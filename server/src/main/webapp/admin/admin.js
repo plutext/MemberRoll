@@ -866,7 +866,15 @@ function renderMembershipPayments(m) {
         const row = tbody.insertRow();
         row.insertCell().textContent = p.receivedDate;
         row.insertCell().textContent = dollars(p.amountCents);
-        row.insertCell().textContent = p.method;
+        const methodCell = row.insertCell();
+        methodCell.textContent = p.method;
+        if (p.reconciliationStatus === "RECONCILED") {
+            const badge = document.createElement("span");
+            badge.className = "badge badge-green";
+            badge.textContent = "RECONCILED";
+            badge.style.marginLeft = ".4rem";
+            methodCell.appendChild(badge);
+        }
         row.insertCell().textContent =
             p.allocations.map(a => `${a.type} ${dollars(a.amountCents)}`).join(", ");
         row.insertCell().textContent = p.recordedBy;
@@ -1146,6 +1154,124 @@ async function exportCsv(kind) {
     URL.revokeObjectURL(url);
 }
 
+// ---- reconciliation export (CR-015) -----------------------------------------
+
+let reconMaxPaymentId = null;
+
+// the filter shared by preview / CSV / journal / mark. unreconciledOnly is a
+// query flag (omitted = all payments); mark reads it from the checkbox too.
+function reconParams(includeUnreconciled = true) {
+    const p = new URLSearchParams();
+    const from = document.getElementById("recFrom").value;
+    const to = document.getElementById("recTo").value;
+    const method = document.getElementById("recMethod").value;
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    if (method) p.set("method", method);
+    if (includeUnreconciled && document.getElementById("recUnreconciled").checked) {
+        p.set("unreconciledOnly", "true");
+    }
+    return p;
+}
+
+async function previewReconciliation() {
+    const response = await registerCall(`/admin/payments/export/reconciliation?${reconParams()}`);
+    if (!response) return;
+    const r = await response.json();
+    reconMaxPaymentId = r.maxPaymentId;
+    const t = r.totals;
+    document.getElementById("recSummary").textContent = r.count
+        ? `${r.count} payment(s). Net gross ${dollars(t.gross)} — `
+            + `membership ${dollars(t.byType.MEMBERSHIP)}, journal ${dollars(t.byType.JOURNAL)}, `
+            + `donation ${dollars(t.byType.DONATION)}, other ${dollars(t.byType.OTHER)}.`
+        : "No payments in this window.";
+    // Mark is enabled only after a preview that returned a bound
+    document.getElementById("recMark").disabled = !r.count || r.maxPaymentId == null;
+}
+
+function downloadReconciliationCsv() {
+    downloadFrom(`/admin/payments/export/reconciliation.csv?${reconParams()}`, "reconciliation.csv");
+}
+
+function downloadXeroJournal() {
+    // the endpoint forces STRIPE; the date window still applies
+    downloadFrom(`/admin/payments/export/xero-journal.csv?${reconParams()}`, "xero-journal.csv");
+}
+
+async function markReconciled() {
+    if (reconMaxPaymentId == null) return;
+    if (!confirm(`Mark payments up to #${reconMaxPaymentId} in this window as reconciled?`)) return;
+    const body = {maxPaymentId: reconMaxPaymentId};
+    const from = document.getElementById("recFrom").value;
+    const to = document.getElementById("recTo").value;
+    const method = document.getElementById("recMethod").value;
+    if (from) body.from = from;
+    if (to) body.to = to;
+    if (method) body.method = method;
+    const response = await registerCall("/admin/payments/reconcile", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    if (!response) return;
+    const r = await response.json();
+    say(`Marked ${r.marked} payment(s) reconciled.`);
+    document.getElementById("recMark").disabled = true;
+    reconMaxPaymentId = null;
+    previewReconciliation(); // refresh: an unreconciled-only window now excludes them
+}
+
+// bearer auth means no cookie ride-along: fetch with the header, then save the Blob
+async function downloadFrom(path, filename) {
+    const response = await Auth.api(path);
+    if (!response) return;
+    if (!response.ok) return say(`Download failed (HTTP ${response.status}).`, true);
+    const url = URL.createObjectURL(await response.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+// the Xero journal button appears only when the account mapping is saved
+async function loadXeroMappingState() {
+    const response = await Auth.api("/admin/payments/xero-account-mapping");
+    if (!response || !response.ok) return null;
+    const m = await response.json();
+    document.getElementById("recJournal").hidden = !m.configured;
+    return m;
+}
+
+async function openXeroForm() {
+    const m = await loadXeroMappingState();
+    document.getElementById("xeMembership").value = (m && m.membershipCode) || "";
+    document.getElementById("xeJournal").value = (m && m.journalCode) || "";
+    document.getElementById("xeDonation").value = (m && m.donationCode) || "";
+    document.getElementById("xeOther").value = (m && m.otherCode) || "";
+    document.getElementById("xeClearing").value = (m && m.clearingCode) || "";
+    document.getElementById("xeTaxRate").value = (m && m.taxRate) || "BAS Excluded";
+    openDialog("xeroForm");
+}
+
+async function saveXeroMapping() {
+    const body = {
+        membershipCode: document.getElementById("xeMembership").value.trim(),
+        journalCode: document.getElementById("xeJournal").value.trim(),
+        donationCode: document.getElementById("xeDonation").value.trim(),
+        otherCode: document.getElementById("xeOther").value.trim(),
+        clearingCode: document.getElementById("xeClearing").value.trim(),
+        taxRate: document.getElementById("xeTaxRate").value.trim() || "BAS Excluded",
+    };
+    const response = await registerCall("/admin/payments/xero-account-mapping", {
+        method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    if (!response) return;
+    say("Saved Xero account mapping.");
+    closeDialog("xeroForm");
+    loadXeroMappingState();
+}
+
 // household detail "New membership": fill the period/type selects from the cache
 function fillPeriodTypeSelects() {
     const periodSel = document.getElementById("hmPeriod");
@@ -1202,6 +1328,15 @@ function wireRenewals() {
     on("exportAgm", () => exportCsv("agm-register.csv"));
     on("exportLabels", () => exportCsv("mailing-labels.csv"));
     on("exportFinancial", () => exportCsv("financial.csv"));
+    on("recPreview", previewReconciliation);
+    on("recDownload", downloadReconciliationCsv);
+    on("recAccounts", openXeroForm);
+    on("recJournal", downloadXeroJournal);
+    on("recMark", markReconciled);
+    on("xeSave", saveXeroMapping);
+    on("xeCancel", () => closeDialog("xeroForm"));
+    document.getElementById("recMark").disabled = true;
+    loadXeroMappingState(); // reveal the journal button if a mapping already exists
     on("mdRecordPayment", () => openDialog("paymentForm"));
     on("payAddLine", addAllocationLine);
     on("paySave", submitPayment);

@@ -40,8 +40,8 @@ final class PaymentStore {
 
     record Allocation(long id, String type, Long membershipId, String householdName, int amountCents) {}
     record Payment(long id, LocalDate receivedDate, int amountCents, String method, Long payerPersonId,
-                   String bankReference, String recordedBy, String recordedAt, String notes,
-                   List<Allocation> allocations) {}
+                   String bankReference, String reconciliationStatus, String recordedBy, String recordedAt,
+                   String notes, List<Allocation> allocations) {}
     record Page(List<Payment> payments, int total) {}
 
     /** A requested allocation line (membershipId required only for MEMBERSHIP). */
@@ -127,8 +127,8 @@ final class PaymentStore {
         return jdbi.withHandle(handle -> {
             var count = handle.createQuery("SELECT count(*) FROM payment p" + where);
             var page = handle.createQuery("SELECT p.payment_id, p.received_date, p.amount_cents,"
-                    + " p.payment_method, p.payer_person_id, p.bank_reference, p.recorded_by,"
-                    + " p.recorded_at, p.notes FROM payment p" + where
+                    + " p.payment_method, p.payer_person_id, p.bank_reference, p.reconciliation_status,"
+                    + " p.recorded_by, p.recorded_at, p.notes FROM payment p" + where
                     + " ORDER BY p.received_date DESC, p.payment_id DESC LIMIT :limit OFFSET :offset")
                     .bind("limit", limit).bind("offset", offset);
             bindFilters(count, membershipId, householdId, periodId);
@@ -139,7 +139,7 @@ final class PaymentStore {
                     rs.getDate("received_date").toLocalDate(),
                     rs.getInt("amount_cents"), rs.getString("payment_method"),
                     (Long) rs.getObject("payer_person_id"), rs.getString("bank_reference"),
-                    rs.getString("recorded_by"),
+                    rs.getString("reconciliation_status"), rs.getString("recorded_by"),
                     rs.getTimestamp("recorded_at").toInstant().toString(),
                     rs.getString("notes"), new ArrayList<>())).list();
             return new Page(attachAllocations(handle, payments), total);
@@ -155,14 +155,15 @@ final class PaymentStore {
     static Optional<Payment> find(Handle handle, long id) {
         Optional<Payment> base = handle.createQuery(
                 "SELECT p.payment_id, p.received_date, p.amount_cents, p.payment_method,"
-                + " p.payer_person_id, p.bank_reference, p.recorded_by, p.recorded_at, p.notes"
+                + " p.payer_person_id, p.bank_reference, p.reconciliation_status, p.recorded_by,"
+                + " p.recorded_at, p.notes"
                 + " FROM payment p WHERE p.payment_id = :id")
                 .bind("id", id)
                 .map((rs, ctx) -> new Payment(rs.getLong("payment_id"),
                         rs.getDate("received_date").toLocalDate(),
                         rs.getInt("amount_cents"), rs.getString("payment_method"),
                         (Long) rs.getObject("payer_person_id"), rs.getString("bank_reference"),
-                        rs.getString("recorded_by"),
+                        rs.getString("reconciliation_status"), rs.getString("recorded_by"),
                         rs.getTimestamp("recorded_at").toInstant().toString(),
                         rs.getString("notes"), new ArrayList<>()))
                 .findOne();
@@ -194,7 +195,8 @@ final class PaymentStore {
                         rs.getInt("amount_cents"))))
                 .forEach(e -> byPayment.computeIfAbsent(e.getKey(), k -> new ArrayList<>()).add(e.getValue()));
         return payments.stream().map(p -> new Payment(p.id(), p.receivedDate(), p.amountCents(),
-                p.method(), p.payerPersonId(), p.bankReference(), p.recordedBy(), p.recordedAt(),
+                p.method(), p.payerPersonId(), p.bankReference(), p.reconciliationStatus(),
+                p.recordedBy(), p.recordedAt(),
                 p.notes(), byPayment.getOrDefault(p.id(), List.of()))).toList();
     }
 }

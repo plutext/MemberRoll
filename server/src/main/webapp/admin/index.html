@@ -193,6 +193,54 @@
     </table>
     <div id="membershipsTotal" class="muted"></div>
 
+    <!-- CR-015: categorised reconciliation export for the treasurer's Xero books.
+         Preview (JSON summary) → Download CSV → Mark reconciled; the Xero journal
+         button appears only once the account mapping is saved. -->
+    <h3>Reconciliation export</h3>
+    <p class="muted">Export categorised payments for a window (each payment's
+        allocation split in columns, plus net totals), book the Stripe side with
+        one clearing-account journal, then mark them reconciled so next month
+        starts where this one ended. See the user manual for the journal procedure.</p>
+    <label>From <input id="recFrom" type="date"></label>
+    <label>To <input id="recTo" type="date"></label>
+    <label>Method
+        <select id="recMethod">
+            <option value="">All</option>
+            <option value="STRIPE">Stripe</option>
+            <option value="BANK_TRANSFER">Bank transfer</option>
+            <option value="CASH">Cash</option>
+            <option value="CHEQUE">Cheque</option>
+            <option value="OTHER">Other</option>
+        </select></label>
+    <label><input id="recUnreconciled" type="checkbox" checked> Unreconciled only</label>
+    <div>
+        <button id="recPreview">Preview</button>
+        <button id="recDownload">Download CSV</button>
+        <button id="recAccounts" type="button" class="secondary">Accounts…</button>
+        <button id="recJournal" hidden>Download Xero journal</button>
+        <button id="recMark" disabled>Mark these reconciled</button>
+    </div>
+    <div id="recSummary" class="muted"></div>
+
+    <dialog id="xeroForm">
+        <article>
+            <header><h3>Xero account mapping</h3></header>
+            <p class="muted">Opaque account codes from your Xero chart of accounts
+                — the server never interprets them; a wrong code fails at Xero's
+                import. The journal export stays dormant until these are saved.</p>
+            <label>Membership income code <input id="xeMembership"></label>
+            <label>Journal income code <input id="xeJournal"></label>
+            <label>Donation income code <input id="xeDonation"></label>
+            <label>Other income code <input id="xeOther"></label>
+            <label>Stripe Clearing code <input id="xeClearing"></label>
+            <label>Tax rate <input id="xeTaxRate" placeholder="BAS Excluded"></label>
+            <footer>
+                <button id="xeCancel" type="button" class="secondary">Cancel</button>
+                <button id="xeSave">Save mapping</button>
+            </footer>
+        </article>
+    </dialog>
+
     <dialog id="membershipDetail">
         <article>
             <header><h3 id="mdTitle">Membership</h3></header>

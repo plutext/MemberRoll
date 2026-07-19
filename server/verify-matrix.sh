@@ -1436,6 +1436,145 @@ fi
 code -X DELETE $MS -H "Authorization: Bearer $ADMIN" >/dev/null
 check "CR14-12 settings cleared at end" "ENV" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
 
+# --- CR-015: reconciliation export ------------------------------------------
+# Self-cleaning against an insert-only ledger: fixtures live in a 2099 date
+# window unique to this CR, every export/journal assertion passes
+# unreconciledOnly=true, and the block ends by marking the whole window
+# reconciled + dropping the xero_accounts row — so the next run's window starts
+# with zero unreconciled residue and no saved mapping (the 409 test stays valid).
+REX=$API/admin/payments/export/reconciliation
+RXJ=$API/admin/payments/export/xero-journal.csv
+RMAP=$API/admin/payments/xero-account-mapping
+RRC=$API/admin/payments/reconcile
+
+# row 1: role gates (guest/user 403, noaud 401, admin 200) across the surfaces
+check "CR15-01 csv guest 403"          "403" "$(code $REX.csv)"
+check "CR15-01b csv user 403"          "403" "$(code $REX.csv -H "Authorization: Bearer $USER")"
+check "CR15-01c csv noaud 401"         "401" "$(code $REX.csv -H "Authorization: Bearer $NOAUD")"
+check "CR15-01d csv admin 200"         "200" "$(code $REX.csv -H "Authorization: Bearer $ADMIN")"
+check "CR15-01e json guest 403"        "403" "$(code $REX)"
+check "CR15-01f json admin 200"        "200" "$(code $REX -H "Authorization: Bearer $ADMIN")"
+check "CR15-01g reconcile guest 403"   "403" "$(code -X POST $RRC)"
+check "CR15-01h reconcile user 403"    "403" "$(code -X POST $RRC -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
+check "CR15-01i reconcile noaud 401"   "401" "$(code -X POST $RRC -H "Authorization: Bearer $NOAUD" -H 'Content-Type: application/json' -d '{}')"
+check "CR15-01j reconcile admin 200"   "200" "$(JPOST $RRC "{\"maxPaymentId\":0}")"
+check "CR15-01k reconcile marks 0"     "0" "$(body | jsq "j['marked']")"
+check "CR15-01l mapping guest 403"     "403" "$(code $RMAP)"
+check "CR15-01m mapping user 403"      "403" "$(code $RMAP -H "Authorization: Bearer $USER")"
+check "CR15-01n mapping PUT user 403"  "403" "$(code -X PUT $RMAP -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
+check "CR15-01o mapping noaud 401"     "401" "$(code $RMAP -H "Authorization: Bearer $NOAUD")"
+
+# row 2: validation — reconcile needs maxPaymentId; export rejects bad dates
+check "CR15-02 no maxPaymentId 400"    "400" "$(JPOST $RRC "{\"from\":\"2099-03-01\"}")"
+check "CR15-02b bad from date 400"     "400" "$(code "$REX?from=not-a-date" -H "Authorization: Bearer $ADMIN")"
+check "CR15-02c bad method 400"        "400" "$(code "$REX?method=BOGUS" -H "Authorization: Bearer $ADMIN")"
+
+if [ "$PSQL_OK" = 1 ]; then
+  T_SINGLE=$(psqlq "SELECT membership_type_id FROM membership_type WHERE name='SINGLE'")
+  P2526=$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "next(p['id'] for p in j['periods'] if p['name']=='2025-2026')")
+  # a household + membership to hang MEMBERSHIP allocations on
+  JPOST $API/admin/people "{\"givenName\":\"Reece\",\"familyName\":\"Rec$$\"}" >/dev/null; PREC=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"Rec$$ HH\",\"primaryContactPersonId\":$PREC}" >/dev/null; HREC=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$HREC,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; MREC=$(body | jsq "j['id']")
+
+  # positive STRIPE cannot be POSTed (webhook-only), so seed the whole fixture
+  # set via psql — full control over method / external id / date. Two March
+  # dates + one April refund (the sign-flip window).
+  # psql prints the "INSERT 0 1" command tag after the RETURNING value, so keep
+  # only the numeric id line — a malformed id would corrupt the allocation inserts.
+  pay() { psqlq "INSERT INTO payment (received_date, amount_cents, payment_method, bank_reference, external_transaction_id, recorded_by) VALUES ('$1',$2,'$3',$4,$5,'cr15') RETURNING payment_id" | grep -oE '^[0-9]+' | head -1; }
+  PA=$(pay '2099-03-05' 4500 'BANK_TRANSFER' "'CR15BANK-$$'" 'NULL')
+  psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, membership_id, amount_cents) VALUES ($PA,'MEMBERSHIP',$MREC,4500)" >/dev/null
+  PB=$(pay '2099-03-20' 6000 'STRIPE' 'NULL' "'cr15txn-$$'")
+  psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, membership_id, amount_cents) VALUES ($PB,'MEMBERSHIP',$MREC,4500),($PB,'JOURNAL',NULL,1000),($PB,'DONATION',NULL,500)" >/dev/null
+  PC=$(pay '2099-03-05' 500 'CASH' 'NULL' 'NULL')
+  psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, amount_cents) VALUES ($PC,'OTHER',500)" >/dev/null
+  PD=$(pay '2099-03-20' 3000 'STRIPE' 'NULL' "'cr15pd-$$'")
+  psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, membership_id, amount_cents) VALUES ($PD,'MEMBERSHIP',$MREC,3000)" >/dev/null
+  PE=$(pay '2099-03-20' -3000 'STRIPE' 'NULL' 'NULL')
+  psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, membership_id, amount_cents) VALUES ($PE,'MEMBERSHIP',$MREC,-3000)" >/dev/null
+  PF=$(pay '2099-04-10' -2000 'STRIPE' 'NULL' 'NULL')
+  psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, membership_id, amount_cents) VALUES ($PF,'MEMBERSHIP',$MREC,-2000)" >/dev/null
+  # start clean: no saved mapping (the 409 test depends on it)
+  psqlq "DELETE FROM app_setting WHERE key='xero_accounts'" >/dev/null
+
+  MAR="from=2099-03-01&to=2099-03-31&unreconciledOnly=true"
+
+  # row 3: JSON preview totals over the March window (5 payments, two dates)
+  RJ=$(curl -s "$REX?$MAR" -H "Authorization: Bearer $ADMIN")
+  check "CR15-03 preview count 5"       "5" "$(echo "$RJ" | jsq "j['count']")"
+  check "CR15-03b membership net 9000"  "9000" "$(echo "$RJ" | jsq "j['totals']['byType']['MEMBERSHIP']")"
+  check "CR15-03c journal 1000"         "1000" "$(echo "$RJ" | jsq "j['totals']['byType']['JOURNAL']")"
+  check "CR15-03d donation 500"         "500" "$(echo "$RJ" | jsq "j['totals']['byType']['DONATION']")"
+  check "CR15-03e other 500"            "500" "$(echo "$RJ" | jsq "j['totals']['byType']['OTHER']")"
+  check "CR15-03f gross 11000"          "11000" "$(echo "$RJ" | jsq "j['totals']['gross']")"
+  check "CR15-03g byMethod STRIPE 6000" "6000" "$(echo "$RJ" | jsq "j['totals']['byMethod']['STRIPE']")"
+  check "CR15-03h byMethod BANK 4500"   "4500" "$(echo "$RJ" | jsq "j['totals']['byMethod']['BANK_TRANSFER']")"
+  check "CR15-03i byMethod CASH 500"    "500" "$(echo "$RJ" | jsq "j['totals']['byMethod']['CASH']")"
+  RJMAX=$(echo "$RJ" | jsq "j['maxPaymentId']")
+  check "CR15-03j maxPaymentId is PE"   "$PE" "$RJMAX"
+
+  # row 4: CSV shape — header exact, content type, mixed payment split, per-row sum
+  check "CR15-04 csv content type"      "text/csv" "$(curl -s -o /dev/null -w '%{content_type}' "$REX.csv?$MAR" -H "Authorization: Bearer $ADMIN")"
+  RCSV=$(curl -s "$REX.csv?$MAR" -H "Authorization: Bearer $ADMIN")
+  check "CR15-04b header row exact"     "Payment id,Received date,Method,Payer,Household,Gross,Membership,Journal,Donation,Other,Period,Bank reference,Stripe txn id,Status,Recorded by,Notes" "$(echo "$RCSV" | head -1 | tr -d '\r')"
+  check "CR15-04c mixed row split"      "60.00 45.00 10.00 5.00 0.00" "$(echo "$RCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); r=[x for x in rows if x and x[0]=='$PB'][0]; print(r[5],r[6],r[7],r[8],r[9])" 2>/dev/null)"
+  check "CR15-04d mixed period named"   "2025-2026" "$(echo "$RCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); r=[x for x in rows if x and x[0]=='$PB'][0]; print(r[10])" 2>/dev/null)"
+  check "CR15-04e splits sum to gross"  "yes" "$(echo "$RCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); ok=all(abs(float(r[5])-sum(float(r[i]) for i in (6,7,8,9)))<0.001 for r in rows[1:] if r and r[0].isdigit()); print('yes' if ok else 'no')" 2>/dev/null)"
+  check "CR15-04f refund row negative"  "-30.00" "$(echo "$RCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); r=[x for x in rows if x and x[0]=='$PE'][0]; print(r[5])" 2>/dev/null)"
+  check "CR15-04g summary TOTAL present" "yes" "$(echo "$RCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print('yes' if any(r and r[0]=='TOTAL (net)' and r[5]=='110.00' for r in rows) else 'no')" 2>/dev/null)"
+
+  # row 5: filters compose — narrower date window, method, and both
+  check "CR15-05 to=D1 count 2"         "2" "$(curl -s "$REX?from=2099-03-01&to=2099-03-06&unreconciledOnly=true" -H "Authorization: Bearer $ADMIN" | jsq "j['count']")"
+  RS=$(curl -s "$REX?from=2099-03-01&to=2099-03-31&method=STRIPE&unreconciledOnly=true" -H "Authorization: Bearer $ADMIN")
+  check "CR15-05b method=STRIPE count 3" "3" "$(echo "$RS" | jsq "j['count']")"
+  check "CR15-05c STRIPE excludes bank"  "False" "$(echo "$RS" | jsq "str('BANK_TRANSFER' in j['totals']['byMethod'])")"
+  check "CR15-05d combined count 3"      "3" "$(curl -s "$REX?from=2099-03-20&to=2099-03-31&method=STRIPE&unreconciledOnly=true" -H "Authorization: Bearer $ADMIN" | jsq "j['count']")"
+
+  # row 6: Xero journal — 409 until mapped, then a balanced importable journal
+  check "CR15-06 journal 409 no mapping" "409" "$(code "$RXJ?$MAR" -H "Authorization: Bearer $ADMIN")"
+  check "CR15-06b mapping missing code 400" "400" "$(JPUT $RMAP "{\"membershipCode\":\"4000\",\"journalCode\":\"4010\",\"donationCode\":\"4020\",\"otherCode\":\"4090\"}")"
+  check "CR15-06c PUT mapping 200"       "200" "$(JPUT $RMAP "{\"membershipCode\":\"4000\",\"journalCode\":\"4010\",\"donationCode\":\"4020\",\"otherCode\":\"4090\",\"clearingCode\":\"1200\",\"taxRate\":\"BAS Excluded\"}")"
+  check "CR15-06d GET echoes clearing"   "1200" "$(curl -s $RMAP -H "Authorization: Bearer $ADMIN" | jsq "j['clearingCode']")"
+  check "CR15-06e GET configured true"   "True" "$(curl -s $RMAP -H "Authorization: Bearer $ADMIN" | jsq "j['configured']")"
+  JCSV=$(curl -s "$RXJ?$MAR" -H "Authorization: Bearer $ADMIN")
+  check "CR15-06f journal balances"      "0.00" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print('%.2f' % sum(float(r[4]) for r in rows[1:] if len(r)>=5))" 2>/dev/null)"
+  check "CR15-06g journal 4 lines"       "4" "$(echo "$JCSV" | python3 -c "import sys; print(sum(1 for i,l in enumerate(sys.stdin) if i>0 and l.strip()))" 2>/dev/null)"
+  check "CR15-06h clearing debit gross"  "60.00" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='1200'))" 2>/dev/null)"
+  check "CR15-06i membership credit"     "-45.00" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='4000'))" 2>/dev/null)"
+  check "CR15-06j tax rate every line"   "yes" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print('yes' if all(r[3]=='BAS Excluded' for r in rows[1:] if len(r)>=5) else 'no')" 2>/dev/null)"
+  check "CR15-06k one shared narration"  "1" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(len(set(r[0] for r in rows[1:] if len(r)>=5)))" 2>/dev/null)"
+  # STRIPE forced even when method=BANK_TRANSFER is passed (bank line 4500 absent)
+  check "CR15-06l STRIPE forced"         "60.00" "$(curl -s "$RXJ?$MAR&method=BANK_TRANSFER" -H "Authorization: Bearer $ADMIN" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='1200'))" 2>/dev/null)"
+  # refund-dominated April window flips the membership line to the debit side
+  JFLIP=$(curl -s "$RXJ?from=2099-04-01&to=2099-04-30&unreconciledOnly=true" -H "Authorization: Bearer $ADMIN")
+  check "CR15-06m flip membership debit" "20.00" "$(echo "$JFLIP" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='4000'))" 2>/dev/null)"
+  check "CR15-06n flip clearing credit"  "-20.00" "$(echo "$JFLIP" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='1200'))" 2>/dev/null)"
+  check "CR15-06o flip balances"         "0.00" "$(echo "$JFLIP" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print('%.2f' % sum(float(r[4]) for r in rows[1:] if len(r)>=5))" 2>/dev/null)"
+
+  # row 7: reconcile — the bounded, idempotent mark; a straggler survives
+  PG=$(pay '2099-03-25' 100 'CASH' 'NULL' 'NULL')   # recorded AFTER the preview
+  psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, amount_cents) VALUES ($PG,'OTHER',100)" >/dev/null
+  JPOST $RRC "{\"from\":\"2099-03-01\",\"to\":\"2099-03-31\",\"maxPaymentId\":$RJMAX}" >/dev/null
+  check "CR15-07 mark returns 5"         "5" "$(body | jsq "j['marked']")"
+  check "CR15-07b PA reconciled"         "RECONCILED" "$(psqlq "SELECT reconciliation_status FROM payment WHERE payment_id=$PA")"
+  check "CR15-07c PE reconciled"         "RECONCILED" "$(psqlq "SELECT reconciliation_status FROM payment WHERE payment_id=$PE")"
+  check "CR15-07d straggler PG unmarked" "UNRECONCILED" "$(psqlq "SELECT reconciliation_status FROM payment WHERE payment_id=$PG")"
+  check "CR15-07e exactly 5 flipped"     "5" "$(psqlq "SELECT count(*) FROM payment WHERE payment_id IN ($PA,$PB,$PC,$PD,$PE) AND reconciliation_status='RECONCILED'")"
+  JPOST $RRC "{\"from\":\"2099-03-01\",\"to\":\"2099-03-31\",\"maxPaymentId\":$RJMAX}" >/dev/null
+  check "CR15-07f re-mark idempotent 0"  "0" "$(body | jsq "j['marked']")"
+  check "CR15-07g unreconciled now PG"   "1" "$(curl -s "$REX?$MAR" -H "Authorization: Bearer $ADMIN" | jsq "j['count']")"
+
+  # cleanup: mark the whole 2099 window reconciled (PF, PG) and drop the mapping,
+  # so the next run starts with zero unreconciled residue and no saved mapping
+  JPOST $RRC "{\"from\":\"2099-03-01\",\"maxPaymentId\":9999999999}" >/dev/null
+  psqlq "DELETE FROM app_setting WHERE key='xero_accounts'" >/dev/null
+  check "CR15-08 window clean at end"    "0" "$(psqlq "SELECT count(*) FROM payment WHERE received_date >= '2099-01-01' AND reconciliation_status='UNRECONCILED'")"
+  check "CR15-08b mapping dropped"       "409" "$(code "$RXJ?$MAR" -H "Authorization: Bearer $ADMIN")"
+else
+  echo "SKIP CR15-03..08 (reconciliation fixtures + marks — needs psql)"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"
