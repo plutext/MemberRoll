@@ -1,14 +1,73 @@
 # MemberRoll
 
+Membership management and renewals for a small society — built for the
+Yass & District Historical Society (~150 members), and designed to be
+adapted by any club or association that wants to own its member data
+instead of renting it.
+
+MemberRoll is self-hosted and open source (Apache 2.0). There are no
+per-member fees, no percentage skimmed off each renewal, and no vendor
+roadmap to wait on: online payments cost only Stripe's standard bank fee,
+and the running cost is little more than hosting.
+
+## Key features
+
+- **Membership register** — people and households, membership types with
+  their own prices, full history (members are never deleted, changes are
+  dated).
+- **Renewals** — annual membership periods, one-click rollover into the
+  new year, and a live financial-status view of who has paid, who hasn't,
+  and who has lapsed.
+- **Online payment without passwords** — renewal emails carry a personal
+  pay link; the member clicks, sees their renewal, and pays by card
+  (Stripe). No account or login required, and lost links are re-sent
+  safely.
+- **Manual payments too** — cash, cheque and bank-transfer payments are
+  recorded at the desk; corrections are reversals, never edits, so the
+  books always reconcile.
+- **Email to a segment** — templates with merge fields (including a fresh
+  pay link per recipient), a full send log, per-member communication
+  preferences, and safe resume if a send is interrupted.
+- **Member self-serve** — members can log in to see their household's
+  membership status, pay online, and download their membership card.
+- **Membership cards** — a printable/emailable card generated on demand
+  from the current register, from the member page or the admin panel.
+- **Receipts on demand** — any payment can be printed or emailed as a
+  receipt, numbered and reproducible.
+- **Committee register** — office-bearers and ordinary committee members
+  recorded AGM to AGM, with multi-term history.
+- **Xero-ready bookkeeping** — a reconciliation export that splits every
+  payment into membership / donation / other, plus an importable Xero
+  journal that balances against a Stripe clearing account.
+- **Mail settings in the admin panel** — the SMTP relay (with a one-click
+  Microsoft 365 preset) is configured from the browser and takes effect
+  immediately, with a "send test email" button.
+- **Rules that match the constitution** — member-only voting rights,
+  September–August membership year, AGM-bounded committee terms: the
+  software follows the governing document, not a generic club template.
+
+## Learn more
+
+- **Why build our own?** The committee briefing compares MemberRoll with
+  the commercial and open-source alternatives, costed for a 150-member
+  society: [docs/membership-software-briefing.md](docs/membership-software-briefing.md)
+- **How do I use it?** The user manual covers the admin panel: the
+  register, imports, renewals, payments, email and more:
+  [docs/user-manual.md](docs/user-manual.md)
+- **Can my organisation use it?** Yes — by forking. The intended
+  adoption path is AI-assisted customisation to *your* constitution, not
+  configuration options: [docs/fork-philosophy.md](docs/fork-philosophy.md)
+  (worked example: [docs/forks/](docs/forks/))
+
+## Technical
+
 A Tomcat/Jersey/Keycloak webapp (from webapp-template).
 
-- User manual (admin panel: register, import, renewals): [docs/user-manual.md](docs/user-manual.md)
 - Roadmap and scope decisions: [docs/ROADMAP.md](docs/ROADMAP.md)
 - Getting started (dev loop, LAN phones, production): [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)
 - Server details and Keycloak primer: [server/README.md](server/README.md)
 - Deployment: [server/deploy/README.md](server/deploy/README.md)
 - Workflow: [docs/change-requests/](docs/change-requests/)
-- Adapting MemberRoll to your organisation: [docs/fork-philosophy.md](docs/fork-philosophy.md) (worked example: [docs/forks/](docs/forks/))
 
 Dev loop:
 
@@ -29,42 +88,8 @@ SMTP_HOST=localhost SMTP_PORT=18026 MAIL_FROM=noreply@memberroll.dev \
 # without it the app still runs — the checkout endpoint answers 503, all else works
 ```
 
-### Mail configuration
-
-Outbound mail (payment receipts, lost-link replies, segment sends) is
-configured **from the admin panel first** — the *Mail settings* page
-(admin → Mail settings) saves the SMTP relay (host/port/security/credentials/
-from) and takes effect on the very next message, with a "Send test email"
-button that shows the relay's own error verbatim. There is a one-click
-Microsoft 365 / Exchange Online preset (`smtp.office365.com:587`, STARTTLS).
-
-The `SMTP_*` / `MAIL_FROM` / `MAIL_REPLY_TO` environment variables above are the
-**fallback**: used when nothing is saved on that page (so the dev stack and a
-fresh install can send before anyone opens it, and an operator who prefers the
-password out of the database can stay on env). Resolution order is
-page → environment → disabled; with mail disabled, every send is a logged
-no-op and the send-dependent endpoints answer 503. Keycloak's own
-forgot-password/verification mail is configured separately, in the realm.
-
-Fresh start (wipe the dev database and Keycloak state back to a clean slate):
-
-```bash
-# 1. stop the running app FIRST — see the note below on why order matters
-#    (Ctrl-C the cargo:run, or: pkill -f cargo:run)
-(cd server && docker compose down)    # discard Postgres + Keycloak volumes
-(cd server && docker compose up -d)   # fresh Postgres :5433 + Keycloak :18081 (realm re-imported)
-mvn -pl server cargo:run              # start the app AGAINST the new DB → Flyway re-creates the schema
-```
-
-This leaves you with the V1 schema + V2 seed (the 2025-2026 period, 1 Sep 2025
-– 31 Aug 2026, at Single $45 / Household $65) and no members — re-import your
-list through the admin Import UI from there.
-
-**Order matters.** `Db` runs Flyway once, at webapp startup. If you recreate
-the database while `cargo:run` is still running, the app keeps pointing at a
-fresh *empty* Postgres and never re-migrates it — every request then fails
-with `relation "…" does not exist`. Always restart cargo *after* a
-`compose down && up`.
+Mail configuration, the dev fresh-start procedure, and the rest of the
+server detail live in [server/README.md](server/README.md).
 
 ## License
 

@@ -62,6 +62,45 @@ registration are CR-008):
 | `MAIL_REPLY_TO` | unset (no Reply-To header) | CR-005: where renewal replies should land (the treasurer, not `noreply@`); unset keeps the prior behaviour |
 | `MEMBERROLL_SOCIETY_NAME` | `memberroll dev` | email + pay-page branding (the single-tenant rule: no society name in code) |
 
+### Mail configuration
+
+Outbound mail (payment receipts, lost-link replies, segment sends) is
+configured **from the admin panel first** — the *Mail settings* page
+(admin → Mail settings) saves the SMTP relay (host/port/security/credentials/
+from) and takes effect on the very next message, with a "Send test email"
+button that shows the relay's own error verbatim. There is a one-click
+Microsoft 365 / Exchange Online preset (`smtp.office365.com:587`, STARTTLS).
+
+The `SMTP_*` / `MAIL_FROM` / `MAIL_REPLY_TO` environment variables above are the
+**fallback**: used when nothing is saved on that page (so the dev stack and a
+fresh install can send before anyone opens it, and an operator who prefers the
+password out of the database can stay on env). Resolution order is
+page → environment → disabled; with mail disabled, every send is a logged
+no-op and the send-dependent endpoints answer 503. Keycloak's own
+forgot-password/verification mail is configured separately, in the realm.
+
+### Fresh start
+
+Wipe the dev database and Keycloak state back to a clean slate:
+
+```bash
+# 1. stop the running app FIRST — see the note below on why order matters
+#    (Ctrl-C the cargo:run, or: pkill -f cargo:run)
+(cd server && docker compose down)    # discard Postgres + Keycloak volumes
+(cd server && docker compose up -d)   # fresh Postgres :5433 + Keycloak :18081 (realm re-imported)
+mvn -pl server cargo:run              # start the app AGAINST the new DB → Flyway re-creates the schema
+```
+
+This leaves you with the V1 schema + V2 seed (the 2025-2026 period, 1 Sep 2025
+– 31 Aug 2026, at Single $45 / Household $65) and no members — re-import your
+list through the admin Import UI from there.
+
+**Order matters.** `Db` runs Flyway once, at webapp startup. If you recreate
+the database while `cargo:run` is still running, the app keeps pointing at a
+fresh *empty* Postgres and never re-migrates it — every request then fails
+with `relation "…" does not exist`. Always restart cargo *after* a
+`compose down && up`.
+
 ## The webapps
 
 - <http://localhost:18080/server/web/> — the member's "my membership"
