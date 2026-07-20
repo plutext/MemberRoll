@@ -193,6 +193,41 @@ Email round-trips via Mailpit with the attachment; admin dialog Card…
 preview/Print/Email, and no Card… button on a PARTNER row. Confirm the
 rendered PNG visually once (name/type/dates legible at print size).
 
+## Implementation notes (for the build session)
+
+This doc + CLAUDE.md are intended to be sufficient; nothing else needs
+reading first. Points the design hinges on:
+
+- **Baseline the FULL matrix before writing any code.** Run
+  `server/verify-matrix.sh` against the running dev stack and record
+  the pass/fail count. Known pre-existing/environmental failures that
+  are NOT yours to chase: `27b` (Keycloak user-listing caps at 50 in a
+  long-lived dev stack), `CR10-04g2`/`CR10-12c` (UTC-vs-local
+  current_date equality during the daily offset window), and
+  occasionally `CR5-16b/c/d` (Mailpit container abort/resume timing).
+  The exit criterion is: same failures as your baseline, plus every
+  CR17-* row green — and run the CR17 block twice to prove the
+  fixtures self-clean.
+- **The `Mail` hazard**: the no-attachment path must stay byte-for-byte
+  the current single-part message. The proof is the existing mail rows
+  (CR4 receipts, CR5 sends, CR12, CR14) green against your build — if
+  any mail-body assertion starts failing, the overload leaked into the
+  plain path.
+- **The bearer-auth hazard**: `<img src="/api/...">` sends no
+  Authorization header → 401. Every image use (page `<img>`, download
+  link, print pop-up) hangs off ONE blob URL from an authenticated
+  `fetch`; `window.print()` only after the image's `load` event.
+- Mechanics: restart cargo after Java changes (and after any
+  `mvn clean` — see the CLAUDE.md bite); walkthrough script under
+  `tmp/cr017-fixtures/` (gitignored), run per the Playwright recipe in
+  the repo memory / prior CR scripts (`tmp/cr006-fixtures/` is the
+  template); SMTP CRLF canonicalisation applies if asserting mail body
+  text (the CR-12 gotcha) — attachment assertions via the Mailpit API
+  (`/api/v1/message/{id}` lists `Attachments` with
+  filename/content-type).
+- When reality diverges from this doc, update the doc (dated), then
+  record Results + close out README/CLAUDE.md/ROADMAP.
+
 ## Results
 
 (to be recorded at implementation)
