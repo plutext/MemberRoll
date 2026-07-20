@@ -108,6 +108,71 @@ public class AdminMembershipsResource {
                 .orElseGet(AdminMembershipsResource::notFound);
     }
 
+    // ---- membership card (CR-017) -------------------------------------------
+    // Most members are never Keycloak-linked, so this admin path is likely the
+    // primary card-issuing surface. Same composition gate as the member path:
+    // 404 unless {personId} is a current MEMBER-relationship member of the
+    // ACTIVE membership's household (Cards.compose is the gate).
+
+    @GET
+    @Path("{id}/card/{personId}")
+    @Produces("image/png")
+    public Response card(@PathParam("id") long id, @PathParam("personId") long personId) {
+        return jdbi.withHandle(handle -> {
+            Cards.Card card = Cards.compose(handle, id, personId).orElse(null);
+            if (card == null) return notFound();
+            return Response.ok(Cards.png(card), "image/png")
+                    .header("Cache-Control", "no-store").build();
+        });
+    }
+
+    @GET
+    @Path("{id}/card/{personId}/info")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response cardInfo(@PathParam("id") long id, @PathParam("personId") long personId) {
+        return jdbi.withHandle(handle -> {
+            Cards.Card card = Cards.compose(handle, id, personId).orElse(null);
+            if (card == null) return notFound();
+            String defaultTo = Cards.primaryEmail(handle, personId).orElse(null);
+            JsonObjectBuilder b = Cards.toJson(card, Mail.enabled());
+            AdminPeopleResource.addNullable(b, "defaultTo", defaultTo);
+            return Response.ok(b.build().toString()).build();
+        });
+    }
+
+    /**
+     * Email the card. Body {@code {to?}}; absent {@code to} uses the person's
+     * primary email, or 400 when there is none (a couple's shared-address
+     * partner has no own address — the admin types it, the CR-012 pattern).
+     * 503 when mail is not configured. Stateless.
+     */
+    @POST
+    @Path("{id}/card/{personId}/email")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response emailCard(@PathParam("id") long id, @PathParam("personId") long personId, String body) {
+        JsonObject request = body == null || body.isBlank()
+                ? jakarta.json.JsonValue.EMPTY_JSON_OBJECT : Payloads.read(body);
+        if (request == null) return badRequest("body must be a JSON object");
+        String to = Payloads.optString(request, "to");
+        return jdbi.withHandle(handle -> {
+            Cards.Card card = Cards.compose(handle, id, personId).orElse(null);
+            if (card == null) return notFound();
+            if (!Mail.enabled()) {
+                return serviceUnavailable("email is not configured on this server"
+                        + " — download or print the card instead");
+            }
+            String recipient = to != null ? to : Cards.primaryEmail(handle, personId).orElse(null);
+            if (recipient == null) {
+                return badRequest("no email on file for this person — supply \"to\"");
+            }
+            // async: SMTP must never hold a Tomcat thread past the response
+            Mail.sendAsync(recipient, Cards.subject(card), Cards.emailBody(card), Cards.attachment(card));
+            return Response.accepted(Json.createObjectBuilder()
+                    .add("sentTo", recipient).build().toString()).build();
+        });
+    }
+
     @PUT
     @Path("{id}")
     @Consumes(MediaType.APPLICATION_JSON)
@@ -221,5 +286,10 @@ public class AdminMembershipsResource {
     private static Response notFound() {
         return Response.status(Response.Status.NOT_FOUND)
                 .entity(Json.createObjectBuilder().add("error", "no such membership").build().toString()).build();
+    }
+
+    private static Response serviceUnavailable(String message) {
+        return Response.status(Response.Status.SERVICE_UNAVAILABLE)
+                .entity(Json.createObjectBuilder().add("error", message).build().toString()).build();
     }
 }

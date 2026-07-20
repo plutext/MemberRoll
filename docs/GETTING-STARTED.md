@@ -70,7 +70,10 @@ Browse:
   registration form includes the "I am a …" role picker; self-registered
   accounts must verify their email — watch Mailpit). An account only
   sees membership data once an admin has provisioned/linked it
-  (admin panel → Users → Self-serve provisioning).
+  (admin panel → Users → Self-serve provisioning). A membership that is
+  paid up (ACTIVE) also shows its **membership card** (CR-017) — download,
+  print, or email it to yourself; the admin can issue the same card from a
+  membership's detail dialog (**Card…** beside each member).
 - <http://localhost:18080/server/admin/> — the admin panel
   (`testadmin` / `testadmin`): user list, claim correction, verified
   flag, manager grant, and the membership register (people, households).

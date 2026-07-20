@@ -16,6 +16,7 @@
 
 package com.plutext.memberroll.server;
 
+import jakarta.activation.DataHandler;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
@@ -25,7 +26,10 @@ import jakarta.mail.PasswordAuthentication;
 import jakarta.mail.Session;
 import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeBodyPart;
 import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.MimeMultipart;
+import jakarta.mail.util.ByteArrayDataSource;
 
 import java.io.StringReader;
 import java.util.Optional;
@@ -103,6 +107,14 @@ final class Mail {
             return new Settings(Source.NONE, null, 0, Security.NONE, null, null, null, null);
         }
     }
+
+    /**
+     * A single file attachment for a transactional send (CR-017 membership
+     * card). Present {@code attachment} switches the message to multipart/mixed
+     * (text part + file part); the no-attachment path stays byte-for-byte the
+     * single-part message CR-004/005/012 rely on.
+     */
+    record Attachment(String filename, String contentType, byte[] bytes) {}
 
     static boolean enabled() {
         return resolve().source() != Source.NONE;
@@ -204,7 +216,12 @@ final class Mail {
 
     /** Queue a plain-text mail off the calling thread; always returns immediately. */
     static void sendAsync(String to, String subject, String body) {
-        SENDER.submit(() -> send(to, subject, body));
+        SENDER.submit(() -> send(to, subject, body, null));
+    }
+
+    /** Queue a mail with a single attachment off the calling thread (CR-017). */
+    static void sendAsync(String to, String subject, String body, Attachment attachment) {
+        SENDER.submit(() -> send(to, subject, body, attachment));
     }
 
     /** Run mail-adjacent work (lookup + compose + send) on the mail thread. */
@@ -218,13 +235,18 @@ final class Mail {
      * the password scrubbed out (best-effort, and the PAGE path stores one).
      */
     static boolean send(String to, String subject, String body) {
+        return send(to, subject, body, null);
+    }
+
+    /** As {@link #send(String, String, String)} but with a single attachment (CR-017). */
+    static boolean send(String to, String subject, String body, Attachment attachment) {
         Settings settings = resolve();
         if (settings.source() == Source.NONE) {
             LOG.warning("mail disabled (no page settings, SMTP_HOST unset) — not sending \""
                     + subject + "\" to " + to);
             return false;
         }
-        String error = doSend(settings, to, subject, body);
+        String error = doSend(settings, to, subject, body, attachment);
         if (error != null) {
             LOG.warning("mail send failed: \"" + subject + "\" to " + to + " — " + scrub(error, settings));
         }
@@ -240,11 +262,12 @@ final class Mail {
      */
     static String test(Settings settings, String to, String subject, String body) {
         if (settings.source() == Source.NONE) return "mail is not configured";
-        return scrub(doSend(settings, to, subject, body), settings);
+        return scrub(doSend(settings, to, subject, body, null), settings);
     }
 
     /** The actual send; returns null on success or a human-readable error string (unscrubbed). */
-    private static String doSend(Settings settings, String to, String subject, String body) {
+    private static String doSend(Settings settings, String to, String subject, String body,
+                                 Attachment attachment) {
         try {
             Properties props = new Properties();
             props.put("mail.smtp.host", settings.host());
@@ -287,7 +310,22 @@ final class Mail {
             }
             message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(to));
             message.setSubject(subject, "UTF-8");
-            message.setText(body, "UTF-8");
+            if (attachment == null) {
+                // the no-attachment path stays byte-for-byte the CR-004/005/012
+                // single-part message — do NOT route it through multipart
+                message.setText(body, "UTF-8");
+            } else {
+                MimeBodyPart textPart = new MimeBodyPart();
+                textPart.setText(body, "UTF-8");
+                MimeBodyPart filePart = new MimeBodyPart();
+                filePart.setDataHandler(new DataHandler(
+                        new ByteArrayDataSource(attachment.bytes(), attachment.contentType())));
+                filePart.setFileName(attachment.filename());
+                MimeMultipart multipart = new MimeMultipart();
+                multipart.addBodyPart(textPart);
+                multipart.addBodyPart(filePart);
+                message.setContent(multipart);
+            }
             Transport.send(message);
             return null;
         } catch (Exception e) {

@@ -245,6 +245,9 @@
         <article>
             <header><h3 id="mdTitle">Membership</h3></header>
             <div id="mdSummary" class="muted"></div>
+            <!-- CR-017: per-person rows; a Card… button on MEMBER rows of an
+                 ACTIVE membership (the card asserts financial standing) -->
+            <div id="mdMembers"></div>
             <div id="mdActions"></div>
             <button id="mdRecordPayment">Record payment</button>
             <table id="mdPayments">
@@ -295,6 +298,28 @@
                     <button id="rcPrint" type="button" class="secondary">Print</button>
                     <button id="rcEmail" type="button">Email</button>
                     <button id="rcClose" type="button" class="secondary">Close</button>
+                </footer>
+            </article>
+        </dialog>
+
+        <!-- CR-017: the membership-card dialog, mirroring the receipt dialog.
+             The preview <img> is blob-fetched (bearer auth — a plain src 401s);
+             Print opens a bare window, Download saves the same blob, Email sends
+             it (to prefilled with the person's resolved default address). -->
+        <dialog id="cardDialog">
+            <article>
+                <header><h3 id="cdTitle">Membership card</h3></header>
+                <img id="cdImage" alt="Membership card"
+                     style="max-width:100%;width:420px;height:auto;display:block;
+                            border:1px solid var(--pico-muted-border-color);border-radius:8px">
+                <label>Email to <input id="cdTo" type="email" placeholder="address@example.com"></label>
+                <div id="cdMailHint" class="muted" hidden>Email is not configured on this
+                    server — use Print or Download instead.</div>
+                <footer>
+                    <button id="cdPrint" type="button" class="secondary">Print</button>
+                    <button id="cdDownload" type="button" class="secondary">Download</button>
+                    <button id="cdEmail" type="button">Email</button>
+                    <button id="cdClose" type="button" class="secondary">Close</button>
                 </footer>
             </article>
         </dialog>

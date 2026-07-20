@@ -798,6 +798,7 @@ async function openMembership(id) {
         `${m.typeName} — ${statusLabel(m.status)}. Due ${dollars(m.amountDueCents)}, `
         + `paid ${dollars(m.amountPaidCents)}.` + (members ? " Members: " + members : "");
     renderMembershipActions(m);
+    renderMembershipMembers(m);
     renderMembershipPayments(m);
     // prep the payment form for this membership (prefilled with the balance)
     closeDialog("paymentForm");
@@ -944,6 +945,123 @@ async function emailReceipt() {
     if (!response) return; // registerCall surfaces a 400 (no address) / 503 (no mail)
     const result = await response.json();
     say(`Receipt #${receiptPaymentId} emailed to ${result.sentTo}.`);
+}
+
+// ---- membership cards (CR-017) ----------------------------------------------
+
+// one row per covered person; a Card… button only on MEMBER-relationship rows
+// of an ACTIVE membership (the card asserts financial standing). Most members
+// are never Keycloak-linked, so this dialog is the primary card-issuing surface.
+function renderMembershipMembers(m) {
+    const el = document.getElementById("mdMembers");
+    el.innerHTML = "";
+    if (!m.people.length) return;
+    const active = m.status === "ACTIVE";
+    for (const p of m.people) {
+        const row = document.createElement("div");
+        row.className = "member-row";
+        const label = document.createElement("span");
+        label.textContent = `${p.givenName} ${p.familyName} (${p.role || "—"})`
+            + (p.voting ? "" : " · non-voting");
+        row.appendChild(label);
+        // MEMBER-relationship rows of an ACTIVE membership get a card
+        if (active && p.role === "MEMBER") {
+            const btn = document.createElement("button");
+            btn.textContent = "Card…";
+            btn.className = "secondary";
+            btn.style.marginLeft = ".5rem";
+            btn.onclick = () => openCard(m.id, p.personId, `${p.givenName} ${p.familyName}`);
+            row.appendChild(btn);
+        }
+        el.appendChild(row);
+    }
+}
+
+let cardBlobUrl = null;
+let cardFilename = "membership-card.png";
+let cardMembershipId = null;
+let cardPersonId = null;
+
+// render one person's card (from current register state) and offer
+// Print / Download / Email — the receipt dialog's sibling
+async function openCard(membershipId, personId, name) {
+    const base = `/admin/memberships/${membershipId}/card/${personId}`;
+    const infoResp = await registerCall(`${base}/info`);
+    if (!infoResp) return;
+    const info = await infoResp.json();
+    // the bearer-auth bite: a plain <img src> sends no Authorization header and
+    // 401s — fetch the PNG with the header and wrap it in ONE blob URL
+    const pngResp = await registerCall(base);
+    if (!pngResp) return;
+    if (cardBlobUrl) URL.revokeObjectURL(cardBlobUrl); // free the previous open's blob
+    cardBlobUrl = URL.createObjectURL(await pngResp.blob());
+    cardFilename = info.filename;
+    cardMembershipId = membershipId;
+    cardPersonId = personId;
+    document.getElementById("cdTitle").textContent = `Membership card — ${name}`;
+    document.getElementById("cdImage").src = cardBlobUrl;
+    document.getElementById("cdTo").value = info.defaultTo || "";
+    // mirror the CR-005 mail banner: disable Email upfront when SMTP is unset
+    document.getElementById("cdEmail").disabled = !info.mailEnabled;
+    document.getElementById("cdMailHint").hidden = !!info.mailEnabled;
+    openDialog("cardDialog");
+}
+
+// print: a bare same-origin pop-up holding only the card at true 85.6mm width
+// with crop marks; window.print() only after the image's load event
+function printCard() {
+    const w = window.open("", "_blank");
+    if (!w) {
+        say("Pop-up blocked — allow pop-ups for this site to print the card.", true);
+        return;
+    }
+    w.document.title = document.getElementById("cdTitle").textContent;
+    const style = w.document.createElement("style");
+    style.textContent =
+        "@page { margin: 14mm } html,body { margin: 0 }"
+        + " .box { position: relative; width: 85.6mm; height: 54mm; margin: 8mm auto; }"
+        + " .box img { width: 85.6mm; height: 54mm; display: block; }"
+        + " .m { position: absolute; background: #000; }"
+        + " .h { width: 4mm; height: .2mm } .v { width: .2mm; height: 4mm }"
+        + " .tl-h{top:-2mm;left:-5mm}.tl-v{top:-5mm;left:-2mm}"
+        + " .tr-h{top:-2mm;right:-5mm}.tr-v{top:-5mm;right:-2mm}"
+        + " .bl-h{bottom:-2mm;left:-5mm}.bl-v{bottom:-5mm;left:-2mm}"
+        + " .br-h{bottom:-2mm;right:-5mm}.br-v{bottom:-5mm;right:-2mm}";
+    w.document.head.appendChild(style);
+    const box = w.document.createElement("div");
+    box.className = "box";
+    const img = w.document.createElement("img");
+    img.src = cardBlobUrl; // same-origin pop-up can read the opener's blob URL
+    box.appendChild(img);
+    for (const c of ["tl-h h", "tl-v v", "tr-h h", "tr-v v",
+                     "bl-h h", "bl-v v", "br-h h", "br-v v"]) {
+        const mark = w.document.createElement("div");
+        mark.className = "m " + c;
+        box.appendChild(mark);
+    }
+    w.document.body.appendChild(box);
+    w.document.close();
+    if (img.complete) { w.focus(); w.print(); }
+    else img.onload = () => { w.focus(); w.print(); };
+}
+
+function downloadCard() {
+    const a = document.createElement("a");
+    a.href = cardBlobUrl;
+    a.download = cardFilename;
+    a.click();
+}
+
+async function emailCard() {
+    const to = document.getElementById("cdTo").value.trim();
+    const response = await registerCall(
+        `/admin/memberships/${cardMembershipId}/card/${cardPersonId}/email`, {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(to ? {to} : {}),
+        });
+    if (!response) return; // registerCall surfaces a 400 (no address) / 503 (no mail)
+    const result = await response.json();
+    say(`Membership card emailed to ${result.sentTo}.`);
 }
 
 async function reversePayment(membershipId, p) {
@@ -1345,6 +1463,10 @@ function wireRenewals() {
     on("rcPrint", printReceipt);
     on("rcEmail", emailReceipt);
     on("rcClose", () => closeDialog("receiptDialog"));
+    on("cdPrint", printCard);
+    on("cdDownload", downloadCard);
+    on("cdEmail", emailCard);
+    on("cdClose", () => closeDialog("cardDialog"));
     on("hmCreate", createHouseholdMembership);
     document.getElementById("renewalsSection").hidden = false;
 }

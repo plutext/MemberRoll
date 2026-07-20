@@ -312,6 +312,40 @@ export). The recorded follow-up — Stripe fee/payout-id capture — would let t
 generated journal include its fee lines and §3's clearing account zero with no
 hands.
 
+CR-017 added the membership card — the CR-012 one-renderer lesson again.
+`Cards` composes from CURRENT register state (never anything stored) and ONLY
+for an ACTIVE membership: `Cards.compose(handle, membershipId, personId)` is
+the gate — one SQL joining the ACTIVE membership × the CURRENT
+MEMBER-relationship `household_person` × person × period × type, empty for
+everything else (unknown, non-MEMBER, non-ACTIVE). It reads live household
+composition, NOT the membership_person snapshot, so a PARTNER added after
+creation is still refused (the voting-rights rule against live state, and the
+snapshot could otherwise disagree). Empty reads as an indistinguishable 404,
+like CR-006 pay-link. `png()` renders 1012 × 638 (credit-card 85.6 × 54 mm at
+300 dpi) via Java2D from the bundled `card/DejaVuSans*.ttf` (loaded with
+`Font.createFont` — NEVER `new Font("SansSerif")` on a headless server) with an
+optional `card/logo.png` slot (present-or-absent, text-only when absent — a repo
+asset, the fork-distribution model, deliberately not an upload page); `toJson()`
+is the assertable companion so the PNG only needs a magic-bytes/size check. The
+member endpoints (`GET`/`POST /api/me/membership/{id}/card{,/info,/email}`) are
+authenticated but **deliberately not `@RolesAllowed`** (the subject→person link
+is the authority, CR-006); the member `card/email` goes to the caller's OWN
+primary email with NO `to` param (not an arbitrary-destination mailer). The
+admin endpoints (`/api/admin/memberships/{id}/card/{personId}{,/info,/email}`,
+admin-only) mirror CR-012's dialog — most members never Keycloak-link, so this
+is the primary card surface. `Mail` gained an `Attachment` record + a
+`sendAsync(…, attachment)` overload: the no-attachment path stays byte-for-byte
+the CR-004/005/012 single-part message (proven by every prior mail row staying
+green — notably CR12-06c, mail body == receipt text), an attachment switches to
+multipart/mixed. The **bearer-auth bite** shapes the UI: a static page's `<img
+src="/api/…">` sends no Authorization header and 401s, so every image use (the
+member page `<img>`, the download `<a>`, the print pop-up, the admin dialog
+preview) hangs off ONE blob URL from an authenticated `fetch`, and
+`window.print()` fires only after the image's `load` event. Wallet passes were
+rejected (two vendor integrations + an annually-expiring Apple cert — a volunteer
+society's time bomb); the card is a low-stakes credential (no QR/validity check),
+staleness self-evident from "Valid to <period end_date>".
+
 CR-008 readied production (docs/change-requests/008-production-deployment.md,
 go-live runbook included there): the deploy assets — frozen at CR-001 —
 caught up with the app. Prod compose now passes `PUBLIC_BASE_URL`

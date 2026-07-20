@@ -1575,6 +1575,125 @@ else
   echo "SKIP CR15-03..08 (reconciliation fixtures + marks — needs psql)"
 fi
 
+# --- membership card (CR-017) -----------------------------------------------
+# One renderer, several surfaces: the on-screen copy, download, print pop-up and
+# emailed attachment are the same PNG, composed from CURRENT register state and
+# only for an ACTIVE membership (a card asserts financial standing). The member
+# endpoints authorize on the person.keycloak_subject link (CR-006), never a
+# role. Reuses the CR-006 linked account: L = SSJP (testuser's linked person),
+# A = SSMJ made ACTIVE by a full payment; a PARTNER R shares A's household;
+# P = SSME (a PENDING membership in another household). The PNG itself gets a
+# magic-bytes/size check — the JSON companion is the assertable surface.
+#
+# The guest/noaud gate rows run always; the data rows ride the CR-006 fixtures
+# (guard on SSJP set). Mail rows key off the server's SMTP config (mailEnabled),
+# like CR-012; the 503 row is the flip side.
+check "CR17-01 me card guest 401"      "401" "$(code $API/me/membership/1/card)"
+check "CR17-01b me info guest 401"     "401" "$(code $API/me/membership/1/card/info)"
+check "CR17-01c me email guest 401"    "401" "$(code -X POST $API/me/membership/1/card/email)"
+check "CR17-01d me card noaud 401"     "401" "$(code $API/me/membership/1/card -H "Authorization: Bearer $NOAUD")"
+
+if [ "$PSQL_OK" = 1 ] && [ -n "${SSJP:-}" ]; then
+  CARDL=$SSJP; CARDA=$SSMJ; CARDP=$SSME
+  CARDUSER=$(tok testuser test-cli)   # fresh token — the CR-006 USER4 may have aged out
+  PEND_END=$(psqlq "SELECT end_date FROM membership_period WHERE membership_period_id=$P2526")
+  # make A ACTIVE (SINGLE fee 4500), add a PARTNER R to A's household (household
+  # composition, not the membership snapshot — Cards.compose reads the former)
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-20\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$CARDA,\"amountCents\":4500}]}" >/dev/null
+  JPOST $API/admin/people "{\"givenName\":\"Rae\",\"familyName\":\"$SS\",\"emails\":[{\"email\":\"rae.$$@ss.test\",\"isPrimary\":true}]}" >/dev/null; CARDR=$(body | jsq "j['id']")
+  JPOST $API/admin/households/$SSHJ/people "{\"personId\":$CARDR,\"relationshipType\":\"PARTNER\"}" >/dev/null
+  # a no-email MEMBER in an ACTIVE membership — for the admin "no default" 400 row
+  JPOST $API/admin/people "{\"givenName\":\"Quill\",\"familyName\":\"$SS\"}" >/dev/null; CARDQ=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$SS Q\",\"primaryContactPersonId\":$CARDQ}" >/dev/null; SSHQ=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$SSHQ,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; SSMQ=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-20\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$SSMQ,\"amountCents\":4500}]}" >/dev/null
+
+  # row 2: the composed fields for the linked member
+  CINFO=$(curl -s $API/me/membership/$CARDA/card/info -H "Authorization: Bearer $CARDUSER")
+  check "CR17-02 me info 200"           "200" "$(code $API/me/membership/$CARDA/card/info -H "Authorization: Bearer $CARDUSER")"
+  check "CR17-02b name preferred/given" "Jude $SS" "$(echo "$CINFO" | jsq "j['name']")"
+  check "CR17-02c type SINGLE"          "SINGLE" "$(echo "$CINFO" | jsq "j['typeName']")"
+  check "CR17-02d period 2025-2026"     "2025-2026" "$(echo "$CINFO" | jsq "j['periodName']")"
+  check "CR17-02e validTo = end_date"   "$PEND_END" "$(echo "$CINFO" | jsq "j['validTo']")"
+  check "CR17-02f memberNo = person id" "$CARDL" "$(echo "$CINFO" | jsq "str(j['memberNo'])")"
+  check "CR17-02g mailEnabled true"     "true" "$(echo "$CINFO" | jsq "str(j['mailEnabled']).lower()")"
+  check "CR17-02h emailTo primary"      "testuser@example.invalid" "$(echo "$CINFO" | jsq "j['emailTo']")"
+
+  # row 3: the PNG itself — image/png, magic bytes, > 10 kB
+  check "CR17-03 me card 200"           "200" "$(code $API/me/membership/$CARDA/card -H "Authorization: Bearer $CARDUSER")"
+  check "CR17-03b content-type png"     "image/png" "$(curl -s -o /dev/null -w '%{content_type}' $API/me/membership/$CARDA/card -H "Authorization: Bearer $CARDUSER")"
+  check "CR17-03c PNG magic bytes"      "89504e47" "$(curl -s $API/me/membership/$CARDA/card -H "Authorization: Bearer $CARDUSER" | head -c 4 | xxd -p)"
+  check "CR17-03d length > 10kB"        "yes" "$(curl -s $API/me/membership/$CARDA/card -H "Authorization: Bearer $CARDUSER" | wc -c | awk '{print ($1>10240)?"yes":"no"}')"
+
+  # row 4: another household's membership + a nonexistent id are the same 404
+  check "CR17-04 me foreign card 404"   "404" "$(code $API/me/membership/$CARDP/card -H "Authorization: Bearer $CARDUSER")"
+  check "CR17-04b me foreign info 404"  "404" "$(code $API/me/membership/$CARDP/card/info -H "Authorization: Bearer $CARDUSER")"
+  check "CR17-04c me foreign email 404" "404" "$(code -X POST $API/me/membership/$CARDP/card/email -H "Authorization: Bearer $CARDUSER")"
+  check "CR17-04d me nonexistent 404"   "404" "$(code $API/me/membership/999999/card -H "Authorization: Bearer $CARDUSER")"
+
+  # row 5: demote A below its fee → no card without financial standing; restore
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-20\",\"amountCents\":-4500,\"method\":\"CASH\",\"notes\":\"cr17 demote\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$CARDA,\"amountCents\":-4500}]}" >/dev/null
+  check "CR17-05 demoted no card 404"   "404" "$(code $API/me/membership/$CARDA/card/info -H "Authorization: Bearer $CARDUSER")"
+  JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-20\",\"amountCents\":4500,\"method\":\"CASH\",\"notes\":\"cr17 restore\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$CARDA,\"amountCents\":4500}]}" >/dev/null
+  check "CR17-05b restored card 200"    "200" "$(code $API/me/membership/$CARDA/card/info -H "Authorization: Bearer $CARDUSER")"
+
+  # row 7: an authenticated but UNLINKED account learns nothing (indistinct 404)
+  check "CR17-07 unlinked info 404"     "404" "$(code $API/me/membership/$CARDA/card/info -H "Authorization: Bearer $VIEWER")"
+
+  # row 8: admin endpoints role gate (guest/user 403, noaud 401)
+  check "CR17-08 admin card guest 403"  "403" "$(code $API/admin/memberships/$CARDA/card/$CARDL)"
+  check "CR17-08b admin card user 403"  "403" "$(code $API/admin/memberships/$CARDA/card/$CARDL -H "Authorization: Bearer $USER")"
+  check "CR17-08c admin card noaud 401" "401" "$(code $API/admin/memberships/$CARDA/card/$CARDL -H "Authorization: Bearer $NOAUD")"
+
+  # row 9: admin GET info + PNG for the same person — same fields, PNG magic
+  AINFO=$(curl -s $API/admin/memberships/$CARDA/card/$CARDL/info -H "Authorization: Bearer $ADMIN")
+  check "CR17-09 admin info 200"        "200" "$(code $API/admin/memberships/$CARDA/card/$CARDL/info -H "Authorization: Bearer $ADMIN")"
+  check "CR17-09b admin name matches"   "Jude $SS" "$(echo "$AINFO" | jsq "j['name']")"
+  check "CR17-09c admin defaultTo"      "testuser@example.invalid" "$(echo "$AINFO" | jsq "j['defaultTo']")"
+  check "CR17-09d admin PNG magic"      "89504e47" "$(curl -s $API/admin/memberships/$CARDA/card/$CARDL -H "Authorization: Bearer $ADMIN" | head -c 4 | xxd -p)"
+
+  # row 10: a PARTNER-relationship person of A's household gets no card (MEMBER-only)
+  check "CR17-10 admin PARTNER 404"     "404" "$(code $API/admin/memberships/$CARDA/card/$CARDR -H "Authorization: Bearer $ADMIN")"
+  check "CR17-10b admin PARTNER info 404" "404" "$(code $API/admin/memberships/$CARDA/card/$CARDR/info -H "Authorization: Bearer $ADMIN")"
+
+  # row 11: PENDING membership / unknown membership / unknown person → 404 each
+  check "CR17-11 admin PENDING 404"     "404" "$(code $API/admin/memberships/$CARDP/card/$SSE1 -H "Authorization: Bearer $ADMIN")"
+  check "CR17-11b admin unknown mem 404" "404" "$(code $API/admin/memberships/999999/card/$CARDL -H "Authorization: Bearer $ADMIN")"
+  check "CR17-11c admin unknown person 404" "404" "$(code $API/admin/memberships/$CARDA/card/999999 -H "Authorization: Bearer $ADMIN")"
+
+  # rows 6/12/13: the mail path depends on the server's SMTP config
+  MAIL_ON=$(curl -s $API/admin/email/templates -H "Authorization: Bearer $ADMIN" | jsq "j['mailEnabled']")
+  if [ "$MAIL_ON" = "True" ]; then
+    # row 12 (400 half): admin, no default and no `to` → 400 (Quill has no email)
+    check "CR17-12c admin no address 400" "400" "$(code -X POST $API/admin/memberships/$SSMQ/card/$CARDQ/email -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}')"
+    # row 12 (202 halves): admin default + explicit override both 202
+    check "CR17-12 admin default 202"    "202" "$(code -X POST $API/admin/memberships/$CARDA/card/$CARDL/email -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}')"
+    check "CR17-12b default sentTo"      "testuser@example.invalid" "$(body | jsq "j['sentTo']")"
+    check "CR17-12d admin override 202"  "202" "$(code -X POST $API/admin/memberships/$CARDA/card/$CARDL/email -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"to\":\"card.over.$$@example.com\"}")"
+    check "CR17-12e override sentTo"     "card.over.$$@example.com" "$(body | jsq "j['sentTo']")"
+    # row 6: member emails their own card → 202 to their primary; attachment lands
+    check "CR17-06 me email 202"         "202" "$(code -X POST $API/me/membership/$CARDA/card/email -H "Authorization: Bearer $CARDUSER")"
+    check "CR17-06b me sentTo primary"   "testuser@example.invalid" "$(body | jsq "j['sentTo']")"
+    if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
+      # newest message to the member — assert the PNG attachment + society body
+      CMID=""; for _ in $(seq 1 8); do CMID=$(curl -s "$MAILPIT/api/v1/search?query=to:%22testuser@example.invalid%22" | jsq "j['messages'][0]['ID']"); [ -n "$CMID" ] && break; sleep 0.5; done
+      CMSG=$(curl -s "$MAILPIT/api/v1/message/$CMID")
+      check "CR17-06c one attachment"    "1" "$(echo "$CMSG" | jsq "len(j['Attachments'])")"
+      check "CR17-06d attachment name"   "membership-card-2025-2026.png" "$(echo "$CMSG" | jsq "j['Attachments'][0]['FileName']")"
+      check "CR17-06e attachment png"    "image/png" "$(echo "$CMSG" | jsq "j['Attachments'][0]['ContentType']")"
+      check "CR17-06f body has society"  "true" "$(echo "$CMSG" | jsq "str('MemberRoll Dev Society' in j['Text']).lower()")"
+    else
+      echo "SKIP CR17-06c..f mail-attachment rows (Mailpit not reachable at $MAILPIT)"
+    fi
+  else
+    # row 13: no SMTP → an explicit 503 (both surfaces), never a silent no-op
+    check "CR17-13 me email unconfigured 503" "503" "$(code -X POST $API/me/membership/$CARDA/card/email -H "Authorization: Bearer $CARDUSER")"
+    check "CR17-13b admin email unconfigured 503" "503" "$(code -X POST $API/admin/memberships/$CARDA/card/$CARDL/email -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}')"
+  fi
+else
+  echo "note: CR-017 data rows skipped (need psql + the CR-006 linked fixtures)"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"

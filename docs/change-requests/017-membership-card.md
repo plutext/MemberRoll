@@ -1,6 +1,6 @@
 # CR 017: Membership card — from self-serve, by email, or printed
 
-Status: PROPOSED (2026-07-20)
+Status: IMPLEMENTED + VERIFIED (2026-07-20)
 
 ## Problem
 
@@ -230,7 +230,82 @@ reading first. Points the design hinges on:
 
 ## Results
 
-(to be recorded at implementation)
+Implemented as designed (2026-07-20, Opus 4.8). The pieces:
+
+- `Cards` — the one renderer. `compose(handle, membershipId, personId)` is the
+  gate: one SQL joining `membership` (status ACTIVE) × current
+  MEMBER-relationship `household_person` × `person` × period × type, empty for
+  anything else. Reading current household composition (not the membership
+  snapshot) means a PARTNER added after creation is still refused — the
+  MEMBER-only rule holds against live state. `png()` renders 1012 × 638 RGB via
+  Java2D; `toJson()` is the assertable companion (`name`, `typeName`,
+  `periodName`, `validTo` = ISO end_date, `validToText` = "31 August 2026",
+  `memberNo` = person id, `filename`, `mailEnabled`); `subject`/`emailBody`/
+  `attachment` back the sends. Fonts: both `DejaVuSans.ttf` and
+  `DejaVuSans-Bold.ttf` are bundled under `card/` (+ the licence), loaded with
+  `Font.createFont` and cached; the optional `card/logo.png` slot is read once,
+  present-or-absent, and rendered text-only when absent.
+- `Mail` gained the `Attachment(filename, contentType, bytes)` record and the
+  `sendAsync(to, subject, body, attachment)` / `send(…, attachment)` overloads.
+  The no-attachment path is a straight `message.setText` (unchanged); an
+  attachment switches to multipart/mixed (text part + `ByteArrayDataSource`
+  file part). Resolution/timeouts/scrub untouched.
+- `MeResource`: `GET card` (PNG, `Cache-Control: no-store`), `GET card/info`
+  (fields + `emailTo` = caller's primary email), `POST card/email` (to the
+  caller's own address only — no `to` param). All 404 via `Cards.compose` when
+  the caller is not a current MEMBER of the ACTIVE membership.
+- `AdminMembershipsResource`: `GET card/{personId}`, `.../info` (+ `defaultTo`),
+  `POST .../email` (`{to?}` → `defaultTo` → 400). Same gate.
+- Member page (`web/`): a card section per ACTIVE membership — the blob-fetched
+  `<img>`, Download (blob + period-stamped filename), Print (bare pop-up, card
+  only, crop marks, `print()` after the image `load`), Email me my card
+  (shown per `mailEnabled`/`emailTo`). Admin dialog (`admin/`): a per-person
+  row list with a **Card…** button on MEMBER rows of an ACTIVE membership,
+  opening a Receipt…-shaped dialog (blob preview / Print / Download / Email).
+
+**The two hazards, both proven clean:**
+
+- *Mail no-attachment path unchanged* — every existing mail row stayed green:
+  CR4 receipt (`CR4-19`), CR5 sends + headers (`CR5-11..17`), CR12 receipt
+  body-equality (`CR12-06c`) and override (`CR12-07`), CR14 test-send. If the
+  overload had leaked into the plain path, `CR12-06c` (mail body byte-equals
+  the receipt text) would have broken first. It didn't.
+- *Bearer-auth image fetch* — the walkthrough's `B1` asserts the member page's
+  `<img>` decoded (`naturalWidth > 0`) from a `blob:` URL, and `B3` that the
+  Print pop-up prints only after the image loads. A plain `<img src>` would
+  have 401'd.
+
+**Verification.** Baseline full matrix **PASS=603 FAIL=0** (a fully green
+baseline this run — even the usually-flaky `27b`/`CR10-*`/`CR5-16*` rows
+passed). After implementation, **PASS=649 FAIL=0** — the 46 new `CR17-*` rows
+(the 13-case plan, expanded) all green, and re-run identically green
+(`PASS=649 FAIL=0` twice), proving the `$$`-suffixed fixtures self-clean. The
+`CR17-*` block covers: the guest/noaud 401s and admin 403/401 role gates; the
+composed fields incl. `validTo`/`memberNo`/`emailTo`; the PNG's `image/png`
+type + `89504e47` magic + >10 kB size; the indistinguishable 404s (foreign
+membership, nonexistent id, PENDING, PARTNER, unknown person, unlinked
+account); the demote→404→restore→200 standing check; the Mailpit attachment
+assertion (one attachment, `membership-card-2025-2026.png`, `image/png`, body
+names the society); and the 503 mail-unconfigured flip side.
+
+Browser walkthrough (Playwright, `tmp/cr017-fixtures/cr017-walkthrough.js`)
+**PASS=15 FAIL=0**: member page shows no card for a PENDING membership and the
+card for the same membership once ACTIVE; the image loads from a blob; Download
+carries the blob + `membership-card-2025-2026.png`; the Print pop-up holds only
+the card; Email me my card round-trips through Mailpit with the PNG attachment;
+the admin dialog shows a Card… button on the MEMBER row and none on the PARTNER
+row, its preview loads, and Email sends. The rendered PNG was confirmed legible
+at print size (society name band, name, type · period, valid-to, member no.).
+
+### Divergences from the design
+
+- The `card/info` JSON carries `validToText` (the long "31 August 2026" form)
+  in addition to `validTo` (the ISO end_date the design named) — the dialogs
+  never needed it (the PNG shows the long form), but it is a cheap, honest
+  field and keeps the JSON a faithful mirror of the card face.
+- Both the regular and bold DejaVu Sans TTFs ship (the design said "a DejaVu
+  Sans TTF"); the bold weight is the society name + member name, and bundling
+  both is the same licence, so it was worth the ~0.7 MB.
 
 ## Follow-ups
 

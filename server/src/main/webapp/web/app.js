@@ -148,6 +148,10 @@ async function renderMembership() {
             card.appendChild(pay);
         }
         list.appendChild(card);
+        // an ACTIVE membership carries a card (CR-017); the server is the
+        // authority (it 404s a card for a non-ACTIVE one), so this is a hint
+        // that saves a certain-to-404 fetch — renderCard re-checks either way
+        if (m.status === "ACTIVE") renderCard(card, m.membershipId);
     }
 
     const historyWrap = document.getElementById("historyWrap");
@@ -173,6 +177,123 @@ async function payNow(membershipId, button) {
         }
         const {url} = await response.json();
         location.href = url; // the CR-004 pay page takes it from here
+    } finally {
+        button.disabled = false;
+    }
+}
+
+// ---- membership card (CR-017) ----------------------------------------------
+
+/* The bearer-auth bite (recorded in the CR): a plain <img src="/api/me/..."> sends
+   NO Authorization header and 401s. So we fetch the PNG through Auth.api (bearer
+   attached), wrap the bytes in ONE blob URL, and hang the <img>, the download
+   link and the print pop-up all off that single blob. */
+async function renderCard(container, membershipId) {
+    // info first — it decides which buttons the page shows (and 404s for a
+    // membership with no card, e.g. one that just lapsed since the list loaded)
+    const infoResp = await Auth.api(`/me/membership/${membershipId}/card/info`);
+    if (!infoResp || !infoResp.ok) return; // no card — nothing to show, silently
+    const info = await infoResp.json();
+    const pngResp = await Auth.api(`/me/membership/${membershipId}/card`);
+    if (!pngResp || !pngResp.ok) return;
+    const blobUrl = URL.createObjectURL(await pngResp.blob());
+
+    const wrap = document.createElement("div");
+    wrap.className = "card-region";
+    const h = document.createElement("h4");
+    h.textContent = "Membership card";
+    const img = document.createElement("img");
+    img.className = "card-image";
+    img.alt = "Membership card";
+    img.src = blobUrl;
+    wrap.append(h, img);
+
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+    // Download — the same blob, named from the server (period-stamped)
+    const dl = document.createElement("a");
+    dl.textContent = "Download";
+    dl.href = blobUrl;
+    dl.download = info.filename;
+    dl.setAttribute("role", "button");
+    dl.className = "secondary";
+    actions.appendChild(dl);
+    // Print — a bare pop-up holding only the card at true size
+    const pr = document.createElement("button");
+    pr.textContent = "Print";
+    pr.className = "secondary";
+    pr.onclick = () => printCard(blobUrl);
+    actions.appendChild(pr);
+    // Email me my card — only when mail is configured and we have their address
+    if (info.mailEnabled && info.emailTo) {
+        const em = document.createElement("button");
+        em.textContent = "Email me my card";
+        em.onclick = () => emailMyCard(membershipId, em);
+        actions.appendChild(em);
+    } else {
+        const hint = document.createElement("span");
+        hint.className = "muted";
+        hint.textContent = info.mailEnabled
+            ? "No email on file — download or print your card."
+            : "Email is not set up here — download or print your card.";
+        actions.appendChild(hint);
+    }
+    wrap.appendChild(actions);
+    container.appendChild(wrap);
+}
+
+// print: a bare same-origin pop-up holding only the card image, CSS-sized to
+// its true 85.6mm width with crop marks, then window.print() — but only AFTER
+// the image's load event (printing before decode yields a blank card)
+function printCard(blobUrl) {
+    const w = window.open("", "_blank");
+    if (!w) {
+        say("Pop-up blocked — allow pop-ups for this site to print your card.", true);
+        return;
+    }
+    w.document.title = "Membership card";
+    const style = w.document.createElement("style");
+    style.textContent =
+        "@page { margin: 14mm } html,body { margin: 0 }"
+        + " .box { position: relative; width: 85.6mm; height: 54mm; margin: 8mm auto; }"
+        + " .box img { width: 85.6mm; height: 54mm; display: block; }"
+        // four L-shaped crop marks, one per corner, just outside the card edge
+        + " .m { position: absolute; background: #000; }"
+        + " .h { width: 4mm; height: .2mm } .v { width: .2mm; height: 4mm }"
+        + " .tl-h{top:-2mm;left:-5mm}.tl-v{top:-5mm;left:-2mm}"
+        + " .tr-h{top:-2mm;right:-5mm}.tr-v{top:-5mm;right:-2mm}"
+        + " .bl-h{bottom:-2mm;left:-5mm}.bl-v{bottom:-5mm;left:-2mm}"
+        + " .br-h{bottom:-2mm;right:-5mm}.br-v{bottom:-5mm;right:-2mm}";
+    w.document.head.appendChild(style);
+    const box = w.document.createElement("div");
+    box.className = "box";
+    const img = w.document.createElement("img");
+    img.src = blobUrl; // same-origin pop-up can read the opener's blob URL
+    box.appendChild(img);
+    for (const c of ["tl-h h", "tl-v v", "tr-h h", "tr-v v",
+                     "bl-h h", "bl-v v", "br-h h", "br-v v"]) {
+        const mark = w.document.createElement("div");
+        mark.className = "m " + c;
+        box.appendChild(mark);
+    }
+    w.document.body.appendChild(box);
+    w.document.close();
+    // wait for the image to decode before printing
+    if (img.complete) { w.focus(); w.print(); }
+    else img.onload = () => { w.focus(); w.print(); };
+}
+
+async function emailMyCard(membershipId, button) {
+    button.disabled = true;
+    try {
+        const resp = await Auth.api(`/me/membership/${membershipId}/card/email`, {method: "POST"});
+        if (!resp) return;
+        if (!resp.ok) {
+            say(`Could not email your card (HTTP ${resp.status}).`, true);
+            return;
+        }
+        const {sentTo} = await resp.json();
+        say(`Your membership card has been emailed to ${sentTo}.`);
     } finally {
         button.disabled = false;
     }

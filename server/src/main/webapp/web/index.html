@@ -21,6 +21,16 @@
             border-radius: var(--pico-border-radius); padding: .8rem 1rem; margin: .6rem 0; }
         .membership-card h3 { margin: 0 0 .3rem; font-size: 1.05rem; }
         .membership-card p { margin: .2rem 0 .6rem; }
+        /* CR-017 membership card */
+        .card-region { margin-top: .6rem; padding-top: .6rem;
+            border-top: 1px dashed var(--pico-muted-border-color); }
+        .card-region h4 { margin: .2rem 0 .4rem; font-size: .95rem; }
+        .card-image { max-width: 100%; width: 420px; height: auto; display: block;
+            border: 1px solid var(--pico-muted-border-color); border-radius: 8px; }
+        .card-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+            margin: .5rem 0 0; }
+        .card-actions a[role=button], .card-actions button { margin: 0; width: auto; }
+        .card-actions .muted { color: var(--pico-muted-color); font-size: .85rem; }
         /* the CR-009 status badges, colours matched to the admin panel */
         .badge { display: inline-block; padding: .1rem .55rem; border-radius: 999px;
             font-size: .8rem; font-weight: 600; border: none; }
