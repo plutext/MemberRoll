@@ -1953,6 +1953,7 @@ check "33e admin new-member page 200"  "200" "$(code $ORIGIN/server/admin/new-me
 check "33f admin email page 200"        "200" "$(code $ORIGIN/server/admin/email.html)"
 check "33g admin committee page 200"    "200" "$(code $ORIGIN/server/admin/committee.html)"
 check "33h admin mail-settings page 200" "200" "$(code $ORIGIN/server/admin/mail-settings.html)"
+check "33i admin reports page 200"       "200" "$(code $ORIGIN/server/admin/reports.html)"
 check "34 auth.js served"              "200" "$(code $ORIGIN/server/shared/auth.js)"
 
 echo
