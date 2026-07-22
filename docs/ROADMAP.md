@@ -92,7 +92,7 @@ data too) → **Committed**.
 | 004 | Stripe | Verified · committed | Magic-link pay page, Checkout, webhook, receipt email (brings minimal SMTP config), journal add-on + donation line |
 | 005 | Segment email | Verified · committed | Templates, merge fields, segment sends with embedded magic links, send log; communication preferences: admin preferences UI (default EMAIL, manual POST exceptions) and sends honouring it |
 | 006 | Member self-serve | Implemented (2026-07-18, verified) | Keycloak-linked "my membership" page, pay from there; register-push account provisioning; retired the NotesResource placeholder |
-| 007 | Public application form | Planned (pre-proposal notes 2026-07-18) | New-member APPLIED workflow with committee approval — constitutional constraints (clause 3: committee decision, 28-day payment window, no money at application) recorded in the CR doc ahead of the proposal; entrance-fee question deferred |
+| 007 | Public application form | Proposed (2026-07-23; entrance fee resolved $0) | Guest apply page → V10 staging tables (deletable — the register's `APPLIED` status stays unused) with honeypot + email-confirmation round trip; admin queue with duplicate flags; approve = committee-decision record (decision date + minute ref) materializing via the CR-010 path to PENDING_PAYMENT with the CR-004 pay link in the clause-3(5)(a) notice; 28-day aging badge; `application_settings` blob (alert mailbox → membership@, `formEnabled` = the clause-3-minute go-live switch — ships dark). See [007-public-application-form.md](change-requests/007-public-application-form.md) |
 | 008 | Production deployment | Implemented (2026-07-19, local half verified) | Go-live for the Yass instance: close the deploy-asset drift (post-CR-001 env in prod compose, both databases in backup.sh, realm smtpServer render, matrix runnable against the local smoke), live Stripe keys + webhook, Exchange Online mail (app via CR-014 page, Keycloak via console) with SPF/DKIM verified, real member-list import + go-live runbook, backup/restore drill. See [008-production-deployment.md](change-requests/008-production-deployment.md) — society decisions recorded 2026-07-19 (domain members.yasshistory.org.au, prices unchanged, secretary@ mailbox, provisioning deferred); still pending: society Stripe account + operator access, SMTP AUTH enablement |
 | 015 | Reconciliation export (out-of-band) | Proposed (revised 2026-07-19: manual-journal pattern) | Xero-ready payment categorisation built around the clearing-account + manual-journal pattern: date-range/method/unreconciled-only detail CSV (allocation split per payment + net totals), JSON preview, a ready-to-import Xero manual-journal CSV (gated on an opaque account-code mapping in `app_setting`, CR-014 style), and an explicit bounded mark-reconciled step — the first consumer of V1's `reconciliation_status` column. Clearing account zeroing = the monthly proof. No Xero API, no schema change; Stripe fee/payout-id capture recorded as the follow-up that makes the journal fully mechanical. Independent of 007/011; useful from the first live payout |
 | 009 | UI polish (out-of-band) | Verified · committed | Pico CSS baseline across all static pages, dialog-based forms, person picker, status badges — orthogonal to the sequence. Implementation order decided 2026-07-18: 009 lands before 004, so the public pay page starts on the new baseline |
@@ -124,13 +124,14 @@ more effective carrying a pay-now link.
   prices unchanged (Single $45, Household $65, journal +$10), year
   1 Sep – 31 Aug confirmed, renewal-open date 1 July.*
 - Whether the society passes the Stripe fee on to the payer.
-- **Entrance fee — DEFERRED (2026-07-18).** Constitution clause 5(1)
+  *Answered by the committee 2026-07-23: fees stay absorbed by the
+  society (current setting kept).*
+- **Entrance fee — RESOLVED (2026-07-23).** Constitution clause 5(1)
   prescribes a $20 entrance fee for approved applicants ("or another
   amount determined by the committee") on top of the annual
-  subscription. Unknown whether one currently applies; if it does,
-  CR-007's approval flow must bill entrance + subscription and the
-  payment model needs a shape for it. Deferred until the society
-  confirms — recorded as an outstanding issue in
+  subscription. The committee has determined the entrance fee is
+  **zero**; no billing shape is needed and CR-007's approval flow
+  bills the annual subscription only — recorded in
   [CR-007](change-requests/007-public-application-form.md).
 
 Answered 2026-07-18: the Keycloak↔Person linking rule and the fate of
