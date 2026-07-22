@@ -2442,10 +2442,12 @@ function msApplyPreset() {
     document.getElementById("msPort").value = "587";
     document.getElementById("msSecurity").value = "STARTTLS";
     // Exchange Online authenticates as the sending mailbox — mirror From into
-    // username unless the admin has already set one
+    // username unless the admin already set a plausible one. A username without
+    // an "@" (e.g. a person's name typed by mistake) can never be right for
+    // Microsoft 365, so the preset overwrites it too.
     const from = document.getElementById("msFrom").value.trim();
     const user = document.getElementById("msUsername");
-    if (from && !user.value.trim()) user.value = from;
+    if (from && !user.value.includes("@")) user.value = from;
     say("Filled the Microsoft 365 preset — set From/username to your mailbox, then test.");
 }
 
@@ -2481,9 +2483,17 @@ async function testMailSettings() {
     const to = document.getElementById("msTestTo").value.trim();
     const result = document.getElementById("msTestResult");
     if (!to.includes("@")) { result.textContent = "Enter a To address."; result.className = "warn-note"; return; }
+    const body = msFormBody();
+    // Microsoft 365 authenticates as the mailbox address — a name-shaped
+    // username fails with an unhelpful generic 535, so catch it before the wire
+    if (body.host === "smtp.office365.com" && body.username && !body.username.includes("@")) {
+        result.textContent = "For Microsoft 365 the login username must be the mailbox's email address"
+            + " — “" + body.username + "” will be rejected.";
+        result.className = "warn-note";
+        return;
+    }
     result.textContent = "Sending…";
     result.className = "muted";
-    const body = msFormBody();
     body.to = to;
     const response = await registerCall("/admin/mail-settings/test", {
         method: "POST", headers: {"Content-Type": "application/json"},
@@ -2500,8 +2510,18 @@ async function testMailSettings() {
     }
 }
 
+// reveals only what the admin has typed — the stored password is never sent
+// to the page (loadMailSettings gets passwordSet, not the secret)
+function toggleMailPassword() {
+    const pw = document.getElementById("msPassword");
+    const shown = pw.type === "text";
+    pw.type = shown ? "password" : "text";
+    document.getElementById("msShowPassword").textContent = shown ? "Show" : "Hide";
+}
+
 function wireMailSettings() {
     document.getElementById("msPreset").onclick = msApplyPreset;
+    document.getElementById("msShowPassword").onclick = toggleMailPassword;
     document.getElementById("msSave").onclick = saveMailSettings;
     document.getElementById("msDelete").onclick = deleteMailSettings;
     document.getElementById("msClearPassword").onclick = clearMailPassword;

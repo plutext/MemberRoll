@@ -317,3 +317,23 @@ server environment. Screenshots: `CR14-A-preset` / `-B-test-send` /
   shape blocks it.
 - A general settings page (society name, public base URL) if more
   configuration moves from env to DB.
+- **Field-label correction (2026-07-22, from live onboarding).** The
+  "Username (optional)" label read to a real admin as a human display
+  name ("Jason Harrop"), producing a generic `535 5.7.3` from Exchange
+  Online with **no Entra sign-in log entry** (an unknown username never
+  reaches identity, so nothing is logged against the mailbox) — a
+  multi-hour dead end that had the tenant's SMTP-AUTH switches blamed
+  first. Three changes: the label is now "Login username" with an
+  explicit not-a-person's-name hint; the MS365 preset overwrites an
+  `@`-less username with the From mailbox (before, it only filled an
+  empty field, so the mistaken value survived the preset); and the test
+  button pre-flights `smtp.office365.com` + `@`-less username into a
+  clear on-page error instead of the wire's unhelpful 535. The password
+  field also gained a Show/Hide toggle (same session) — it can only
+  reveal what's typed, since the stored password never reaches the page.
+- **Operator doc (2026-07-22):** the full Exchange Online settings
+  checklist and diagnosis procedure from that onboarding is written up
+  in `docs/smtp.office365.com_troubleshooting.md` (tenant + mailbox
+  SMTP-AUTH switches, security defaults, MFA/app passwords, Conditional
+  Access, sign-in-log decoding incl. the no-entry-at-all signature,
+  the stored-password test trap, and the out-of-app curl check).

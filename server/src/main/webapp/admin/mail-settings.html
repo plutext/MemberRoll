@@ -55,9 +55,15 @@
         <label>From address <input id="msFrom" placeholder="noreply@society.org.au"></label>
     </div>
     <div class="grid">
-        <label>Username (optional) <input id="msUsername" autocomplete="off" placeholder="noreply@society.org.au"></label>
+        <label>Login username (optional)
+            <input id="msUsername" autocomplete="off" placeholder="noreply@society.org.au">
+            <small class="muted">What the server signs in to the relay as — for
+                Microsoft 365 this is the mailbox's email address, never a
+                person's name. Leave blank only if the relay needs no login.</small>
+        </label>
         <label>Password
             <input id="msPassword" type="password" autocomplete="new-password">
+            <button id="msShowPassword" type="button" class="secondary">Show</button>
             <button id="msClearPassword" type="button" class="secondary" hidden>Clear stored password</button>
         </label>
     </div>

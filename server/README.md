@@ -79,6 +79,10 @@ page → environment → disabled; with mail disabled, every send is a logged
 no-op and the send-dependent endpoints answer 503. Keycloak's own
 forgot-password/verification mail is configured separately, in the realm.
 
+Sending through Microsoft 365 / Exchange Online has its own tenant-side
+prerequisites and failure modes — see
+[docs/smtp.office365.com_troubleshooting.md](../docs/smtp.office365.com_troubleshooting.md).
+
 ### Fresh start
 
 Wipe the dev database and Keycloak state back to a clean slate:
