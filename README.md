@@ -31,7 +31,9 @@ and the running cost is little more than hosting.
 - **Member self-serve** — members can log in to see their household's
   membership status, pay online, and download their membership card.
 - **Membership cards** — a printable/emailable card generated on demand
-  from the current register, from the member page or the admin panel.
+  from the current register, from the member page or the admin panel,
+  with assignable member numbers (so life members can hold the low ones,
+  or legacy paper numbers can carry over).
 - **Receipts on demand** — any payment can be printed or emailed as a
   receipt, numbered and reproducible.
 - **Committee register** — office-bearers and ordinary committee members

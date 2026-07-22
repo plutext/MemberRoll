@@ -388,6 +388,23 @@ an empty CSV. The period-scoped exports stay on AdminPeriodsResource and
 the payment-scoped ones on AdminPaymentsResource — the reports page only
 links to them.
 
+CR-020 decoupled the card's member number from `person_id` (which is
+`GENERATED ALWAYS`, allocated in creation order forever — it can never
+honour "life members hold the lowest numbers" or a legacy paper number):
+`person.member_no` (V9, nullable + partial unique index, **no backfill**)
+with `Cards.compose` selecting `COALESCE(p.member_no, p.person_id)` into
+the `Card` record's `memberNo` — every card surface inherits from that
+one spot; `personId` stays the compose key. Assignment is manual only
+(the person form's "Member no." input riding the person payload;
+absent = clear, wholesale-replace like emails): no auto-assignment, no
+range enforcement — "1–30 are life members" is committee policy, not a
+constraint. A duplicate is the store's unique-violation mapped to a 409
+naming the number (`PersonStore.memberNoConflict` — the one anticipated
+write failure on that table). The folded-in importer fix: a zero-due
+group (LIFE) imports ACTIVE/approved with NO payment row regardless of
+`paid` (a $0 payment would trip `amount_cents <> 0` and roll the whole
+import back), and the preview's payment count excludes it.
+
 CR-008 readied production (docs/change-requests/008-production-deployment.md,
 go-live runbook included there): the deploy assets — frozen at CR-001 —
 caught up with the app. Prod compose now passes `PUBLIC_BASE_URL`

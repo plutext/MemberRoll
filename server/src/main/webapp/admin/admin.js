@@ -293,6 +293,7 @@ function openPersonForm(person) {
     document.getElementById("pfFamily").value = person?.familyName || "";
     document.getElementById("pfPreferred").value = person?.preferredName || "";
     document.getElementById("pfDob").value = person?.dateOfBirth || "";
+    document.getElementById("pfMemberNo").value = person?.memberNo ?? "";
     document.getElementById("pfEmails").value =
         (person?.emails || []).map(e => e.email).join("\n");
     document.getElementById("pfPhones").value =
@@ -349,6 +350,7 @@ function personPayload() {
         familyName: value("pfFamily"),
         preferredName: value("pfPreferred"),
         dateOfBirth: value("pfDob"),
+        memberNo: value("pfMemberNo") ? Number(value("pfMemberNo")) : null,
         notes: value("pfNotes"),
         emails: lines("pfEmails").map((email, i) => ({email, isPrimary: i === 0})),
         phones: lines("pfPhones").map((line, i) => {

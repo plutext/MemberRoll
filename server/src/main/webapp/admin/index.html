@@ -40,6 +40,11 @@
             <label>Family name* <input id="pfFamily"></label>
             <label>Preferred name <input id="pfPreferred"></label>
             <label>Date of birth <input id="pfDob" type="date"></label>
+            <!-- CR-020: the number the membership card shows; blank = unassigned
+                 (the card falls back to the person id). 1-30 are reserved for
+                 life members by committee policy, not enforced here. -->
+            <label>Member no. (blank = unassigned; shown on the membership card)
+                <input id="pfMemberNo" type="number" min="1" step="1"></label>
             <label>Emails (one per line; first is primary)
                 <textarea id="pfEmails" rows="2"></textarea></label>
             <label>Phones (one per line: number, optionally followed by MOBILE/HOME/WORK)

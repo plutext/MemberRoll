@@ -1,6 +1,6 @@
 # CR 020: Member numbers — decouple the card's number from person_id
 
-Status: PROPOSED (2026-07-23 — not yet implemented)
+Status: IMPLEMENTED + VERIFIED (2026-07-23)
 
 ## Problem
 
@@ -176,7 +176,56 @@ person still shows the id.
 
 ## Results
 
-(to be recorded when implemented)
+Implemented 2026-07-23, exactly as proposed:
+
+- **V9** `person.member_no` (nullable + CHECK > 0, partial unique index
+  `person_member_no`) — applied cleanly by Flyway against the existing
+  dev database on webapp start.
+- **PersonStore**: `Person` record gained `Integer memberNo`; create and
+  update bind it, and the one anticipated write failure — the unique
+  index tripping — is mapped to `ConflictException` naming the number
+  (`memberNoConflict`); anything else re-throws untouched.
+- **AdminPeopleResource**: `memberNo` rides the person payload (absent/
+  null on PUT clears — the form's wholesale-replace semantics); zero,
+  negative or non-numeric is a 400; the store's conflict surfaces as a
+  409 on both POST and PUT. `parseObject` is shared with CR-010's
+  new-member endpoint, which already mapped ConflictException, so the
+  field composes there for free.
+- **Cards**: `compose` selects `COALESCE(p.member_no, p.person_id) AS
+  member_no`; the `Card` record's new `memberNo` feeds `memberNoText()`
+  and `toJson` — every surface (member page, admin dialog, download,
+  print, email attachment, both `card/info`s) inherited it from that one
+  spot with no per-surface change. `personId` stays the compose key.
+- **Importer**: a zero-due group imports ACTIVE (approved = import date)
+  with no payment row regardless of `paid`; the preview's payment count
+  excludes it.
+- **UI**: "Member no." input in the person dialog (`pfMemberNo`), blank
+  = unassigned; payload sends `memberNo` only when set.
+
+### Matrix
+
+23 new CR20-* rows (assign/echo, card shows it, PNG renders, duplicate
+409 naming the number on PUT and POST, 0/negative/non-numeric 400s,
+clear-on-absent + card fallback, zero-due import ACTIVE/no-payment/
+preview-count with psql side-effect checks). Self-cleaning: the number
+is unique per run AND cleared by the row-6 check. CR17-02f (card
+memberNo = person id for an unassigned person) stayed green as the
+regression guard, as did the CR2-* non-zero-due import rows.
+
+Full matrix run twice on the dev stack, 2026-07-23: **PASS=743 FAIL=3**
+both runs, the 3 being the pre-existing environmental flakes (Keycloak
+listing row 27b, and the two "today" rows CR10-04g2/CR10-12c — the
+Postgres container's UTC `current_date` was still 07-22 during the
+morning-AEST run), unrelated to this CR.
+
+### Browser walkthrough
+
+`tmp/cr020-fixtures/cr020-walkthrough.js` (Playwright), **7/7**: person
+form round-trips the number; a duplicate is refused visibly in the open
+dialog (409 naming the number) and clearing the field then saves; the
+admin Card… dialog renders the PNG with the assigned number; the member
+page's own card shows an assigned number and falls back to the person id
+when cleared. Screenshots confirm the number on both card surfaces.
 
 ## Follow-ups / amendments
 

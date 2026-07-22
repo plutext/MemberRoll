@@ -123,7 +123,10 @@ final class ImportService {
             int people = plan.stream().mapToInt(g -> g.createdRows.size()).sum();
             int households = plan.size();
             int memberships = (int) plan.stream().filter(g -> g.membershipType != null).count();
-            int payments = (int) plan.stream().filter(g -> g.membershipType != null && g.paid).count();
+            // a zero-due group (e.g. LIFE, CR-018) never writes a payment row —
+            // $0 would violate the payment amount CHECK, and there is no money
+            int payments = (int) plan.stream()
+                    .filter(g -> g.membershipType != null && g.paid && g.amountDueCents != 0).count();
             return new Report(rows, errors, warnings, skipped,
                     new Counts(people, households, memberships, payments), created);
         }
@@ -388,9 +391,13 @@ final class ImportService {
 
             if (group.membershipType != null) {
                 // ACTIVE only once paid (approved on the import date); otherwise it
-                // waits for payment, so paid-ness stays derivable from allocations
-                String status = group.paid ? "ACTIVE" : "PENDING_PAYMENT";
-                LocalDate approved = group.paid ? today : null;
+                // waits for payment, so paid-ness stays derivable from allocations.
+                // A zero-due type (LIFE, CR-018) is ACTIVE regardless of the paid
+                // flag — nothing is owed, and a $0 payment row is uninsertable
+                // (payment.amount_cents <> 0) as well as meaningless.
+                boolean settled = group.paid || group.amountDueCents == 0;
+                String status = settled ? "ACTIVE" : "PENDING_PAYMENT";
+                LocalDate approved = settled ? today : null;
                 long membershipId = membershipStore.insertMembership(handle, group.period.id(),
                         group.membershipTypeId, householdId, status, today, approved,
                         group.period.start(), group.period.end(), group.amountDueCents);
@@ -399,7 +406,7 @@ final class ImportService {
                     membershipStore.insertMembershipPerson(handle, membershipId, personIds.get(i),
                             group.createdRows.get(i).relationship);
                 }
-                if (group.paid) {
+                if (group.paid && group.amountDueCents != 0) {
                     paymentStore.insertImportPayment(handle, membershipId, personIds.get(0),
                             group.amountDueCents, recordedBy);
                     payments++;

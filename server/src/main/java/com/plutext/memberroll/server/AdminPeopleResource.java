@@ -87,9 +87,13 @@ public class AdminPeopleResource {
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
         }
-        PersonStore.Person created = store.create(draft);
-        return Response.status(Response.Status.CREATED)
-                .entity(toJson(created).toString()).build();
+        try {
+            PersonStore.Person created = store.create(draft);
+            return Response.status(Response.Status.CREATED)
+                    .entity(toJson(created).toString()).build();
+        } catch (ConflictException e) {
+            return conflict(e.getMessage());
+        }
     }
 
     @GET
@@ -112,9 +116,13 @@ public class AdminPeopleResource {
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
         }
-        return store.update(id, draft)
-                .map(person -> Response.ok(toJson(person).toString()).build())
-                .orElseGet(AdminPeopleResource::notFound);
+        try {
+            return store.update(id, draft)
+                    .map(person -> Response.ok(toJson(person).toString()).build())
+                    .orElseGet(AdminPeopleResource::notFound);
+        } catch (ConflictException e) {
+            return conflict(e.getMessage());
+        }
     }
 
     // ---- self-serve link (CR-006) ---------------------------------------
@@ -263,9 +271,22 @@ public class AdminPeopleResource {
                 }
                 phones.add(new PersonStore.Phone(number, type, p.getBoolean("isPrimary", false)));
             }
+            // CR-020: an absent/null memberNo on PUT clears it (the form's
+            // wholesale-replace semantics, like emails and phones)
+            Integer memberNo = null;
+            if (o.containsKey("memberNo") && !o.isNull("memberNo")) {
+                int n;
+                try {
+                    n = o.getJsonNumber("memberNo").intValueExact();
+                } catch (Exception e) {
+                    throw new IllegalArgumentException("memberNo must be a positive integer");
+                }
+                if (n <= 0) throw new IllegalArgumentException("memberNo must be a positive integer");
+                memberNo = n;
+            }
             return new PersonStore.Person(0, optString(o, "title"), given, family,
                     optString(o, "preferredName"), optDate(o, "dateOfBirth"),
-                    optDate(o, "deceasedDate"), optString(o, "notes"), emails, phones);
+                    optDate(o, "deceasedDate"), optString(o, "notes"), memberNo, emails, phones);
         } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
@@ -282,6 +303,7 @@ public class AdminPeopleResource {
         addNullable(b, "dateOfBirth", person.dateOfBirth() == null ? null : person.dateOfBirth().toString());
         addNullable(b, "deceasedDate", person.deceasedDate() == null ? null : person.deceasedDate().toString());
         addNullable(b, "notes", person.notes());
+        addNullable(b, "memberNo", person.memberNo());
         JsonArrayBuilder emails = Json.createArrayBuilder();
         for (PersonStore.Email email : person.emails()) {
             emails.add(Json.createObjectBuilder()
@@ -323,6 +345,11 @@ public class AdminPeopleResource {
 
     private static Response badRequest(String message) {
         return Response.status(Response.Status.BAD_REQUEST)
+                .entity("{\"error\":\"" + message + "\"}").build();
+    }
+
+    private static Response conflict(String message) {
+        return Response.status(Response.Status.CONFLICT)
                 .entity("{\"error\":\"" + message + "\"}").build();
     }
 

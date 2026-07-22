@@ -80,11 +80,14 @@ final class Cards {
 
     /**
      * A composed card. {@code personName} is how the person is actually known
-     * (preferred name when set, else given name, plus family name). The person
-     * id is the member number, stable and never renumbered (the payment-id-as-
-     * receipt-number reason), where {@code membership_id} changes every period.
+     * (preferred name when set, else given name, plus family name).
+     * {@code memberNo} is the display number (CR-020): the assigned
+     * {@code person.member_no} when set, else the person id — resolved by
+     * COALESCE in {@link #compose}, so every surface inherits it from the one
+     * spot. {@code personId} stays the compose key (pay-link, primary-email
+     * lookups), never the printed number.
      */
-    record Card(long personId, String personName, String societyName,
+    record Card(long personId, long memberNo, String personName, String societyName,
                 String typeName, String periodName, LocalDate validTo) {
 
         String validToText() {
@@ -92,7 +95,7 @@ final class Cards {
         }
 
         String memberNoText() {
-            return "Member no. " + personId;
+            return "Member no. " + memberNo;
         }
 
         /** The download / attachment filename — period-stamped, filesystem-safe. */
@@ -112,7 +115,8 @@ final class Cards {
      */
     static Optional<Card> compose(Handle handle, long membershipId, long personId) {
         return handle.createQuery(
-                "SELECT p.person_id, p.given_name, p.family_name, p.preferred_name,"
+                "SELECT p.person_id, COALESCE(p.member_no, p.person_id) AS member_no,"
+                + " p.given_name, p.family_name, p.preferred_name,"
                 + " mt.name AS type_name, per.name AS period_name, per.end_date"
                 + " FROM membership m"
                 + " JOIN membership_period per ON per.membership_period_id = m.membership_period_id"
@@ -128,7 +132,8 @@ final class Cards {
                     String given = rs.getString("given_name");
                     String first = preferred != null && !preferred.isBlank() ? preferred : given;
                     String name = (first + " " + rs.getString("family_name")).trim();
-                    return new Card(rs.getLong("person_id"), name, Mail.societyName(),
+                    return new Card(rs.getLong("person_id"), rs.getLong("member_no"),
+                            name, Mail.societyName(),
                             rs.getString("type_name"), rs.getString("period_name"),
                             rs.getDate("end_date").toLocalDate());
                 })
@@ -164,7 +169,7 @@ final class Cards {
                 .add("periodName", c.periodName())
                 .add("validTo", c.validTo().toString())
                 .add("validToText", c.validToText())
-                .add("memberNo", c.personId())
+                .add("memberNo", c.memberNo())
                 .add("filename", c.filename())
                 // lets the page/dialog disable Email upfront, the CR-005 mail banner
                 .add("mailEnabled", mailEnabled);

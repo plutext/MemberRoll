@@ -1940,6 +1940,71 @@ else
   echo "note: psql not found — skipping CR-019 data rows (address/deceased fixtures need psql)"
 fi
 
+# --- member numbers (CR-020) --------------------------------------------------
+# person.member_no (V9) decouples the card's printed number from person_id:
+# nullable, unique where set, COALESCE at card-compose time. Assigned/cleared
+# through the person payload's memberNo (absent = clear — the form's wholesale-
+# replace semantics, like emails). A unique-per-run number plus the clearing
+# row keeps re-runs green (member_no is globally unique and people are never
+# deleted). Role gates ride rows 35-38 (same endpoint); CR17-02f above is the
+# no-number-falls-back-to-person-id regression guard.
+N20="Num$$"; MN20=$(( $$ % 30000 + 1000 ))
+JPOST $API/admin/people "{\"givenName\":\"Numa\",\"familyName\":\"$N20\"}" >/dev/null; PN20=$(body | jsq "j['id']")
+
+# row 1: assign via PUT; PUT response and a fresh GET both echo it
+check "CR20-01 PUT memberNo 200"       "200" "$(JPUT $API/admin/people/$PN20 "{\"givenName\":\"Numa\",\"familyName\":\"$N20\",\"memberNo\":$MN20}")"
+check "CR20-01b PUT echoes it"         "$MN20" "$(body | jsq "str(j['memberNo'])")"
+check "CR20-01c GET echoes it"         "$MN20" "$(curl -s $API/admin/people/$PN20 -H "Authorization: Bearer $ADMIN" | jsq "str(j['memberNo'])")"
+
+# row 2: the card shows the assigned number (a LIFE membership is ACTIVE at
+# once — the CR-018 zero-due path gives the compose gate a card to serve)
+JPOST $API/admin/households "{\"householdName\":\"$N20 hh\",\"primaryContactPersonId\":$PN20}" >/dev/null; HN20=$(body | jsq "j['id']")
+JPOST $API/admin/memberships "{\"householdId\":$HN20,\"membershipPeriodId\":$P18,\"membershipTypeId\":$T18_LIFE}" >/dev/null; MM20=$(body | jsq "j['id']")
+check "CR20-02 card info memberNo"     "$MN20" "$(curl -s $API/admin/memberships/$MM20/card/$PN20/info -H "Authorization: Bearer $ADMIN" | jsq "str(j['memberNo'])")"
+check "CR20-02b PNG still renders"     "89504e47" "$(curl -s $API/admin/memberships/$MM20/card/$PN20 -H "Authorization: Bearer $ADMIN" | head -c 4 | xxd -p)"
+
+# row 4: a duplicate number is a 409 naming the number (PUT and POST alike)
+JPOST $API/admin/people "{\"givenName\":\"Nyla\",\"familyName\":\"$N20\"}" >/dev/null; PN20B=$(body | jsq "j['id']")
+check "CR20-04 duplicate PUT 409"      "409" "$(JPUT $API/admin/people/$PN20B "{\"givenName\":\"Nyla\",\"familyName\":\"$N20\",\"memberNo\":$MN20}")"
+check "CR20-04b names the number"      "true" "$(body | jsq "str('$MN20' in j['error']).lower()")"
+check "CR20-04c duplicate POST 409"    "409" "$(JPOST $API/admin/people "{\"givenName\":\"Nix\",\"familyName\":\"$N20\",\"memberNo\":$MN20}")"
+
+# row 5: zero / negative / non-numeric are 400s (the CHECK's belt-and-braces)
+check "CR20-05 memberNo 0 400"         "400" "$(JPUT $API/admin/people/$PN20B "{\"givenName\":\"Nyla\",\"familyName\":\"$N20\",\"memberNo\":0}")"
+check "CR20-05b negative 400"          "400" "$(JPUT $API/admin/people/$PN20B "{\"givenName\":\"Nyla\",\"familyName\":\"$N20\",\"memberNo\":-3}")"
+check "CR20-05c non-numeric 400"       "400" "$(JPUT $API/admin/people/$PN20B "{\"givenName\":\"Nyla\",\"familyName\":\"$N20\",\"memberNo\":\"seven\"}")"
+
+# row 6: an absent memberNo clears; the card falls back to the person id
+check "CR20-06 clear 200"              "200" "$(JPUT $API/admin/people/$PN20 "{\"givenName\":\"Numa\",\"familyName\":\"$N20\"}")"
+check "CR20-06b cleared to null"       "None" "$(body | jsq "str(j['memberNo'])")"
+check "CR20-06c card falls back to id" "$PN20" "$(curl -s $API/admin/memberships/$MM20/card/$PN20/info -H "Authorization: Bearer $ADMIN" | jsq "str(j['memberNo'])")"
+
+# rows 7/8/9: importer zero-due fix — a LIFE group imports ACTIVE (approved
+# set) with NO payment row regardless of the paid flag, and the preview's
+# payment count excludes it. The CR2-* rows above stay the non-zero-due guard.
+IMP20="Nimp$$"
+cat > "$FX/life-paid.csv" <<EOF
+household,givenName,familyName,relationship,membershipType,paid
+LifeY$$,Lena,$IMP20,MEMBER,LIFE,yes
+EOF
+cat > "$FX/life-unpaid.csv" <<EOF
+household,givenName,familyName,relationship,membershipType,paid
+LifeN$$,Levi,$IMP20,MEMBER,LIFE,no
+EOF
+check "CR20-09 preview zero-due paid"  "200" "$(imp "$API/admin/import/preview?period=2025-2026" "$ADMIN" "$FX/life-paid.csv")"
+check "CR20-09b toCreate memberships 1" "1" "$(body | jsq "j['toCreate']['memberships']")"
+check "CR20-09c toCreate payments 0"   "0" "$(body | jsq "j['toCreate']['payments']")"
+check "CR20-07 apply zero-due paid"    "200" "$(imp "$API/admin/import?period=2025-2026" "$ADMIN" "$FX/life-paid.csv")"
+check "CR20-07b created no payment"    "0" "$(body | jsq "j['created']['payments']")"
+check "CR20-08 apply zero-due unpaid"  "200" "$(imp "$API/admin/import?period=2025-2026" "$ADMIN" "$FX/life-unpaid.csv")"
+if [ "$PSQL_OK" = 1 ]; then
+  check "CR20-07c ACTIVE, approved set" "ACTIVE|true" "$(psqlq "SELECT m.status||'|'||(m.approved_date IS NOT NULL) FROM membership m JOIN household h ON h.household_id=m.household_id WHERE h.household_name='LifeY$$'")"
+  check "CR20-07d no payment row"      "0" "$(psqlq "SELECT count(*) FROM payment_allocation pa JOIN membership m ON m.membership_id=pa.membership_id JOIN household h ON h.household_id=m.household_id WHERE h.household_name='LifeY$$'")"
+  check "CR20-08b unpaid also ACTIVE"  "ACTIVE" "$(psqlq "SELECT m.status FROM membership m JOIN household h ON h.household_id=m.household_id WHERE h.household_name='LifeN$$'")"
+else
+  echo "SKIP CR20-07c/d,08b (import side effects need psql)"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"
