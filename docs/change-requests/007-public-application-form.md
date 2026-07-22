@@ -1,8 +1,8 @@
 # CR 007: Public application form — APPLIED workflow with committee approval
 
-Status: PLANNED (pre-proposal notes recorded 2026-07-18 — this is not
-yet the PROPOSED design; it records the constraints and open issues the
-design must fold in when it is written)
+Status: PLANNED — UNBLOCKED (pre-proposal notes recorded 2026-07-18;
+the entrance-fee blocker was resolved by the committee 2026-07-23, see
+Follow-ups — the PROPOSED design can now be written)
 
 ## Problem
 
@@ -60,21 +60,29 @@ To be confirmed when the proposal is written, not decided here:
   existing person/household (lapsed member re-applying) vs creating
   new — or at minimum flag likely duplicates (CR-002/CR-010
   precedents).
-- New-application notification to a configured society address.
+- New-application notification to a configured society address —
+  answered 2026-07-23: `membership@yasshistory.org.au` (a shared
+  mailbox), and it must be settable/alterable on an admin config page
+  (the CR-014 `app_setting` pattern), not baked into env or code.
 - Whether approval auto-runs CR-006 provisioning stays as decided in
   CR-006: deferred; the admin presses the button.
 
 ## Outstanding issues
 
-- **Entrance fee — DEFERRED (2026-07-18).** Clause 5(1) prescribes a
+- **Entrance fee — RESOLVED (2026-07-23).** Clause 5(1) prescribes a
   $20 entrance fee for approved applicants, "or another amount
   determined by the committee", on top of the annual subscription.
-  Whether an entrance fee currently applies is unknown — the $45/$65
-  fees are committee-determined subscriptions and may or may not
-  subsume it. If one applies, the approval flow must bill entrance +
-  subscription and the payment model needs a shape for it (a one-off
-  allocation line or a first-year price). Deferred until the society
-  confirms; the proposal cannot be finalized without the answer.
+  The committee has set the entrance fee to **zero (0)** and confirmed
+  the system need not accommodate one — no entrance-fee billing shape
+  is required; the approval flow bills the annual subscription only.
+  (Original 2026-07-18 deferral: whether a fee applied was unknown, and
+  a non-zero fee would have needed a one-off allocation line or a
+  first-year price.)
+- **Governance precondition still open**: the committee acknowledged
+  (2026-07-23) that before the form goes live it must formally resolve
+  and minute that the website form is the society's approved
+  application form and permit electronic lodgement (clause 3). Not yet
+  minuted — this gates go-live, not the build.
 
 ## Approach
 
@@ -90,4 +98,18 @@ To be confirmed when the proposal is written, not decided here:
 
 ## Follow-ups / amendments
 
-(dated additions)
+- **2026-07-23 — committee answers received** (relayed from the
+  committee-questions handout, ydhs/):
+  - Entrance fee: set to zero; system need not accommodate it
+    (unblocks this CR — see Outstanding issues).
+  - Approved-form resolution (clause 3): committee will minute the
+    website form as the approved application form before go-live;
+    pending.
+  - New-application alert address: `membership@yasshistory.org.au`
+    (shared mailbox), must be configurable on an admin page.
+  - Context from the same round, relevant here: card-processing fees
+    stay absorbed by the society; the system continues to issue its own
+    receipts (Stripe's emailed receipts stay off); free-entry donation
+    amount on the pay page — committee to advise; prices ($45/$65,
+    journal +$10), membership year (1 Sep–31 Aug) and renewal opening
+    (1 Jul) all confirmed unchanged.

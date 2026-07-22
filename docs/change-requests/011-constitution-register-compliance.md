@@ -110,4 +110,17 @@ Renewals section.
 
 ## Follow-ups / amendments
 
-(dated additions)
+- **2026-07-23 — committee answers, per stage:**
+  - Stage 1 (register-of-members export): confirmed wanted, **lower
+    priority** — keep on the TODO list, no urgency.
+  - Stage 2 (clause 4(5) address suppression): whether any member has
+    asked for suppression — **to be advised**.
+  - Stage 3 (under-18 voting exclusion): whether there are any under-18
+    members — **to be advised**.
+  - Stage 4 (clause 7 suspension as a documented manual process, not a
+    system feature): **agreed** — proceed as proposed, user-manual
+    section only.
+- **2026-07-23 — Stage 1 delivery vehicle:** CR-019 (reports & exports)
+  takes the register-of-members export as its Report A, implemented to
+  this doc's Stage 1 specification (which stays authoritative here).
+  Stages 2–4 remain with this CR.
