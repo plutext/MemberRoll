@@ -2579,6 +2579,69 @@ function wireMailSettings() {
     document.getElementById("mailSettingsSection").hidden = false;
 }
 
+// ---- reports (CR-019) -------------------------------------------------------
+
+// download an admin CSV by API path; registerCall surfaces a 400 (bad
+// parameters) verbatim instead of silently saving an error body as a file
+async function downloadReport(path, filename) {
+    const response = await registerCall(path);
+    if (!response) return;
+    const url = URL.createObjectURL(await response.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+// period selects from the cache (newest first): the no-membership report
+// defaults to the period covering today; unrenewed defaults to the previous
+// period → that one (the ordinary "who hasn't come back this year" question)
+function repFillSelects() {
+    const todayStr = today();
+    const covering = periodsCache.find(p => p.startDate <= todayStr && todayStr <= p.endDate);
+    const coveringId = covering ? covering.id : (periodsCache[0] && periodsCache[0].id);
+    const fill = (id, selectedId) => {
+        const sel = document.getElementById(id);
+        sel.innerHTML = "";
+        for (const p of periodsCache) {
+            const o = document.createElement("option");
+            o.value = p.id;
+            o.textContent = p.name;
+            o.selected = p.id === selectedId;
+            sel.appendChild(o);
+        }
+    };
+    const idx = periodsCache.findIndex(p => p.id === coveringId);
+    const prevId = idx >= 0 && idx + 1 < periodsCache.length ? periodsCache[idx + 1].id : coveringId;
+    fill("repNoMemPeriod", coveringId);
+    fill("repUnrenewedFrom", prevId);
+    fill("repUnrenewedTo", coveringId);
+}
+
+function wireReports() {
+    const on = (id, handler) => { document.getElementById(id).onclick = handler; };
+    repFillSelects();
+    on("repRegister", () => downloadReport("/admin/export/register-of-members.csv",
+        "register-of-members.csv"));
+    on("repNoMem", () => downloadReport("/admin/export/no-current-membership.csv?periodId="
+        + document.getElementById("repNoMemPeriod").value, "no-current-membership.csv"));
+    on("repUnrenewed", () => downloadReport("/admin/export/unrenewed.csv?fromPeriodId="
+        + document.getElementById("repUnrenewedFrom").value + "&toPeriodId="
+        + document.getElementById("repUnrenewedTo").value, "unrenewed.csv"));
+    on("repDonations", () => {
+        const params = new URLSearchParams();
+        const from = document.getElementById("repDonFrom").value;
+        const to = document.getElementById("repDonTo").value;
+        if (from) params.set("from", from);
+        if (to) params.set("to", to);
+        const qs = params.toString();
+        downloadReport("/admin/export/donations.csv" + (qs ? "?" + qs : ""), "donations.csv");
+    });
+}
+
 // ---- menu + per-page wiring -------------------------------------------------
 
 // the admin panel is split across pages that share this script; each page
@@ -2588,6 +2651,7 @@ const MENU = [
     {href: "new-member.html", label: "New member"},
     {href: "email.html", label: "Email"},
     {href: "committee.html", label: "Committee"},
+    {href: "reports.html", label: "Reports"},
     {href: "import.html", label: "Import members"},
     {href: "users.html", label: "Users"},
     {href: "mail-settings.html", label: "Mail settings"},
@@ -2641,6 +2705,11 @@ async function wireUsers() {
             if (document.getElementById("committeeSection")) {
                 wireCommittee();
                 await renderCommittee();
+            }
+            if (document.getElementById("reportsSection")) {
+                await loadPeriods(); // fills periodsCache (no Renewals table here)
+                wireReports();
+                document.getElementById("reportsSection").hidden = false;
             }
             if (document.getElementById("mailSettingsSection")) {
                 wireMailSettings();

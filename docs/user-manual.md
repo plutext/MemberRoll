@@ -309,6 +309,40 @@ as usual. If the join date is past the period's late-joining cutoff, the app
 notes that so you can consider signing them up for the following year
 instead.
 
+## Reports
+
+The **Reports** page holds the cross-cutting exports — questions that span
+years or cut across the register, rather than belonging to one period's
+work. Each downloads a CSV to open in a spreadsheet.
+
+- **Register of members** — the constitution's clause 4 register: every
+  person who holds or has ever held a formal membership place, with full
+  name, one address (preferred postal address, else email), the date they
+  became a member and, for former members, the date they ceased. Unlike the
+  AGM register it *includes* lapsed and ceased members — that is the point.
+  Two derivations to know: "date became a member" is the start of the
+  person's earliest membership year, so for members brought in by the
+  spreadsheet import it is the earliest *imported* year, not their true
+  historical join date; "date ceased" is the recorded cease date where one
+  exists, otherwise the end of their last membership year (or today, if
+  they lapsed inside a year still running).
+- **People without a current membership** — current household people (not
+  left, not deceased) holding no membership place in the chosen year, with
+  the last year they did hold one. This is the person-by-person residue the
+  rollover can leave behind — run it after rollover each year.
+- **Unrenewed households** — households financial in one year whose state
+  in a later year is anything else (unpaid, lapsed, ceased, or nothing at
+  all). The ring-around chase list, with the primary contact's email and
+  phone. For chasing by *email*, the Email page's segments are the tool;
+  this report is for the phone tree and the committee meeting.
+- **Donations** — payments carrying a donation part, over a received-date
+  range (blank dates = all time), with a trailing total. Reversals appear
+  as negative rows, so the total always matches the ledger.
+
+The per-year exports (AGM register, mailing labels, financial) stay on the
+Renewals page — see [Exports](#exports) above — and the treasurer's
+reconciliation exports are there too.
+
 ## Member self-serve — "my membership"
 
 Members can (optionally) log in and see their own household's membership

@@ -1,7 +1,7 @@
 # CR 019: Reports & exports — a reports surface and four new reports
 
-Status: PROPOSED (2026-07-23 — not yet implemented; CR-018 should land
-first so type data is truthful, but nothing here hard-depends on it)
+Status: IMPLEMENTED + VERIFIED (2026-07-23; CR-018 landed first the same
+day, as sequenced)
 
 ## Problem
 
@@ -142,7 +142,71 @@ resolve; admin nav shows Reports.
 
 ## Results
 
-(to be recorded when implemented)
+Implemented 2026-07-23, all four reports in one pass (the B/C-first
+sequencing was about priority, not staging — nothing forced a split).
+Built as proposed: `AdminReportsResource` (`/api/admin/export/...`,
+admin-only, Commons CSV, a bad parameter is a 400 JSON error never an
+empty CSV) over a new read-only `ReportStore` (the ReconciliationStore
+pattern), registered in `ApiApplication`; `admin/reports.html` + a
+Reports nav entry, downloads via authenticated fetch → blob (the CR-017
+bearer-auth bite — a plain `<a href>` would 401).
+
+**Report A derivations pinned** (per CR-011 Stage 1's "to be pinned in
+the implementation"; the spec doc cross-references back here):
+
+- *Date became a member* = earliest `membership.start_date` among the
+  person's formal (`is_statutory_member`) places — deliberately NOT
+  `membership_person.start_date`, which is the row-creation date (a
+  rollover run's date for carried members). For imported members this is
+  the earliest imported period's start — the documented limitation,
+  stated on the reports page and in the user manual.
+- *Currency*: a person is current while they hold a formal place on an
+  ACTIVE or PENDING_PAYMENT membership whose `end_date` has not passed
+  (an unpaid member inside the year is still a member until lapsed or
+  ceased — clause 12).
+- *Date ceased* (non-current people): a CEASED last membership
+  contributes its `ceased_date`; anything else (LAPSED, or simply never
+  renewed) contributes the end of that last membership year, capped at
+  today — the clause 12 non-payment mapping.
+- Best address = preferred POSTAL of the person's current (else latest)
+  household — the mailing-labels choice — else primary email; the Stage 2
+  suppression flag does not exist yet, and `ReportStore.registerOfMembers`
+  is the marked spot to honour it when it lands.
+
+### Verification
+
+Matrix: 45 CR19-* rows in `server/verify-matrix.sh` covering the whole
+plan table — 12 auth-gate rows (guest 403 / user 403 / noaud 401 × four
+endpoints — the codebase's actual guest behaviour, as with CR-018), 7
+parameter-validation rows (unknown/missing period, to==from, to<from,
+from>to, unparseable date), and the data rows on two far-future fixture
+periods (2094/2095, unique `Rep$$` names): register current/ceased/
+lapsed-capped-at-today/email-fallback/postal-preference/became-date rows,
+report B present/absent/left/deceased rows, report C "—"/LAPSED/renewed/
+ceased-in-from rows, donations payer/amount/reversal/out-of-range/
+membership-only rows.
+
+One assertion was corrected for re-runnability: payments are insert-only,
+so the donations fixtures accumulate in the shared window across runs —
+the trailing-total row is asserted to EQUAL THE SUM OF THE ROWS (which is
+what the plan's row 10 means) rather than a fixed number.
+
+Whole matrix: **PASS=719 FAIL=3** (twice), the 3 being the documented
+pre-existing environmental flakes (Keycloak listing flake `27b`, UTC-date
+rows `CR10-04g2`/`CR10-12c` on before-10:00-AEST runs). Row count
+reconciles with the CR-018 baseline: 677 + 45 new = **722 = 719 + 3**.
+
+Browser walkthrough (`tmp/cr019-fixtures/cr019-walkthrough.js`,
+Playwright): **10/10** — nav shows Reports (active), period selects
+populated with defaults, all four downloads carry the right CSV headers
+and filenames through the blob path, donations shows the trailing total,
+a to==from selection surfaces the server's 400 verbatim instead of saving
+a file, and the Renewals link resolves. (One walkthrough lesson: the dev
+DB's fixture-litter periods make the *default* from/to unpredictable, so
+the download steps select explicit periods.)
+
+Docs: user manual gained a "Reports" section; README a Reports bullet;
+CR-011 records Stage 1 as delivered.
 
 ## Follow-ups / amendments
 

@@ -1793,6 +1793,153 @@ check "CR18-13 agm has life member"    "yes" "$(curl -s $API/admin/periods/$P18/
 # row 14: financial.csv shows the LIFE row at due 0, paid 0
 check "CR18-14 financial LIFE 0/0"     "LIFE|0|0" "$(curl -s $API/admin/periods/$P18/export/financial.csv -H "Authorization: Bearer $ADMIN" | python3 -c "import sys,csv; r=next(r for r in csv.reader(sys.stdin) if r and r[0]=='$L18 household'); print(r[2]+'|'+r[4]+'|'+r[5])")"
 
+# --- reports & exports (CR-019) ----------------------------------------------
+# Four cross-cutting CSVs on the new AdminReportsResource (/admin/export/...).
+# Fixtures live in two far-future periods (2094/2095) so nothing else's rows
+# bleed in; unique Rep$$ names keep re-runs green. Bad parameters are a 400
+# JSON error, never an empty CSV.
+check "CR19-01 register guest 403"     "403" "$(code $API/admin/export/register-of-members.csv)"
+check "CR19-01b register user 403"     "403" "$(code $API/admin/export/register-of-members.csv -H "Authorization: Bearer $USER")"
+check "CR19-01c register noaud 401"    "401" "$(code $API/admin/export/register-of-members.csv -H "Authorization: Bearer $NOAUD")"
+check "CR19-01d no-mem guest 403"      "403" "$(code "$API/admin/export/no-current-membership.csv?periodId=1")"
+check "CR19-01e no-mem user 403"       "403" "$(code "$API/admin/export/no-current-membership.csv?periodId=1" -H "Authorization: Bearer $USER")"
+check "CR19-01f no-mem noaud 401"      "401" "$(code "$API/admin/export/no-current-membership.csv?periodId=1" -H "Authorization: Bearer $NOAUD")"
+check "CR19-01g unrenewed guest 403"   "403" "$(code "$API/admin/export/unrenewed.csv?fromPeriodId=1&toPeriodId=2")"
+check "CR19-01h unrenewed user 403"    "403" "$(code "$API/admin/export/unrenewed.csv?fromPeriodId=1&toPeriodId=2" -H "Authorization: Bearer $USER")"
+check "CR19-01i unrenewed noaud 401"   "401" "$(code "$API/admin/export/unrenewed.csv?fromPeriodId=1&toPeriodId=2" -H "Authorization: Bearer $NOAUD")"
+check "CR19-01j donations guest 403"   "403" "$(code $API/admin/export/donations.csv)"
+check "CR19-01k donations user 403"    "403" "$(code $API/admin/export/donations.csv -H "Authorization: Bearer $USER")"
+check "CR19-01l donations noaud 401"   "401" "$(code $API/admin/export/donations.csv -H "Authorization: Bearer $NOAUD")"
+
+# row 13 (parameter validation, the part needing no fixtures)
+check "CR19-13 no-mem unknown period 400" "400" "$(JADMIN "$API/admin/export/no-current-membership.csv?periodId=999999")"
+check "CR19-13b no-mem missing period 400" "400" "$(JADMIN "$API/admin/export/no-current-membership.csv")"
+check "CR19-13c donations from>to 400" "400" "$(JADMIN "$API/admin/export/donations.csv?from=2095-01-01&to=2094-01-01")"
+check "CR19-13d donations bad date 400" "400" "$(JADMIN "$API/admin/export/donations.csv?from=notadate")"
+check "CR19-13e unrenewed unknown 400" "400" "$(JADMIN "$API/admin/export/unrenewed.csv?fromPeriodId=999998&toPeriodId=999999")"
+
+if [ "$PSQL_OK" = 1 ]; then
+  RP="Rep$$"
+  # two consecutive far-future periods
+  JPOST $API/admin/periods "{\"name\":\"$RP A\",\"startDate\":\"2094-09-01\",\"endDate\":\"2095-08-31\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}" >/dev/null; RPA=$(body | jsq "j['id']")
+  JPOST $API/admin/periods "{\"name\":\"$RP B\",\"startDate\":\"2095-09-01\",\"endDate\":\"2096-08-31\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}" >/dev/null; RPB=$(body | jsq "j['id']")
+  check "CR19-13f unrenewed to==from 400" "400" "$(JADMIN "$API/admin/export/unrenewed.csv?fromPeriodId=$RPA&toPeriodId=$RPA")"
+  check "CR19-13g unrenewed to<from 400" "400" "$(JADMIN "$API/admin/export/unrenewed.csv?fromPeriodId=$RPB&toPeriodId=$RPA")"
+
+  # households: A renews nothing (email-only person, joined at period start);
+  # B lapses in the to-period (and has a postal address); C renews (ACTIVE in
+  # both); D ceases mid-A; E never pays (LAPSED in A — the capped-at-today
+  # ceased derivation)
+  JPOST $API/admin/people "{\"givenName\":\"Ann\",\"familyName\":\"$RP\",\"emails\":[{\"email\":\"ann.$$@rep.test\",\"isPrimary\":true}],\"phones\":[{\"number\":\"0400 019 001\",\"type\":\"MOBILE\",\"isPrimary\":true}]}" >/dev/null; RP_ANN=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RP A hh\",\"primaryContactPersonId\":$RP_ANN}" >/dev/null; RPHA=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$RPHA,\"membershipPeriodId\":$RPA,\"membershipTypeId\":$T18_SINGLE,\"startDate\":\"2094-09-01\"}" >/dev/null; RPMA=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2094-09-15\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RPMA,\"amountCents\":4500}]}" >/dev/null
+
+  JPOST $API/admin/people "{\"givenName\":\"Bob\",\"familyName\":\"$RP\",\"emails\":[{\"email\":\"bob.$$@rep.test\",\"isPrimary\":true}]}" >/dev/null; RP_BOB=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RP B hh\",\"primaryContactPersonId\":$RP_BOB}" >/dev/null; RPHB=$(body | jsq "j['id']")
+  psqlq "INSERT INTO household_address (household_id, address_type, line_1, locality, state, postcode, is_preferred) VALUES ($RPHB,'POSTAL','9 Report St','Yass','NSW','2582',true)" >/dev/null
+  JPOST $API/admin/memberships "{\"householdId\":$RPHB,\"membershipPeriodId\":$RPA,\"membershipTypeId\":$T18_SINGLE}" >/dev/null; RPMB=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2094-09-16\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RPMB,\"amountCents\":4500}]}" >/dev/null
+  JPOST $API/admin/memberships "{\"householdId\":$RPHB,\"membershipPeriodId\":$RPB,\"membershipTypeId\":$T18_SINGLE}" >/dev/null; RPMB2=$(body | jsq "j['id']")
+  JPUT $API/admin/memberships/$RPMB2 "{\"status\":\"LAPSED\"}" >/dev/null
+
+  JPOST $API/admin/people "{\"givenName\":\"Cal\",\"familyName\":\"$RP\"}" >/dev/null; RP_CAL=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RP C hh\",\"primaryContactPersonId\":$RP_CAL}" >/dev/null; RPHC=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$RPHC,\"membershipPeriodId\":$RPA,\"membershipTypeId\":$T18_SINGLE}" >/dev/null; RPMC=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2094-09-17\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RPMC,\"amountCents\":4500}]}" >/dev/null
+  JPOST $API/admin/memberships "{\"householdId\":$RPHC,\"membershipPeriodId\":$RPB,\"membershipTypeId\":$T18_SINGLE}" >/dev/null; RPMC2=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2095-09-17\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RPMC2,\"amountCents\":4500}]}" >/dev/null
+
+  JPOST $API/admin/people "{\"givenName\":\"Dee\",\"familyName\":\"$RP\"}" >/dev/null; RP_DEE=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RP D hh\",\"primaryContactPersonId\":$RP_DEE}" >/dev/null; RPHD=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$RPHD,\"membershipPeriodId\":$RPA,\"membershipTypeId\":$T18_SINGLE}" >/dev/null; RPMD=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2094-09-18\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RPMD,\"amountCents\":4500}]}" >/dev/null
+  JPUT $API/admin/memberships/$RPMD "{\"status\":\"CEASED\",\"ceasedDate\":\"2095-01-15\",\"cessationReason\":\"RESIGNED\"}" >/dev/null
+
+  JPOST $API/admin/people "{\"givenName\":\"Eve\",\"familyName\":\"$RP\"}" >/dev/null; RP_EVE=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RP E hh\",\"primaryContactPersonId\":$RP_EVE}" >/dev/null; RPHE=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$RPHE,\"membershipPeriodId\":$RPA,\"membershipTypeId\":$T18_SINGLE}" >/dev/null; RPME=$(body | jsq "j['id']")
+  JPUT $API/admin/memberships/$RPME "{\"status\":\"LAPSED\"}" >/dev/null
+
+  # a left and a deceased person in household A (both invisible to report B)
+  JPOST $API/admin/people "{\"givenName\":\"Lea\",\"familyName\":\"$RP\"}" >/dev/null; RP_LEA=$(body | jsq "j['id']")
+  JPOST $API/admin/households/$RPHA/people "{\"personId\":$RP_LEA,\"relationshipType\":\"PARTNER\"}" >/dev/null
+  code -X DELETE $API/admin/households/$RPHA/people/$RP_LEA -H "Authorization: Bearer $ADMIN" >/dev/null
+  JPOST $API/admin/people "{\"givenName\":\"Mor\",\"familyName\":\"$RP\"}" >/dev/null; RP_MOR=$(body | jsq "j['id']")
+  JPOST $API/admin/households/$RPHA/people "{\"personId\":$RP_MOR,\"relationshipType\":\"OTHER\"}" >/dev/null
+  psqlq "UPDATE person SET deceased_date = DATE '2095-01-01' WHERE person_id = $RP_MOR" >/dev/null
+
+  # rows 2/3: the register — python-parsed per person (name is unique per run)
+  REG=$(curl -s $API/admin/export/register-of-members.csv -H "Authorization: Bearer $ADMIN")
+  regq() { echo "$REG" | python3 -c "
+import sys, csv
+rows = {(r[1], r[0]): r for r in csv.reader(sys.stdin)}
+r = rows.get(('$1', '$RP'))
+print('MISSING' if r is None else r[$2])"; }
+  check "CR19-02 register is csv 200"    "200" "$(JADMIN $API/admin/export/register-of-members.csv)"
+  check "CR19-02b current member blank ceased" "" "$(regq Ann 4)"
+  check "CR19-02c email-only address"    "ann.$$@rep.test" "$(regq Ann 2)"
+  check "CR19-02d postal beats email"    "9 Report St, Yass, NSW, 2582" "$(regq Bob 2)"
+  check "CR19-02e ceased carries date"   "2095-01-15" "$(regq Dee 4)"
+  check "CR19-02f lapsed-never-paid ceased today" "$(date +%F)" "$(regq Eve 4)"
+  check "CR19-02g non-member absent"     "MISSING" "$(regq Mor 4)"
+  check "CR19-03 became = period start"  "2094-09-01" "$(regq Ann 3)"
+
+  # rows 4/5/6: report B on period B
+  NOM=$(curl -s "$API/admin/export/no-current-membership.csv?periodId=$RPB" -H "Authorization: Bearer $ADMIN")
+  nomq() { echo "$NOM" | python3 -c "
+import sys, csv
+rows = {(r[1], r[0]): r for r in csv.reader(sys.stdin)}
+r = rows.get(('$1', '$RP'))
+print('MISSING' if r is None else r[$2])"; }
+  check "CR19-04 unheld person present"  "$RP A hh" "$(nomq Ann 2)"
+  check "CR19-04b with last-held period" "$RP A" "$(nomq Ann 6)"
+  check "CR19-04c email and phone ride"  "ann.$$@rep.test|0400 019 001" "$(nomq Ann 4)|$(nomq Ann 5)"
+  check "CR19-05 ACTIVE-member absent"   "MISSING" "$(nomq Cal 0)"
+  check "CR19-05b lapsed-in-B absent (holds a place)" "MISSING" "$(nomq Bob 0)"
+  check "CR19-06 left person absent"     "MISSING" "$(nomq Lea 0)"
+  check "CR19-06b deceased absent"       "MISSING" "$(nomq Mor 0)"
+
+  # rows 7/8/9: report C from A to B
+  UNR=$(curl -s "$API/admin/export/unrenewed.csv?fromPeriodId=$RPA&toPeriodId=$RPB" -H "Authorization: Bearer $ADMIN")
+  unrq() { echo "$UNR" | python3 -c "
+import sys, csv
+rows = {r[0]: r for r in csv.reader(sys.stdin)}
+r = rows.get('$RP $1 hh')
+print('MISSING' if r is None else r[$2])"; }
+  check "CR19-07 no-membership household present" "—" "$(unrq A 5)"
+  check "CR19-07b with contact email"    "ann.$$@rep.test" "$(unrq A 2)"
+  check "CR19-08 lapsed household LAPSED" "LAPSED" "$(unrq B 5)"
+  check "CR19-09 renewed household absent" "MISSING" "$(unrq C 5)"
+  check "CR19-09b ceased-in-from absent (not ACTIVE)" "MISSING" "$(unrq D 5)"
+
+  # rows 10/11/12: donations in the period-A window
+  JPOST $API/admin/payments "{\"receivedDate\":\"2094-10-01\",\"amountCents\":1500,\"method\":\"CASH\",\"payerPersonId\":$RP_ANN,\"allocations\":[{\"type\":\"DONATION\",\"amountCents\":1500}]}" >/dev/null; RPD1=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2094-10-02\",\"amountCents\":-500,\"method\":\"CASH\",\"notes\":\"cr19 reversal\",\"allocations\":[{\"type\":\"DONATION\",\"amountCents\":-500}]}" >/dev/null; RPD2=$(body | jsq "j['id']")
+  JPOST $API/admin/payments "{\"receivedDate\":\"2096-01-01\",\"amountCents\":800,\"method\":\"CASH\",\"allocations\":[{\"type\":\"DONATION\",\"amountCents\":800}]}" >/dev/null; RPD3=$(body | jsq "j['id']")
+  DON=$(curl -s "$API/admin/export/donations.csv?from=2094-09-01&to=2095-08-31" -H "Authorization: Bearer $ADMIN")
+  donq() { echo "$DON" | python3 -c "
+import sys, csv
+rows = {r[1]: r for r in csv.reader(sys.stdin) if len(r) > 1}
+r = rows.get('$1')
+print('MISSING' if r is None else r[$2])"; }
+  check "CR19-10 donation present w/ payer" "Ann $RP" "$(donq $RPD1 2)"
+  check "CR19-10b donation amount 15.00" "15.00" "$(donq $RPD1 4)"
+  # payments are insert-only, so prior runs' fixtures accumulate in the shared
+  # window — assert the labelled total EQUALS the sum of the rows, not a number
+  check "CR19-10c trailing total = row sum" "match" "$(echo "$DON" | python3 -c "
+import sys, csv
+rows = [r for r in csv.reader(sys.stdin) if r]
+total = next(r[4] for r in rows if r[0] == 'Total donations')
+cents = sum(round(float(r[4]) * 100) for r in rows if r[0] not in ('Date', 'Total donations'))
+print('match' if round(float(total) * 100) == cents else f'{total} != {cents}')")"
+  check "CR19-11 reversal row -5.00"     "-5.00" "$(donq $RPD2 4)"
+  check "CR19-12 out-of-range absent"    "MISSING" "$(donq $RPD3 0)"
+  check "CR19-12b membership-only payment absent" "0" "$(echo "$DON" | grep -c ",2094-09-15," | head -1)"
+else
+  echo "note: psql not found — skipping CR-019 data rows (address/deceased fixtures need psql)"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"

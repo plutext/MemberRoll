@@ -365,6 +365,29 @@ CR10-11's "no price in period" fixture now creates a throwaway unpriced
 type — V8 deliberately closed the LIFE-unpriced-in-2025-2026 gap it used
 to rely on.
 
+CR-019 added the reports surface: `AdminReportsResource`
+(`/api/admin/export/...`, admin-only) over the read-only `ReportStore`
+(the ReconciliationStore pattern — hand-written SQL, one record per CSV
+row, nothing written), plus `admin/reports.html` and a Reports nav entry
+(downloads are authenticated-fetch → blob, the CR-017 bearer bite). Four
+cross-cutting CSVs, deliberately not period-scoped and deliberately no
+report builder/stored reports/PDF: register-of-members (the clause 4
+statutory register — CR-011 Stage 1 delivered; joined = earliest
+`membership.start_date` over `is_statutory_member` places, NOT
+`membership_person.start_date` which is row-creation date; ceased =
+`ceased_date`, else last membership year's end capped at today; the
+Stage 2 suppression flag, when it lands, gets honoured in
+`ReportStore.registerOfMembers`), no-current-membership?periodId= (the
+rollover-residue / CR-018-import-gap catcher), unrenewed?fromPeriodId=&
+toPeriodId= (ACTIVE in from, anything else in to; to must START after
+from), donations?from=&to= (DONATION-allocation payments, reversals
+negative, trailing labelled total — asserted in the matrix as
+equal-to-row-sum because insert-only payments accumulate across runs in
+the shared fixture window). A bad parameter is a 400 JSON error, never
+an empty CSV. The period-scoped exports stay on AdminPeriodsResource and
+the payment-scoped ones on AdminPaymentsResource — the reports page only
+links to them.
+
 CR-008 readied production (docs/change-requests/008-production-deployment.md,
 go-live runbook included there): the deploy assets — frozen at CR-001 —
 caught up with the app. Prod compose now passes `PUBLIC_BASE_URL`

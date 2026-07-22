@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — reports</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
+
+<section id="reportsSection" hidden>
+    <h2>Reports</h2>
+    <p class="muted">Cross-cutting exports — each downloads a CSV to open in a
+        spreadsheet. The per-year exports (AGM register, mailing labels,
+        financial) stay on the Renewals page where the year's work happens;
+        links below.</p>
+
+    <h3>Register of members</h3>
+    <p class="muted">The constitution's clause 4 register: every person who
+        holds or has ever held a formal membership place — full name, one
+        address (preferred postal, else email), the date they became a member
+        and, for former members, the date they ceased. Unlike the AGM register
+        it includes lapsed and ceased members: that is the point.
+        <strong>Known limitation:</strong> for members brought in by the
+        spreadsheet import, "date became a member" is the start of the earliest
+        imported year, not their true historical join date.</p>
+    <button id="repRegister">Download CSV</button>
+
+    <h3>People without a current membership</h3>
+    <p class="muted">Current household people (not left, not deceased) holding
+        no membership place in the chosen year — who fell through the cracks at
+        rollover, person by person, with the last year they did hold a place
+        (blank = never).</p>
+    <label>Period <select id="repNoMemPeriod"></select></label>
+    <button id="repNoMem">Download CSV</button>
+
+    <h3>Unrenewed households</h3>
+    <p class="muted">Households financial (Paid) in the first year whose state
+        in the second is anything else — unpaid, lapsed, ceased, or no
+        membership at all ("—"). The ring-around chase list, with the primary
+        contact's email and phone.</p>
+    <label>From <select id="repUnrenewedFrom"></select></label>
+    <label>To <select id="repUnrenewedTo"></select></label>
+    <button id="repUnrenewed">Download CSV</button>
+
+    <h3>Donations</h3>
+    <p class="muted">Payments carrying a donation part, by received date
+        (leave the dates blank for all time), with a trailing total. Reversals
+        appear as negative rows — the export sums to the ledger.</p>
+    <label>From <input id="repDonFrom" type="date"></label>
+    <label>To <input id="repDonTo" type="date"></label>
+    <button id="repDonations">Download CSV</button>
+
+    <h3>Other exports</h3>
+    <ul class="muted">
+        <li><a href="index.html">Renewals page</a> — AGM register, mailing
+            labels and financial CSVs for the selected period, and the
+            reconciliation / Xero-journal exports for the treasurer.</li>
+    </ul>
+</section>
+</main>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

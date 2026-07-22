@@ -124,3 +124,17 @@ Renewals section.
   takes the register-of-members export as its Report A, implemented to
   this doc's Stage 1 specification (which stays authoritative here).
   Stages 2–4 remain with this CR.
+- **2026-07-23 — Stage 1 DELIVERED** by CR-019 (same day):
+  `GET /api/admin/export/register-of-members.csv` on the new Reports
+  page. The derivations this doc left "to be pinned" are pinned in
+  CR-019's Results (and in `ReportStore`'s javadoc): date became a
+  member = earliest `membership.start_date` over formal places (the
+  imported-data limitation stated on the page and in the manual); a
+  person is current while holding a formal place on an ACTIVE or
+  PENDING_PAYMENT membership whose end date has not passed; date ceased
+  = `ceased_date` for a CEASED last membership, else the end of the last
+  membership year capped at today (the clause 12 non-payment mapping).
+  `ReportStore.registerOfMembers` is the marked spot where the Stage 2
+  suppression flag gets honoured when it lands. Verification: CR19-01/02/
+  03 and 13 matrix rows (this doc's Stage 1 rows 1–3 equivalents) — see
+  CR-019 Results.

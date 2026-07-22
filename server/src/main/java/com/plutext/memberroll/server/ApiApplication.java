@@ -42,6 +42,7 @@ public class ApiApplication extends Application {
                 AdminMembershipsResource.class, AdminPaymentsResource.class,
                 AdminNewMemberResource.class, AdminEmailResource.class,
                 AdminCommitteeResource.class, AdminMailSettingsResource.class,
+                AdminReportsResource.class,
                 PayResource.class, StripeWebhookResource.class,
                 AuthFilter.class, RolesAllowedDynamicFeature.class);
     }
