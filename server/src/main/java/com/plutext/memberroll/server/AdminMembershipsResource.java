@@ -42,8 +42,9 @@ import java.util.Set;
  * and copies the household's current composition; ACTIVE is never hand-set
  * (it follows from payments — see AdminPaymentsResource), so the only status
  * transitions here are lapse/undo-lapse and cease. A type change re-snapshots
- * the amount due but is refused once any payment has been allocated (repricing
- * under money is register drift).
+ * the amount due but is refused while the net allocated amount is non-zero
+ * (repricing under money is register drift; a fully-reversed payment is
+ * history, not money — CR-018's reverse-then-retype path) or on CEASED.
  */
 @Path("admin/memberships")
 @RolesAllowed("admin")

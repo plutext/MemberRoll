@@ -346,6 +346,25 @@ rejected (two vendor integrations + an annually-expiring Apple cert — a volunt
 society's time bomb); the card is a low-stakes credential (no QR/validity check),
 staleness self-evident from "Valid to <period end_date>".
 
+CR-018 instantiated life membership — the mechanism existed since V1 (a
+$0-price type is ACTIVE immediately and rolls over at $0); V8 only creates
+the LIFE type + a $0 price in every existing period, with **guarded
+inserts** because dev/smoke DBs already held a matrix-seeded LIFE type.
+Still no type-management API (the CR-010 decision — a migration per new
+type). `MembershipStore.changeType`'s guard was refined from "any
+allocation exists" to "**net** allocated amount ≠ 0" (a fully-reversed
+payment is history, not money — this unlocks reverse-then-retype for the
+8 YDHS households imported as paid SINGLE/HOUSEHOLD; the runbook is in
+the CR doc) plus a CEASED refusal; repricing and typing still move
+together. UI: the manage dialog's Type row (options from the cached
+period prices, hidden on CEASED, server 400 surfaced verbatim — it names
+the Reverse-first remedy) and a Renewals Type filter sending the `type`
+param `statusView` has matched on `mt.name` since CR-003 (so the filter
+option's value is the type NAME, unlike `emType`'s ids). Matrix note:
+CR10-11's "no price in period" fixture now creates a throwaway unpriced
+type — V8 deliberately closed the LIFE-unpriced-in-2025-2026 gap it used
+to rely on.
+
 CR-008 readied production (docs/change-requests/008-production-deployment.md,
 go-live runbook included there): the deploy assets — frozen at CR-001 —
 caught up with the app. Prod compose now passes `PUBLIC_BASE_URL`

@@ -722,7 +722,28 @@ async function loadPeriods(selectId) {
         select.appendChild(o);
     }
     renderPeriodSummary();
+    fillTypeFilter();
     await renderMemberships();
+}
+
+// CR-018: the Renewals Type filter — the ?type= param has existed since
+// CR-003 (matched on type NAME server-side); options from the union of every
+// period's prices, like the email compose page. Selection survives a reload.
+function fillTypeFilter() {
+    const select = document.getElementById("typeFilter");
+    const keep = select.value;
+    select.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "All";
+    select.appendChild(all);
+    for (const t of allTypes()) {
+        const o = document.createElement("option");
+        o.value = t.type;
+        o.textContent = t.type;
+        o.selected = t.type === keep;
+        select.appendChild(o);
+    }
 }
 
 function renderPeriodSummary() {
@@ -755,9 +776,11 @@ async function renderMemberships() {
     if (!periodId) return;
     const q = document.getElementById("memberSearch").value.trim();
     const status = document.getElementById("statusFilter").value;
+    const type = document.getElementById("typeFilter").value;
     const params = new URLSearchParams({limit: "200"});
     if (q) params.set("q", q);
     if (status) params.set("status", status);
+    if (type) params.set("type", type);
     const response = await registerCall(`/admin/periods/${periodId}/memberships?${params}`);
     if (!response) return;
     const page = await response.json();
@@ -798,6 +821,7 @@ async function openMembership(id) {
         `${m.typeName} — ${statusLabel(m.status)}. Due ${dollars(m.amountDueCents)}, `
         + `paid ${dollars(m.amountPaidCents)}.` + (members ? " Members: " + members : "");
     renderMembershipActions(m);
+    renderMembershipType(m);
     renderMembershipMembers(m);
     renderMembershipPayments(m);
     // prep the payment form for this membership (prefilled with the balance)
@@ -825,6 +849,27 @@ function renderMembershipActions(m) {
     if (m.status === "LAPSED") btn("Undo lapse", () => transition(m.id, {status: "PENDING_PAYMENT"}));
     if (m.status !== "CEASED") btn("Cease…", () => ceaseMembership(m.id));
     if (m.status !== "CEASED") btn("Copy pay link", () => copyPayLink(m.id));
+}
+
+// CR-018: the manage dialog's Type row — set/unset LIFE, or fix a mis-typed
+// membership. Options are the membership's period's types with prices (from
+// the cached period list). The server refuses while net allocated money is
+// non-zero, and registerCall surfaces that 400 verbatim — it tells the admin
+// to Reverse first (the button in the same dialog). Hidden on CEASED.
+function renderMembershipType(m) {
+    const row = document.getElementById("mdTypeRow");
+    row.hidden = m.status === "CEASED";
+    if (row.hidden) return;
+    const select = document.getElementById("mdTypeSelect");
+    select.innerHTML = "";
+    const period = periodsCache.find(p => p.id === m.membershipPeriodId);
+    for (const pr of (period ? period.prices : [])) {
+        const o = document.createElement("option");
+        o.value = pr.typeId;
+        o.textContent = `${pr.type} (${dollars(pr.amountCents)})`;
+        o.selected = pr.typeId === m.membershipTypeId;
+        select.appendChild(o);
+    }
 }
 
 // mint a magic pay link (CR-004) for pasting into a manual email; each click
@@ -1442,6 +1487,7 @@ function wireRenewals() {
     on("memberSearchGo", renderMemberships);
     document.getElementById("memberSearch").onkeydown = (e) => { if (e.key === "Enter") renderMemberships(); };
     document.getElementById("statusFilter").onchange = renderMemberships;
+    document.getElementById("typeFilter").onchange = renderMemberships;
     on("lapseAll", lapseAll);
     on("exportAgm", () => exportCsv("agm-register.csv"));
     on("exportLabels", () => exportCsv("mailing-labels.csv"));
@@ -1455,6 +1501,10 @@ function wireRenewals() {
     on("xeCancel", () => closeDialog("xeroForm"));
     document.getElementById("recMark").disabled = true;
     loadXeroMappingState(); // reveal the journal button if a mapping already exists
+    on("mdTypeChange", () => {
+        const typeId = Number(document.getElementById("mdTypeSelect").value);
+        if (typeId) transition(openMembershipId, {membershipTypeId: typeId});
+    });
     on("mdRecordPayment", () => openDialog("paymentForm"));
     on("payAddLine", addAllocationLine);
     on("paySave", submitPayment);

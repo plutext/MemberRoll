@@ -13,8 +13,8 @@ and the running cost is little more than hosting.
 ## Key features
 
 - **Membership register** — people and households, membership types with
-  their own prices, full history (members are never deleted, changes are
-  dated).
+  their own prices (including $0 life membership), full history (members
+  are never deleted, changes are dated).
 - **Renewals** — annual membership periods, one-click rollover into the
   new year, and a live financial-status view of who has paid, who hasn't,
   and who has lapsed.

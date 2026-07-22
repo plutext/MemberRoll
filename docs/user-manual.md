@@ -144,7 +144,8 @@ them up manually if they return.
 ### Who has paid — the members table
 
 The members table lists the period's memberships. **Search** by household or
-member name, and filter by **Status**:
+member name, filter by **Type** (e.g. show only `LIFE` or only `SINGLE`
+memberships), and filter by **Status**:
 
 | Filter | Meaning |
 |---|---|
@@ -182,6 +183,35 @@ button beside the payment: it records an equal-and-opposite entry (and notes
 which payment it reverses). Both entries stay in the record with who entered
 them and when, and the membership's status re-derives automatically — so a
 reversed payment can drop a membership back to **Unpaid**.
+
+### Life membership — changing a membership's type
+
+A **life member** pays no annual fee. There is nothing special to do each
+year: a life membership is simply one whose type is `LIFE` (price $0), so it
+shows **Paid** immediately, rolls forward automatically each period at $0,
+never appears in unpaid lists or renewal-chasing email segments — and the
+member still votes and appears on the AGM register like any other.
+
+To grant (or correct) it, open the membership with **Manage** and use the
+**Type** row: pick the new type — each option shows its price for that
+period — and press **Change type**. The amount due re-snapshots to the new
+type's price and the status follows: setting `LIFE` on an unpaid membership
+makes it **Paid** at $0 due; setting a paid type back on a life membership
+returns the real price and the membership shows **Unpaid** until paid.
+
+Two guardrails:
+
+- **Money first.** The type cannot change while payments are allocated to
+  the membership — repricing under money is how registers drift. If the
+  membership was paid (or part-paid), **Reverse** the payment(s) in the same
+  dialog first; once the net is back to zero the change is allowed. (This is
+  also the recovery for "imported as an ordinary paid member but is really a
+  life member": reverse the recorded payment, then change the type to
+  `LIFE`.)
+- A **Ceased** membership's type cannot change — the record is closed.
+
+Use the members table's **Type** filter (`LIFE`) to verify the result: the
+life households, all **Paid**, due $0.00.
 
 ### Online card payment — pay links
 

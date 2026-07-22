@@ -354,18 +354,30 @@ final class MembershipStore {
     }
 
     /**
-     * Re-snapshot amount_due to a new type's price. Refused (400) once any
-     * allocation exists — repricing under money is how registers drift. A
-     * recompute follows in case the new type is zero-due.
+     * Re-snapshot amount_due to a new type's price. Refused (400) while the
+     * NET allocated amount is non-zero — repricing under money is how
+     * registers drift, but a fully-reversed payment leaves no money, only
+     * history, so reverse-then-retype works (CR-018). CEASED is refused too:
+     * rewriting the due on a closed record has no meaning. A recompute
+     * follows in case the new type is zero-due.
      */
     void changeType(Handle handle, long id, long typeId) {
-        int allocations = handle.createQuery("SELECT count(*) FROM payment_allocation WHERE membership_id = :id")
-                .bind("id", id).mapTo(Integer.class).one();
-        if (allocations > 0) {
-            throw new IllegalArgumentException("cannot change membership type once a payment has been allocated");
+        record Row(String status, long periodId) {}
+        Row m = handle.createQuery("SELECT status, membership_period_id FROM membership WHERE membership_id = :id")
+                .bind("id", id)
+                .map((rs, ctx) -> new Row(rs.getString("status"), rs.getLong("membership_period_id")))
+                .one();
+        if ("CEASED".equals(m.status())) {
+            throw new IllegalArgumentException("cannot change the type of a CEASED membership");
         }
-        long periodId = handle.createQuery("SELECT membership_period_id FROM membership WHERE membership_id = :id")
-                .bind("id", id).mapTo(Long.class).one();
+        int net = handle.createQuery(
+                "SELECT COALESCE(SUM(amount_cents), 0) FROM payment_allocation WHERE membership_id = :id")
+                .bind("id", id).mapTo(Integer.class).one();
+        if (net != 0) {
+            throw new IllegalArgumentException("cannot change membership type while money is allocated"
+                    + " to this membership — reverse the payment(s) first");
+        }
+        long periodId = m.periodId();
         Optional<Integer> price = PeriodStore.priceCents(handle, typeId, periodId);
         if (price.isEmpty()) {
             throw new IllegalArgumentException("no price for that membership type in the membership's period");

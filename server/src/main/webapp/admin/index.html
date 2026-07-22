@@ -178,6 +178,11 @@
             <option value="APPLIED">Applied</option>
             <option value="CEASED">Ceased</option>
         </select></label>
+    <!-- CR-018: the ?type= param has existed since CR-003; this just sends it -->
+    <label>Type
+        <select id="typeFilter">
+            <option value="">All</option>
+        </select></label>
     <button id="memberSearchGo">Search</button>
     <button id="lapseAll">Lapse all unpaid</button>
     <span class="muted"> — export: </span>
@@ -249,6 +254,12 @@
                  ACTIVE membership (the card asserts financial standing) -->
             <div id="mdMembers"></div>
             <div id="mdActions"></div>
+            <!-- CR-018: set/unset LIFE (or fix a mis-typed membership). The server
+                 refuses while net allocated money is non-zero — reverse first. -->
+            <div id="mdTypeRow">
+                <label>Type <select id="mdTypeSelect"></select></label>
+                <button id="mdTypeChange" class="secondary">Change type</button>
+            </div>
             <button id="mdRecordPayment">Record payment</button>
             <table id="mdPayments">
                 <thead>

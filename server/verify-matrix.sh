@@ -266,8 +266,12 @@ check "CR3-03 periods noaud 401"        "401" "$(code $API/admin/periods -H "Aut
 
 if [ "$PSQL_OK" = 1 ]; then
   R="Ren$$"
-  # LIFE type (idempotent) — no type-management API by design
+  # LIFE type: V8 seeds it since CR-018; this guarded insert remains only so
+  # the block still runs against a pre-CR-018 server
   psqlq "INSERT INTO membership_type (name, description, minimum_people, maximum_people) SELECT 'LIFE','Life member',1,NULL WHERE NOT EXISTS (SELECT 1 FROM membership_type WHERE name='LIFE')" >/dev/null
+  # heal a crashed earlier run: a lingering CR10-11/CR18-08 throwaway type
+  # would make every period creation below 400 (a price is required per type)
+  psqlq "DELETE FROM membership_type WHERE name LIKE 'X10TMP%' OR name LIKE 'X18TMP%'" >/dev/null
   T_SINGLE=$(psqlq "SELECT membership_type_id FROM membership_type WHERE name='SINGLE'")
   T_HH=$(psqlq "SELECT membership_type_id FROM membership_type WHERE name='HOUSEHOLD'")
   T_LIFE=$(psqlq "SELECT membership_type_id FROM membership_type WHERE name='LIFE'")
@@ -632,10 +636,10 @@ fi
 # One POST creates person(s) + household + membership atomically (the
 # resource owns a single Handle transaction — any failure rolls back
 # everything, including an already-inserted first person). Reuses the CR-003
-# fixtures' $P2526/$T_SINGLE/$T_HH/$T_LIFE/$TGTID: LIFE was added via psql
-# AFTER $P2526 was seeded by V2, so it has no membership_type_price row there
-# (the CR10-11 "no price" fixture) but IS priced (at 0) in $TGTID (CR3-05,
-# the CR10-12 zero-due fixture).
+# fixtures' $P2526/$T_SINGLE/$T_HH/$T_LIFE/$TGTID. Since CR-018's V8, LIFE
+# is priced ($0) in EVERY period, so the CR10-11 "no price" case needs its
+# own throwaway unpriced type; LIFE in $TGTID stays the CR10-12 zero-due
+# fixture.
 check "CR10-01 new-member guest 403"    "403" "$(code -X POST $API/admin/new-member -H 'Content-Type: application/json' -d '{}')"
 check "CR10-02 new-member user 403"     "403" "$(code -X POST $API/admin/new-member -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
 check "CR10-03 new-member noaud 401"    "401" "$(code -X POST $API/admin/new-member -H "Authorization: Bearer $NOAUD" -H 'Content-Type: application/json' -d '{}')"
@@ -703,8 +707,12 @@ if [ "$PSQL_OK" = 1 ]; then
   check "CR10-10c unknown type 400"      "400" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Xia\",\"familyName\":\"${NM}H\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":999999}")"
   check "CR10-10d names typeId"          "true" "$(body | jsq "str('membershipTypeId' in j['error']).lower()")"
 
-  # CR10-11: type with no price for the period
-  check "CR10-11 no price for period 400" "400" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Yun\",\"familyName\":\"${NM}I\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_LIFE}")"
+  # CR10-11: type with no price for the period — a throwaway unpriced type
+  # (V8 prices LIFE everywhere now); dropped again at once so period creation
+  # (which requires a price for EVERY type) stays green
+  T_NM_X=$(psqlq "INSERT INTO membership_type (name, description, minimum_people) VALUES ('X10TMP$$','cr10 unpriced',1) RETURNING membership_type_id" | grep -E '^[0-9]+$' | head -1)
+  check "CR10-11 no price for period 400" "400" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Yun\",\"familyName\":\"${NM}I\"},\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_NM_X}")"
+  psqlq "DELETE FROM membership_type WHERE membership_type_id = $T_NM_X" >/dev/null
 
   # CR10-12: zero-due type (LIFE, priced in TGTID) -> 201, ACTIVE, no payment row
   check "CR10-12 LIFE zero-due 201"      "201" "$(JPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Zane\",\"familyName\":\"${NM}J\"},\"membershipPeriodId\":$TGTID,\"membershipTypeId\":$T_LIFE}")"
@@ -1693,6 +1701,97 @@ if [ "$PSQL_OK" = 1 ] && [ -n "${SSJP:-}" ]; then
 else
   echo "note: CR-017 data rows skipped (need psql + the CR-006 linked fixtures)"
 fi
+
+# --- life membership (CR-018) ------------------------------------------------
+# LIFE is real reference data now (V8: the type + a $0 price in every period),
+# and changeType's guard is refined: refused while NET allocated money != 0 (a
+# fully-reversed payment is history, not money — the reverse-then-retype path
+# the YDHS remediation needs) and always on CEASED. The rollover shape of a
+# LIFE membership (carried ACTIVE, due 0) is already asserted by CR3-22c/d/e.
+check "CR18-01 retype guest 403"       "403" "$(code -X PUT $API/admin/memberships/1 -H 'Content-Type: application/json' -d '{"membershipTypeId":1}')"
+check "CR18-01b retype user 403"       "403" "$(code -X PUT $API/admin/memberships/1 -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{"membershipTypeId":1}')"
+check "CR18-01c retype noaud 401"      "401" "$(code -X PUT $API/admin/memberships/1 -H "Authorization: Bearer $NOAUD" -H 'Content-Type: application/json' -d '{"membershipTypeId":1}')"
+
+# row 2: the migration's work is visible on the periods surface — every period
+# prices LIFE at $0 (V8 covered the periods that existed; PeriodStore requires
+# a price for every type at creation, so later periods carry it too)
+check "CR18-02 LIFE \$0 in every period" "true" "$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "str(all(any(pr['type']=='LIFE' and pr['amountCents']==0 for pr in p['prices']) for p in j['periods'])).lower()")"
+
+L18="Life$$"
+PJSON=$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN")
+P18=$(echo "$PJSON" | jsq "next(p['id'] for p in j['periods'] if p['name']=='2025-2026')")
+T18_LIFE=$(echo "$PJSON" | jsq "next(pr['typeId'] for p in j['periods'] for pr in p['prices'] if pr['type']=='LIFE')")
+T18_SINGLE=$(echo "$PJSON" | jsq "next(pr['typeId'] for p in j['periods'] for pr in p['prices'] if pr['type']=='SINGLE')")
+
+# fixture: a MEMBER household with an unpaid SINGLE membership in 2025-2026
+JPOST $API/admin/people "{\"givenName\":\"Vera\",\"familyName\":\"$L18\"}" >/dev/null; PL18=$(body | jsq "j['id']")
+JPOST $API/admin/households "{\"householdName\":\"$L18 household\",\"primaryContactPersonId\":$PL18}" >/dev/null; HL18=$(body | jsq "j['id']")
+JPOST $API/admin/memberships "{\"householdId\":$HL18,\"membershipPeriodId\":$P18,\"membershipTypeId\":$T18_SINGLE}" >/dev/null; ML18=$(body | jsq "j['id']")
+
+# row 3: set LIFE on an unpaid membership — due $0, ACTIVE at once, approved set
+check "CR18-03 set LIFE 200"           "200" "$(JPUT $API/admin/memberships/$ML18 "{\"membershipTypeId\":$T18_LIFE}")"
+check "CR18-03b due 0"                 "0" "$(body | jsq "j['amountDueCents']")"
+check "CR18-03c ACTIVE"                "ACTIVE" "$(body | jsq "j['status']")"
+check "CR18-03d approved set"          "true" "$(body | jsq "str(j['approvedDate'] is not None).lower()")"
+
+# row 4: unset (LIFE -> SINGLE) — the real price returns and so does the debt
+check "CR18-04 unset LIFE 200"         "200" "$(JPUT $API/admin/memberships/$ML18 "{\"membershipTypeId\":$T18_SINGLE}")"
+check "CR18-04b due 4500"              "4500" "$(body | jsq "j['amountDueCents']")"
+check "CR18-04c PENDING_PAYMENT"       "PENDING_PAYMENT" "$(body | jsq "j['status']")"
+
+# row 5: net money on the membership still refuses a retype
+JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-01\",\"amountCents\":4500,\"method\":\"OTHER\",\"notes\":\"cr18 import-style\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$ML18,\"amountCents\":4500}]}" >/dev/null
+check "CR18-05 retype under money 400" "400" "$(JPUT $API/admin/memberships/$ML18 "{\"membershipTypeId\":$T18_LIFE}")"
+check "CR18-05b names the remedy"      "true" "$(body | jsq "str('reverse' in j['error']).lower()")"
+
+# row 6: reverse first, then retype — the net-zero path (the YDHS runbook)
+JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-02\",\"amountCents\":-4500,\"method\":\"OTHER\",\"notes\":\"cr18 reversal\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$ML18,\"amountCents\":-4500}]}" >/dev/null
+check "CR18-06 retype after reverse 200" "200" "$(JPUT $API/admin/memberships/$ML18 "{\"membershipTypeId\":$T18_LIFE}")"
+check "CR18-06b ACTIVE due 0"          "ACTIVE|0" "$(body | jsq "j['status']+'|'+str(j['amountDueCents'])")"
+
+# row 7: CEASED is closed — no retype
+JPOST $API/admin/people "{\"givenName\":\"Cei\",\"familyName\":\"$L18\"}" >/dev/null; PL18C=$(body | jsq "j['id']")
+JPOST $API/admin/households "{\"householdName\":\"$L18 C\",\"primaryContactPersonId\":$PL18C}" >/dev/null; HL18C=$(body | jsq "j['id']")
+JPOST $API/admin/memberships "{\"householdId\":$HL18C,\"membershipPeriodId\":$P18,\"membershipTypeId\":$T18_SINGLE}" >/dev/null; ML18C=$(body | jsq "j['id']")
+JPUT $API/admin/memberships/$ML18C "{\"status\":\"CEASED\",\"ceasedDate\":\"2026-07-01\",\"cessationReason\":\"OTHER\"}" >/dev/null
+check "CR18-07 retype CEASED 400"      "400" "$(JPUT $API/admin/memberships/$ML18C "{\"membershipTypeId\":$T18_LIFE}")"
+
+# row 8: a type with no price in the membership's period (psql: a throwaway
+# type is the only way to produce one — period creation forbids the gap).
+# Deleted right after so period creation (which requires a price for EVERY
+# type) stays green; the CR-003 block's heal covers a crashed run.
+if [ "$PSQL_OK" = 1 ]; then
+  T18_X=$(psqlq "INSERT INTO membership_type (name, description, minimum_people) VALUES ('X18TMP$$','cr18 unpriced',1) RETURNING membership_type_id" | grep -E '^[0-9]+$' | head -1)
+  check "CR18-08 unpriced type 400"    "400" "$(JPUT $API/admin/memberships/$ML18 "{\"membershipTypeId\":$T18_X}")"
+  check "CR18-08b names the gap"       "true" "$(body | jsq "str('no price' in j['error']).lower()")"
+  psqlq "DELETE FROM membership_type WHERE membership_type_id = $T18_X" >/dev/null
+else
+  echo "SKIP CR18-08 (unpriced-type fixture needs psql)"
+fi
+
+# rows 10/11: a new period must price LIFE like any type — omitted is a 400
+# naming it, $0 is accepted (the far-future dates keep it out of every other
+# block's way; unique name keeps re-runs green)
+check "CR18-10 period sans LIFE 400"   "400" "$(JPOST $API/admin/periods "{\"name\":\"$L18 np\",\"startDate\":\"2097-07-01\",\"endDate\":\"2098-06-30\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500}]}")"
+check "CR18-10b names LIFE"            "true" "$(body | jsq "str('LIFE' in j['error']).lower()")"
+check "CR18-11 period with LIFE 201"   "201" "$(JPOST $API/admin/periods "{\"name\":\"$L18 p\",\"startDate\":\"2097-07-01\",\"endDate\":\"2098-06-30\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}")"
+check "CR18-11b LIFE \$0 in its prices" "0" "$(body | jsq "next(pr['amountCents'] for pr in j['prices'] if pr['type']=='LIFE')")"
+
+# row 12: the status view's ?type= filter (the param CR-003 shipped, now with
+# a UI): LIFE lists the retyped membership, SINGLE does not — and the ceased
+# SINGLE household proves the filter, not the search, does the narrowing
+SV_LIFE=$(curl -s "$API/admin/periods/$P18/memberships?type=LIFE&q=$L18" -H "Authorization: Bearer $ADMIN")
+SV_SINGLE=$(curl -s "$API/admin/periods/$P18/memberships?type=SINGLE&q=$L18" -H "Authorization: Bearer $ADMIN")
+check "CR18-12 type=LIFE lists it"     "true" "$(echo "$SV_LIFE" | jsq "str(any(r['membershipId']==$ML18 for r in j['rows'])).lower()")"
+check "CR18-12b rows all LIFE"         "true" "$(echo "$SV_LIFE" | jsq "str(all(r['typeName']=='LIFE' for r in j['rows'])).lower()")"
+check "CR18-12c type=SINGLE excludes it" "false" "$(echo "$SV_SINGLE" | jsq "str(any(r['membershipId']==$ML18 for r in j['rows'])).lower()")"
+check "CR18-12d ceased SINGLE still there" "true" "$(echo "$SV_SINGLE" | jsq "str(any(r['membershipId']==$ML18C for r in j['rows'])).lower()")"
+
+# row 13: a life member votes — the AGM register carries the MEMBER person
+check "CR18-13 agm has life member"    "yes" "$(curl -s $API/admin/periods/$P18/export/agm-register.csv -H "Authorization: Bearer $ADMIN" | grep -q "Vera,$L18" && echo yes || echo no)"
+
+# row 14: financial.csv shows the LIFE row at due 0, paid 0
+check "CR18-14 financial LIFE 0/0"     "LIFE|0|0" "$(curl -s $API/admin/periods/$P18/export/financial.csv -H "Authorization: Bearer $ADMIN" | python3 -c "import sys,csv; r=next(r for r in csv.reader(sys.stdin) if r and r[0]=='$L18 household'); print(r[2]+'|'+r[4]+'|'+r[5])")"
 
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"

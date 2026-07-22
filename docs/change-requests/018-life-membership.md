@@ -1,6 +1,6 @@
 # CR 018: Life membership — instantiate the LIFE type, set/unset interface, type filter
 
-Status: PROPOSED (2026-07-23 — not yet implemented)
+Status: IMPLEMENTED + VERIFIED (2026-07-23)
 
 ## Problem
 
@@ -196,7 +196,68 @@ form shows the LIFE price input pre-filled from the base period.
 
 ## Results
 
-(to be recorded when implemented)
+Implemented 2026-07-23. What was built matches the approach above; the
+migration landed as **V8** (`V8__life_membership_type.sql` — CR-016's
+proposed `sms_opt_out` was still unimplemented, so V8 was free and CR-016
+renumbers). Notes against the plan:
+
+- The migration's two inserts are **guarded** (`WHERE NOT EXISTS`): the
+  long-running dev and smoke databases already held a LIFE type seeded by
+  `verify-matrix.sh` via psql (the CR-003 rollover fixtures), and V8 must
+  converge on them too. Verified against exactly such a database: V8
+  applied cleanly, kept the existing type row (id 3), and added the one
+  missing price row (2025-2026 — the matrix-created periods already
+  carried LIFE $0 because period creation requires a full price set once
+  the type exists).
+- `changeType` now reads status + period in one query, refuses CEASED
+  (400), and refuses on `SUM(amount_cents) != 0` over the membership's
+  allocations with a message that names the remedy ("… reverse the
+  payment(s) first").
+- UI as designed: manage-dialog Type row (hidden on CEASED; options from
+  the cached period prices, "LIFE ($0.00)" style; Change issues the PUT
+  and registerCall surfaces a 400 verbatim into the dialog) and the
+  Renewals Type dropdown (option value = type NAME — `statusView` matches
+  `mt.name`; the email page's `emType` keeps using ids for the
+  segment-resolver, which takes an id).
+
+### Verification
+
+Matrix: 28 new CR18-* rows in `server/verify-matrix.sh`, self-cleaning
+(unique `Life$$` names; the throwaway unpriced type for row 8 is deleted
+in-block, with a heal in the CR-003 block for crashed runs). All green.
+Plan-to-row mapping: rows 1–8 and 10–14 as planned (row 8's "type with no
+price in the period" needs a psql-created throwaway type — V8 closed the
+gap the plan would otherwise use); row 9 (rollover carries LIFE) was
+already asserted by the pre-existing CR3-22c/d/e rows and is not
+duplicated.
+
+Whole matrix twice after implementation: **PASS=674 FAIL=3** where the 3
+are the documented pre-existing environmental flakes (Keycloak listing
+flake `27b`, and the two UTC-date rows `CR10-04g2`/`CR10-12c` — runs
+before 10:00 AEST sit on the wrong side of the DB's UTC midnight). Row
+count reconciles with the CR-017 baseline: 649 + 28 new = 677 = 674 + 3.
+
+**One genuine matrix casualty of this CR, fixed:** CR10-11 ("no price for
+period 400") had relied on LIFE being unpriced in 2025-2026 — the exact
+gap V8 closes by design. It now creates a throwaway unpriced type
+(`X10TMP$$`, dropped immediately after) instead.
+
+Browser walkthrough (`tmp/cr018-fixtures/cr018-walkthrough.js`,
+Playwright): **12/12** — Type row with priced options and current type
+selected; set LIFE → "LIFE — Paid, $0.00"; unset → "SINGLE — Unpaid,
+$45.00"; refusal on a paid membership surfaced verbatim in the dialog
+(names "reverse"); after Reverse the same change succeeds; Type filter
+narrows the table both ways; no Type row on CEASED; new-period form
+pre-fills the LIFE price input at 0.00 from the base period.
+
+Docs: user manual gained "Life membership — changing a membership's type"
++ the Type-filter mention; README's register bullet mentions $0 life
+membership.
+
+The remediation runbook above (confirm the list with the society,
+reverse + retype the 8 candidate households on the live box before the
+2026-27 rollover) is still to be executed — it is deliberately a data
+operation on the deployed instance, not part of this change.
 
 ## Follow-ups / amendments
 
