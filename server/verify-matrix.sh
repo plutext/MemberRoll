@@ -2159,6 +2159,114 @@ else
   echo "note: psql not found — skipping CR-007 data rows"
 fi
 
+# --- CR-021: mail sandbox redirect ------------------------------------------
+# The optional redirectTo field in the smtp_settings blob: while set, EVERY
+# message the app sends is delivered there instead of its real recipient, with
+# the original recipient named in the subject ("[SANDBOX for a@b] ...") and the
+# body's first line. PAGE-only (the ENV path stays byte-for-byte CR-004/014 —
+# proven by every earlier mail row riding ENV with the field absent). The block
+# is self-cleaning: it ends by deleting the row, restoring ENV.
+# Physical order differs from row numbers: lost-link (06) must run BEFORE the
+# fixture is paid (a paid membership has no payable balance to lose a link to).
+SBX="sandpit.$$@example.com"
+SBXQ() { curl -s "$MAILPIT/api/v1/search?query=to:%22$SBX%22"; }
+
+# row 1: validation — a redirectTo that isn't an email address is a 400, writes nothing
+check "CR21-01 redirectTo lacking @ 400" "400" "$(JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"sbx.$$@memberroll.dev\",\"redirectTo\":\"not-an-email\"}")"
+check "CR21-01b nothing saved"          "ENV" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
+
+# rows 2 + 9: save with username+password+redirectTo; GET echoes the field; a
+# re-save with the password ABSENT keeps it — the CR-014 keep rule is untouched
+# by the new field, so the sandbox round trip never needs the secret retyped
+check "CR21-02 PUT redirectTo 200"      "200" "$(JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"sbx.$$@memberroll.dev\",\"username\":\"sbxuser\",\"password\":\"sbx-secret-$$\",\"redirectTo\":\"$SBX\"}")"
+G21=$(curl -s $MS -H "Authorization: Bearer $ADMIN")
+check "CR21-02b GET echoes redirectTo"  "$SBX" "$(echo "$G21" | jsq "j['redirectTo']")"
+check "CR21-02c source PAGE"            "PAGE" "$(echo "$G21" | jsq "j['source']")"
+check "CR21-02d passwordSet true"       "True" "$(echo "$G21" | jsq "j['passwordSet']")"
+check "CR21-09 re-PUT absent password 200" "200" "$(JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"sbx.$$@memberroll.dev\",\"username\":\"sbxuser\",\"redirectTo\":\"$SBX\"}")"
+G21B=$(curl -s $MS -H "Authorization: Bearer $ADMIN")
+check "CR21-09b password survives sandbox save" "True" "$(echo "$G21B" | jsq "j['passwordSet']")"
+check "CR21-09c redirectTo survives too" "$SBX" "$(echo "$G21B" | jsq "j['redirectTo']")"
+# Mailpit advertises no AUTH (a username would make every send fail), so the
+# send rows run an auth-free sandbox blob: password cleared, username dropped
+check "CR21-02e auth-free sandbox blob 200" "200" "$(JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"sbx.$$@memberroll.dev\",\"password\":\"\",\"redirectTo\":\"$SBX\"}")"
+
+if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
+  # fixture: a member with a real (fixture) address; membership stays unpaid
+  # until after the lost-link row
+  MEM21="cr21mem.$$@example.com"
+  SXPER=$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN")
+  P21=$(echo "$SXPER" | jsq "next(p['id'] for p in j['periods'] if p['name']=='2025-2026')")
+  T21=$(echo "$SXPER" | jsq "next(pr['typeId'] for p in j['periods'] if p['name']=='2025-2026' for pr in p['prices'] if pr['type']=='SINGLE')")
+  JPOST $API/admin/people "{\"givenName\":\"Sandy\",\"familyName\":\"Sbx$$\",\"emails\":[{\"email\":\"$MEM21\",\"isPrimary\":true}]}" >/dev/null; SXP=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"Sbx$$ HH\",\"primaryContactPersonId\":$SXP}" >/dev/null; SXH=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$SXH,\"membershipPeriodId\":$P21,\"membershipTypeId\":$T21}" >/dev/null; SXM=$(body | jsq "j['id']")
+
+  # row 6: the guest-triggered lost-link mail is redirected — no admin in the loop
+  check "CR21-06 lost-link 202"         "202" "$(code -X POST $API/pay/lost-link -H 'Content-Type: application/json' -d "{\"email\":\"$MEM21\"}")"
+  check "CR21-06b pay-link at sandbox"  "yes" "$(mailpit_reaches "$SBX" 1)"
+  check "CR21-06c marker names member"  "true" "$(SBXQ | jsq "str(j['messages'][0]['Subject'].startswith('[SANDBOX for $MEM21]')).lower()")"
+
+  # row 3: the CR-012 receipt email — marker in subject + first line, real
+  # address gets NOTHING
+  JPOST $API/admin/payments "{\"receivedDate\":\"$(date +%F)\",\"amountCents\":4500,\"method\":\"BANK_TRANSFER\",\"payerPersonId\":$SXP,\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$SXM,\"amountCents\":4500}]}" >/dev/null; SXPAY=$(body | jsq "j['id']")
+  check "CR21-03 receipt POST 202"      "202" "$(code -X POST $API/admin/payments/$SXPAY/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}')"
+  check "CR21-03b arrives at sandbox"   "yes" "$(mailpit_reaches "$SBX" 2)"
+  check "CR21-03c subject carries marker" "true" "$(SBXQ | jsq "str(any(m['Subject'].startswith('[SANDBOX for $MEM21]') and 'receipt' in m['Subject'] for m in j['messages'])).lower()")"
+  M21R=$(SBXQ | jsq "next(m['ID'] for m in j['messages'] if 'receipt' in m['Subject'])")
+  check "CR21-03d body first line names member" "SANDBOX REDIRECT — this message was addressed to: $MEM21" "$(curl -s "$MAILPIT/api/v1/message/$M21R" | jsq "j['Text'].splitlines()[0]")"
+  check "CR21-03e real address got nothing" "yes" "$(mailpit_stays "$MEM21" "0")"
+
+  # row 4: the CR-017 card email is redirected AND the PNG attachment survives
+  check "CR21-04 card email 202"        "202" "$(code -X POST $API/admin/memberships/$SXM/card/$SXP/email -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}')"
+  check "CR21-04b redirected"           "yes" "$(mailpit_reaches "$SBX" 3)"
+  check "CR21-04c attachment survives"  "true" "$(SBXQ | jsq "str(any(m['Attachments']==1 and m['Subject'].startswith('[SANDBOX for $MEM21]') for m in j['messages'])).lower()")"
+
+  # row 5: a CR-005 segment send (2 recipients) — both messages at the sandbox,
+  # while the send log records the REAL recipients (intent vs transport)
+  JPOST $API/admin/email/templates "{\"name\":\"Sbx$$ tpl\",\"subject\":\"Sbx$$ hello\",\"body\":\"Dear {{givenName}},\"}" >/dev/null; SXTPL=$(body | jsq "j['id']")
+  JPOST $API/admin/periods "{\"name\":\"Sbx$$ period\",\"startDate\":\"$(date -d '-10 days' +%F)\",\"endDate\":\"$(date -d '+355 days' +%F)\",\"prices\":[{\"type\":\"SINGLE\",\"amountCents\":4500},{\"type\":\"HOUSEHOLD\",\"amountCents\":6500},{\"type\":\"LIFE\",\"amountCents\":0}]}" >/dev/null; SXPID=$(body | jsq "j['id']")
+  A21="cr21a.$$@em.test"; B21="cr21b.$$@em.test"
+  for pair in "Ann:$A21" "Bob:$B21"; do
+    nm=${pair%%:*}; em=${pair##*:}
+    JPOST $API/admin/people "{\"givenName\":\"$nm\",\"familyName\":\"Sbx$$ Seg\",\"emails\":[{\"email\":\"$em\",\"isPrimary\":true}]}" >/dev/null; sp=$(body | jsq "j['id']")
+    JPOST $API/admin/households "{\"householdName\":\"Sbx$$ $nm\",\"primaryContactPersonId\":$sp}" >/dev/null; sh=$(body | jsq "j['id']")
+    JPOST $API/admin/memberships "{\"householdId\":$sh,\"membershipPeriodId\":$SXPID,\"membershipTypeId\":$T21}" >/dev/null
+  done
+  check "CR21-05 segment send 201"      "201" "$(JPOST $API/admin/email/sends "{\"templateId\":$SXTPL,\"periodId\":$SXPID,\"communicationType\":\"RENEWAL\"}")"
+  SXSEND=$(body | jsq "j['id']")
+  check "CR21-05b completes"            "COMPLETE" "$(poll_send_status $SXSEND)"
+  check "CR21-05c both at sandbox"      "yes" "$(mailpit_reaches "$SBX" 5)"
+  check "CR21-05d markers name both"    "true" "$(SBXQ | jsq "str(any('[SANDBOX for $A21]' in m['Subject'] for m in j['messages']) and any('[SANDBOX for $B21]' in m['Subject'] for m in j['messages'])).lower()")"
+  check "CR21-05e A real address got nothing" "yes" "$(mailpit_stays "$A21" "0")"
+  check "CR21-05f B real address got nothing" "yes" "$(mailpit_stays "$B21" "0")"
+  if [ "$PSQL_OK" = 1 ]; then
+    check "CR21-05g log records real recipients" "2" "$(psqlq "SELECT count(*) FROM email_send_recipient WHERE email_send_id=$SXSEND AND status='SENT' AND email IN ('$A21','$B21')")"
+  fi
+
+  # row 7: the settings page's own test button honours the redirect — the
+  # sandbox path is provable from the page
+  T21J=$(curl -s -X POST $MS/test -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"sbx.$$@memberroll.dev\",\"redirectTo\":\"$SBX\",\"to\":\"cr21probe.$$@example.com\"}")
+  check "CR21-07 test ok true"          "True" "$(echo "$T21J" | jsq "j['ok']")"
+  check "CR21-07b test redirected"      "yes" "$(mailpit_reaches "$SBX" 6)"
+  check "CR21-07c marker names typed address" "true" "$(SBXQ | jsq "str(any(m['Subject'].startswith('[SANDBOX for cr21probe.$$@example.com]') for m in j['messages'])).lower()")"
+  check "CR21-07d typed address got nothing" "yes" "$(mailpit_stays "cr21probe.$$@example.com" "0")"
+
+  # row 8: blank clears — live mail restored, no marker
+  check "CR21-08 PUT blank redirectTo 200" "200" "$(JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"sbx.$$@memberroll.dev\",\"redirectTo\":\"\"}")"
+  check "CR21-08b GET redirectTo cleared" "None" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['redirectTo']")"
+  code -X POST $API/admin/payments/$SXPAY/receipt -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}' >/dev/null
+  check "CR21-08c live mail to real address" "yes" "$(mailpit_reaches "$MEM21" 1)"
+  check "CR21-08d no marker on live mail" "False" "$(curl -s "$MAILPIT/api/v1/search?query=to:%22$MEM21%22" | jsq "str('SANDBOX' in j['messages'][0]['Subject'])")"
+else
+  echo "SKIP CR21-03..08 send rows (Mailpit not reachable at $MAILPIT)"
+fi
+
+# unconditional cleanup: the blob goes away entirely → ENV, the resting state
+# every other mail row relies on
+code -X DELETE $MS -H "Authorization: Bearer $ADMIN" >/dev/null
+check "CR21-10 settings cleared at end" "ENV" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"

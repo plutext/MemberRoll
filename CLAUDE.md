@@ -458,6 +458,31 @@ gone (nothing ever read it). The smoke override gained a `mailpit`
 service (name matters — the realm's `smtpServer` host) plus loopback
 Postgres/Mailpit publishes, so the FULL matrix runs against the smoke.
 
+CR-021 added the mail sandbox for testing against real member data: an
+optional `redirectTo` key in the CR-014 `smtp_settings` blob (PAGE-only
+— the ENV path stays byte-for-byte CR-004/014, proven by the whole
+prior mail suite riding ENV with the field absent). While set,
+`Mail.doSend` — the ONE choke point every send funnels through,
+guest-triggered lost-link/apply mail included — delivers EVERY message
+to that address instead, subject-prefixed `[SANDBOX for <real addr>]`
+with a first body line repeating it; body text, Reply-To, attachments
+and the relay path are otherwise unchanged, so the thing under test
+(Exchange, CR-005 abort/resume, multipart) keeps being exercised.
+Blank/absent CLEARS — deliberately no keep-on-absent (live-vs-sandbox
+must never be ambiguous; the password's keep rule is untouched and a
+sandbox round trip never needs the secret retyped). `Mail.enabled()`
+is unaffected (sandbox is a destination concern — every 503 gate
+behaves as today), and the CR-005 send log keeps recording the REAL
+recipients (the log records intent; the transport was redirected).
+Visibility is ambient: the settings page warns inline, and every admin
+page renders a shared-header SANDBOX banner (`admin.js`
+`refreshSandboxBanner`, one admin-gated GET per page load, silent on
+failure). Keycloak's realm mail is out of scope — deploy README §7 is
+the runbook pairing the realm `smtpServer` switch and the on-box
+Mailpit capture option. Matrix note: dev Mailpit advertises no AUTH,
+so the CR21 send rows run an auth-free blob; the password keep/survive
+rows sit beside them (CR21-02/09).
+
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
 `MembershipStore.insertMembershipPerson` sets

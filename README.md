@@ -51,7 +51,9 @@ and the running cost is little more than hosting.
   journal that balances against a Stripe clearing account.
 - **Mail settings in the admin panel** — the SMTP relay (with a one-click
   Microsoft 365 preset) is configured from the browser and takes effect
-  immediately, with a "send test email" button.
+  immediately, with a "send test email" button — and a testing sandbox
+  that redirects every outgoing email to one address, so a demo against
+  real member data can never mail an actual member.
 - **Rules that match the constitution** — member-only voting rights,
   September–August membership year, AGM-bounded committee terms: the
   software follows the governing document, not a generic club template.

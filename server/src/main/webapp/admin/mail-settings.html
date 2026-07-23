@@ -69,6 +69,18 @@
     </div>
     <label>Reply-To (optional) <input id="msReplyTo" placeholder="treasurer@society.org.au"></label>
 
+    <div id="msSandboxWarn" class="warn-note" hidden></div>
+    <label>Sandbox: redirect all outgoing mail to (leave blank for live mail)
+        <input id="msRedirect" type="email" placeholder="tester@example.com">
+        <small class="muted">While set, <strong>every</strong> message the app
+            sends — receipts, segment sends, cards, application notices, even
+            guest-triggered mail — is delivered to this one address instead of
+            its real recipient, with the original recipient named in the
+            subject and first line. The send log still records the real
+            recipients. Keycloak's own forgot-password mail is <strong>not</strong>
+            covered — point the realm's SMTP at the same place while testing.</small>
+    </label>
+
     <div>
         <button id="msSave">Save settings</button>
         <button id="msDelete" type="button" class="secondary">Use server defaults</button>

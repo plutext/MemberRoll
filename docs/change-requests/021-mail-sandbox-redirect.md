@@ -1,6 +1,6 @@
 # CR 021: Mail sandbox — redirect all outgoing email while testing
 
-Status: PROPOSED (2026-07-23)
+Status: IMPLEMENTED + VERIFIED (2026-07-23)
 
 ## Problem
 
@@ -193,12 +193,66 @@ layer up.
 
 ## Results
 
-(after implementation)
+Implemented 2026-07-23 exactly as proposed: the rewrite is the first
+thing `Mail.doSend` does (subject prefix, body first line, then the
+recipient swap — everything downstream, including the CR-017 multipart
+attachment path, is untouched); `redirectTo` rides the `smtp_settings`
+blob and the `Settings` record (PAGE parse only — `envSettings` pins it
+null), validation is the same parseable-email check as `from`/`replyTo`
+(strictly a superset of the proposed "must contain `@`"), and the
+GET/PUT/DELETE response gained the field. UI: the field + inline warning
+on `admin/mail-settings.html`, and the ambient header banner via
+`admin.js` `renderSandboxBanner`/`refreshSandboxBanner` (one
+non-awaited, silent-on-failure admin GET per page load) with a
+`.sandbox-banner` style that carries its own background in both themes.
+
+Matrix: 37 CR21-* rows added to `server/verify-matrix.sh` (self-cleaning
+— the block ends by deleting the row, restoring ENV). Two adaptations
+from the proposed plan, both recorded here deliberately:
+
+- **Dev Mailpit advertises no SMTP AUTH**, so a stored username would
+  make every real send fail before reaching the redirect logic. The
+  send rows (CR21-03..08) therefore run an auth-free blob, and CR21-09's
+  "password survives the round trip" is proven beside the echo rows
+  instead: a re-save carrying `redirectTo` with the password ABSENT
+  keeps `passwordSet=true` (CR21-02/09) — the no-retyping claim, which
+  is what the row was for.
+- The CR21-05 fixture period must price **every** membership type
+  (SINGLE/HOUSEHOLD/LIFE — the PeriodStore rule); the first draft priced
+  only SINGLE and 400'd.
+
+Also: lost-link (CR21-06) runs before the fixture payment — a paid
+membership has no payable balance to lose a link to.
+
+Runs (dev stack, 2026-07-23): full matrix twice, `PASS=843 FAIL=1` both
+times, where the 1 is the pre-existing testuser-listing Keycloak flake
+(row 27b) — all 37 CR21 rows green twice, and every prior mail row
+(CR4/5/12/14/17/7) green with the blob field absent, proving the
+empty-field path byte-for-byte unchanged. Highlights: redirected receipt
+subject `[SANDBOX for <member>] … payment receipt` with the body's first
+line naming the member and the real address at 0 messages (CR21-03);
+card PNG attachment intact through the redirect (CR21-04c); segment send
+delivering both messages to the sandbox while `email_send_recipient`
+keeps the real addresses + SENT (CR21-05); guest lost-link redirected
+(CR21-06); the test button's marker naming the typed address (CR21-07);
+live restored with no marker after a blank re-save (CR21-08).
+
+Browser walkthrough (`tmp/cr021-fixtures/cr021-walkthrough.js`,
+Playwright): 11/11 — field round trip, inline warning while set, ambient
+banner on the mail-settings page AND on the Reports page, both gone
+after clearing, DELETE restores ENV. Screenshots confirm the banner
+placement under the shared header.
+
+Docs: user manual gained "Mail settings and the testing sandbox"
+(including the send-log-records-intent semantics), deploy README gained
+§7 (the sandbox runbook: the Keycloak `smtpServer` pairing step + the
+Option B on-box Mailpit capture steps), README feature list updated.
 
 ## Follow-ups / amendments
 
 - The **C hybrid** — an environment-level `MAIL_REDIRECT` backstop the
   UI cannot override, for pinning the demo instance into sandbox at
   the deployment layer — may follow as a separate small CR.
-- Runbook additions at implementation time: the Keycloak `smtpServer`
-  pairing step, and the Option B Mailpit-on-the-box steps above.
+- ~~Runbook additions at implementation time: the Keycloak `smtpServer`
+  pairing step, and the Option B Mailpit-on-the-box steps above.~~
+  DONE — `server/deploy/README.md` §7.

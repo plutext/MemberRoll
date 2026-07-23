@@ -94,6 +94,14 @@ public class AdminMailSettingsResource {
         String replyTo = Payloads.optString(request, "replyTo");
         if (replyTo != null && !parseable(replyTo)) return badRequest("replyTo must be a valid email address");
 
+        // CR-021 sandbox: blank/absent CLEARS — deliberately no keep-on-absent
+        // subtlety here (unlike the password); live-vs-sandbox must never be
+        // ambiguous, and the page always sends the field
+        String redirectTo = Payloads.optString(request, "redirectTo");
+        if (redirectTo != null && !parseable(redirectTo)) {
+            return badRequest("redirectTo must be a valid email address");
+        }
+
         String username = Payloads.optString(request, "username");
 
         // password: absent → keep the stored one; "" → clear; otherwise → set.
@@ -117,6 +125,7 @@ public class AdminMailSettingsResource {
         if (username != null) value.add("username", username);
         if (password != null && !password.isEmpty()) value.add("password", password);
         if (replyTo != null) value.add("replyTo", replyTo);
+        if (redirectTo != null) value.add("redirectTo", redirectTo);
         String json = value.build().toString();
 
         jdbi.useHandle(h -> h.createUpdate(
@@ -184,12 +193,18 @@ public class AdminMailSettingsResource {
         if (replyTo != null && !parseable(replyTo)) {
             throw new IllegalArgumentException("replyTo must be a valid email address");
         }
+        // the test button honours the sandbox like every other send — the
+        // sandbox path itself is provable from the page (CR-021)
+        String redirectTo = Payloads.optString(request, "redirectTo");
+        if (redirectTo != null && !parseable(redirectTo)) {
+            throw new IllegalArgumentException("redirectTo must be a valid email address");
+        }
         String username = Payloads.optString(request, "username");
         String password = passwordAction(request) == PasswordAction.KEEP
                 ? storedPassword().orElse(null)
                 : rawString(request, "password");
         return new Mail.Settings(Mail.Source.PAGE, host, port,
-                Mail.Security.valueOf(security), username, password, from, replyTo);
+                Mail.Security.valueOf(security), username, password, from, replyTo, redirectTo);
     }
 
     /** The GET/PUT/DELETE response shape: effective settings + provenance, never the password. */
@@ -203,6 +218,7 @@ public class AdminMailSettingsResource {
         addNullable(b, "username", s.username());
         addNullable(b, "from", s.from());
         addNullable(b, "replyTo", s.replyTo());
+        addNullable(b, "redirectTo", s.redirectTo());
         return b.add("passwordSet", s.passwordSet()).build();
     }
 

@@ -271,3 +271,49 @@ Port collisions with the dev stack: the smoke publishes 80/443 (dev uses
 neither) and loopback `28081` for Keycloak, `28025` for Mailpit, `25433`
 for Postgres (dev owns 18081/18025/5433 — hence the offsets). Dev
 Tomcat on 18080 is untouched.
+
+## 7. Testing with real member data — the mail sandbox (CR-021)
+
+When an instance holds **real member addresses** but is being used for
+testing (a demo box, a dress rehearsal), turn the app's mail sandbox on
+BEFORE touching any mail surface: admin **Mail settings** → set
+**Sandbox: redirect all outgoing mail to** a tester's mailbox → Save.
+Every message the app sends — including guest-triggered mail from the
+public pay/apply pages — then goes to that one address, with the real
+recipient named in the subject (`[SANDBOX for jo@example.com]`) and the
+body's first line. It applies from the very next message (per-send
+resolution, no restart) and every admin page shows an orange SANDBOX
+banner while it is on. Clear the field and Save to go live; going live
+for real is part of the go-live runbook, and the banner's absence is the
+check.
+
+**Paired manual step — Keycloak's own mail is NOT covered.** The
+forgot-password / verification email is sent by the realm's `smtpServer`
+config, not the app. While testing with provisioned members, point the
+realm's SMTP at the same sandbox target via the tunnelled admin console
+(realm settings → Email), and restore it afterwards. Forgetting this
+means a member testing "Forgot Password" emails a real address.
+
+### Capturing on the box instead (Mailpit as the redirect target)
+
+For full capture with a UI (attachments, HTML view), run a Mailpit on
+the instance and use it as the relay while testing:
+
+1. Add a `mailpit` service to the instance's compose file — copy the
+   service block from `compose.smoke.yml` (the service **name**
+   `mailpit` matters; it is the in-network hostname), publish nothing
+   beyond loopback (or nothing at all — the UI is reachable through an
+   SSH tunnel to the compose network via `docker compose exec`, or
+   publish `127.0.0.1:8025`), then `docker compose up -d`.
+2. Mail settings page: Host `mailpit`, Port `1025`, Security `None`,
+   **username blank** (no AUTH; the stored Exchange password survives —
+   an absent password field keeps it), Save. The sandbox redirect field
+   composes with this: pointing the relay at Mailpit captures app mail
+   even without the redirect, but the redirect's subject markers still
+   tell you who each message was really for.
+3. Point the realm's `smtpServer` at `mailpit:1025` too (the paired
+   step above).
+4. Read captured mail via an SSH tunnel to the Mailpit UI port.
+5. To go live again: re-save the real host/port/security/username with
+   the password field left empty (keeps the stored secret), clear the
+   sandbox field, and restore the realm's `smtpServer`.

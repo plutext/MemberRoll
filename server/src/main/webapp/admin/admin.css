@@ -47,6 +47,11 @@ nav#menu a.active { background: var(--pico-primary-background); color: var(--pic
 .muted { color: var(--pico-muted-color); }
 .warn-note { color: var(--pico-del-color); margin: .3rem 0; }
 
+/* CR-021: the ambient sandbox banner — carries its own background (like the
+   badges) so it reads loudly in both themes on every admin page */
+.sandbox-banner { background: #b26a00; color: #fff; padding: .35rem .8rem;
+    margin: .4rem 0; border-radius: var(--pico-border-radius); font-weight: 600; }
+
 /* status badges — carry their own background so the label reads in both
    themes; white text clears AA on every colour below. Membership statuses:
    Paid green, Unpaid amber, Applied blue, Lapsed/Ceased grey. Also the

@@ -93,10 +93,14 @@ final class Mail {
     /**
      * The effective SMTP settings and where they came from. The password is
      * carried here for the sender and the keep-on-resave contract, and is never
-     * serialised to a client (only {@code passwordSet}).
+     * serialised to a client (only {@code passwordSet}). {@code redirectTo} is
+     * the CR-021 sandbox: while set, {@link #doSend} delivers EVERY message
+     * there instead of its real recipient (which is named in plain sight in the
+     * subject and body). PAGE-only by design — the ENV path never carries one.
      */
     record Settings(Source source, String host, int port, Security security,
-                    String username, String password, String from, String replyTo) {
+                    String username, String password, String from, String replyTo,
+                    String redirectTo) {
 
         boolean passwordSet() {
             return password != null && !password.isBlank();
@@ -104,7 +108,7 @@ final class Mail {
 
         /** A disabled configuration — nothing to send with. */
         static Settings none() {
-            return new Settings(Source.NONE, null, 0, Security.NONE, null, null, null, null);
+            return new Settings(Source.NONE, null, 0, Security.NONE, null, null, null, null, null);
         }
     }
 
@@ -157,7 +161,8 @@ final class Mail {
             if (from == null) return null;
             Security security = parseSecurity(str(o, "security"));
             return new Settings(Source.PAGE, host, port, security,
-                    str(o, "username"), str(o, "password"), from, str(o, "replyTo"));
+                    str(o, "username"), str(o, "password"), from, str(o, "replyTo"),
+                    str(o, "redirectTo"));
         } catch (Exception e) {
             return null;
         }
@@ -178,7 +183,7 @@ final class Mail {
         String from = env("MAIL_FROM");
         return new Settings(Source.ENV, host, port, security,
                 env("SMTP_USERNAME"), env("SMTP_PASSWORD"),
-                from != null ? from : "noreply@localhost", env("MAIL_REPLY_TO"));
+                from != null ? from : "noreply@localhost", env("MAIL_REPLY_TO"), null);
     }
 
     private static int parsePort(String s) {
@@ -268,6 +273,15 @@ final class Mail {
     /** The actual send; returns null on success or a human-readable error string (unscrubbed). */
     private static String doSend(Settings settings, String to, String subject, String body,
                                  Attachment attachment) {
+        // CR-021 sandbox: while redirectTo is set, every message — this is the
+        // one choke point all sends funnel through, guest-triggered included —
+        // is delivered there instead, the real recipient named in plain sight.
+        // Everything else (Reply-To, attachments, the relay path) is unchanged.
+        if (settings.redirectTo() != null && !settings.redirectTo().isBlank()) {
+            body = "SANDBOX REDIRECT — this message was addressed to: " + to + "\n\n" + body;
+            subject = "[SANDBOX for " + to + "] " + subject;
+            to = settings.redirectTo();
+        }
         try {
             Properties props = new Properties();
             props.put("mail.smtp.host", settings.host());

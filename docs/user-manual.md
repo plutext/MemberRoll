@@ -382,6 +382,43 @@ The per-year exports (AGM register, mailing labels, financial) stay on the
 Renewals page — see [Exports](#exports) above — and the treasurer's
 reconciliation exports are there too.
 
+## Mail settings and the testing sandbox
+
+**Mail settings** (in the admin menu) holds the SMTP relay the app sends
+through — receipts, segment emails, membership cards, application
+notices. Settings saved here take effect on the very next message (no
+restart needed); if nothing is saved, the server's environment
+configuration is used. The **Send a test email** button tries the values
+in the form without saving them and shows the relay's own reply verbatim
+— that is the tool for debugging a provider setting (there is a
+one-click Microsoft 365 preset, and notes on its requirements, on the
+page itself).
+
+### Sandbox — redirect all outgoing mail while testing
+
+When testing with real member data (a demo, a dress rehearsal), set
+**Sandbox: redirect all outgoing mail to** to a tester's address and
+Save. From the next message on, **every** email the app would send — to
+anyone, including mail triggered by visitors on the public pages — is
+delivered to that one address instead. Each redirected message shows who
+it was really for: the subject starts `[SANDBOX for jo@example.com]` and
+the first line of the body repeats it. Everything else (content,
+attachments, the relay) is exactly the real thing, so what you are
+testing is still being tested.
+
+- While the sandbox is on, every admin page shows an orange **SANDBOX**
+  banner in the header — if you can see the panel, you can see the mode.
+- The Email area's send log still records the **real** recipients: the
+  log records what was meant; the sandbox only changed where the
+  messages were carried. Pay links minted by a send work normally — they
+  simply arrive at the sandbox address.
+- To go live again, clear the field and Save. The banner disappears and
+  the next message goes to its real recipient.
+- **Keycloak's sign-in emails are separate**: the Forgot Password email
+  is sent by the login system's own mail configuration, not the app's —
+  while testing, point that at the same sandbox mailbox too (a deploy
+  runbook step), and back again afterwards.
+
 ## Member self-serve — "my membership"
 
 Members can (optionally) log in and see their own household's membership

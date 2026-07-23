@@ -2469,6 +2469,16 @@ async function loadMailSettings() {
     pw.placeholder = s.passwordSet ? "(unchanged — leave blank to keep)" : "";
     document.getElementById("msClearPassword").hidden = !s.passwordSet;
     document.getElementById("msTestResult").textContent = "";
+    // CR-021 sandbox: the field, the page's own warning, and the shared
+    // ambient banner all reflect the just-loaded state
+    document.getElementById("msRedirect").value = s.redirectTo || "";
+    const sandboxWarn = document.getElementById("msSandboxWarn");
+    sandboxWarn.hidden = !s.redirectTo;
+    sandboxWarn.textContent = s.redirectTo
+        ? "⚠ SANDBOX — all outgoing mail is redirected to " + s.redirectTo
+          + ". Clear the field below and Save to go live."
+        : "";
+    renderSandboxBanner(s.redirectTo);
 }
 
 // the shared payload: an EMPTY password field means "absent" (keep the stored
@@ -2482,6 +2492,10 @@ function msFormBody(passwordOverride) {
         from: document.getElementById("msFrom").value.trim(),
         username: document.getElementById("msUsername").value.trim() || null,
         replyTo: document.getElementById("msReplyTo").value.trim() || null,
+        // sandbox redirect (CR-021): ALWAYS sent — blank clears, so
+        // live-vs-sandbox is never ambiguous (unlike the password's
+        // absent-means-keep)
+        redirectTo: document.getElementById("msRedirect").value.trim() || null,
     };
     const typed = document.getElementById("msPassword").value;
     if (passwordOverride !== undefined) body.password = passwordOverride;
@@ -2917,6 +2931,31 @@ const MENU = [
     {href: "mail-settings.html", label: "Mail settings"},
 ];
 
+// CR-021: the ambient sandbox banner — every admin page shows it in the shared
+// header while outgoing mail is redirected, so an admin cannot use the panel
+// without seeing which mode the system is in (the forget-risk cuts both ways).
+function renderSandboxBanner(redirectTo) {
+    let el = document.getElementById("sandboxBanner");
+    if (!redirectTo) { if (el) el.remove(); return; }
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "sandboxBanner";
+        el.className = "sandbox-banner";
+        document.querySelector("header").appendChild(el);
+    }
+    el.textContent = "⚠ SANDBOX — all outgoing mail is redirected to " + redirectTo;
+}
+
+// one admin-gated GET per page load; failures stay silent — the banner is
+// advisory, and every page already surfaces real API errors through its own calls
+async function refreshSandboxBanner() {
+    try {
+        const response = await Auth.api("/admin/mail-settings");
+        if (!response || !response.ok) return;
+        renderSandboxBanner((await response.json()).redirectTo);
+    } catch (e) { /* advisory only */ }
+}
+
 function renderMenu() {
     const nav = document.getElementById("menu");
     if (!nav) return;
@@ -2947,6 +2986,7 @@ async function wireUsers() {
         if (!Auth.hasToken()) return await Auth.login(); // await: reach the catch below
         if (await showIdentity()) {
             renderMenu();
+            refreshSandboxBanner(); // not awaited — ambient, must not delay the page
             if (document.getElementById("usersSection")) await wireUsers();
             if (document.getElementById("importSection")) { wireImport(); await loadPeriods(); }
             if (document.getElementById("newMemberSection")) {
