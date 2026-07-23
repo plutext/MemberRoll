@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Membership application</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <style>
+        /* Overrides only — Pico carries the base look (the CR-009 baseline). */
+        [hidden] { display: none !important; }
+        #message { min-height: 1.4rem; color: var(--pico-ins-color); }
+        #message.error { color: var(--pico-del-color); white-space: pre-wrap; }
+        .thanks { padding: 1rem; border-radius: var(--pico-border-radius);
+            background: var(--pico-card-sectioning-background-color); }
+        fieldset { margin-bottom: 1rem; }
+        /* the honeypot lives off-screen, not display:none — either way a human
+           never sees it, but bots fill what the DOM offers */
+        .hp { position: absolute; left: -9999px; top: -9999px; }
+    </style>
+</head>
+<body>
+<main>
+<header>
+    <h1 id="society">Membership application</h1>
+    <div id="message"></div>
+</header>
+
+<!-- No auth.js on purpose: this page never logs in. An applicant is by
+     definition not yet anyone the system knows; the email round trip is
+     the only identity check, and no payment is taken here (clause 3). -->
+
+<section id="loading"><p>Loading…</p></section>
+
+<section id="closed" class="thanks" hidden>
+    <p>Membership applications are not currently open on this site.
+       Please contact the society directly.</p>
+</section>
+
+<section id="applyForm" hidden>
+    <p>Apply to join the society. The committee considers each application;
+       once approved you'll receive an email with payment instructions —
+       <strong>no payment is taken now</strong>.</p>
+    <form id="form">
+        <fieldset>
+            <legend>Membership</legend>
+            <label>Membership type
+                <select id="fType"></select>
+            </label>
+            <small id="typePrice"></small>
+        </fieldset>
+        <fieldset>
+            <legend>About you</legend>
+            <label>Given name <input id="fGiven" required autocomplete="given-name"></label>
+            <label>Family name <input id="fFamily" required autocomplete="family-name"></label>
+            <label>Email <input id="fEmail" type="email" required autocomplete="email"></label>
+            <small>We'll send a confirmation link to this address.</small>
+            <label>Phone (optional) <input id="fPhone" autocomplete="tel"></label>
+        </fieldset>
+        <fieldset>
+            <legend>Second person (optional)</legend>
+            <p><small>For a household membership, or to note a partner covered by
+                your membership. Leave blank if it's just you.</small></p>
+            <label>Given name <input id="fGiven2"></label>
+            <label>Family name <input id="fFamily2"></label>
+            <label>Email (optional) <input id="fEmail2" type="email"></label>
+            <label>This person is
+                <select id="fRel2">
+                    <option value="MEMBER">also applying for membership (a voting member)</option>
+                    <option value="PARTNER">a partner covered by the membership</option>
+                </select>
+            </label>
+        </fieldset>
+        <fieldset>
+            <legend>Postal address (optional)</legend>
+            <label>Address line 1 <input id="fLine1" autocomplete="address-line1"></label>
+            <label>Address line 2 <input id="fLine2" autocomplete="address-line2"></label>
+            <label>Town / suburb <input id="fLocality" autocomplete="address-level2"></label>
+            <label>State <input id="fState" autocomplete="address-level1"></label>
+            <label>Postcode <input id="fPostcode" autocomplete="postal-code"></label>
+        </fieldset>
+        <label>Anything you'd like to tell the committee (optional)
+            <textarea id="fMessage" rows="3" maxlength="2000"></textarea>
+        </label>
+        <!-- honeypot: humans never see this; a filled value is silently dropped -->
+        <input class="hp" id="hpWebsite" name="website" tabindex="-1" autocomplete="off"
+               aria-hidden="true">
+        <p><button type="submit" id="submitBtn">Apply</button></p>
+    </form>
+</section>
+
+<section id="submitted" class="thanks" hidden>
+    <p><strong>Almost there.</strong> We've emailed you a link to confirm your
+       application — nothing reaches the committee until you click it.
+       The link is valid for 7 days.</p>
+</section>
+
+<section id="confirming" hidden><p>Confirming your application…</p></section>
+
+<section id="confirmed" class="thanks" hidden>
+    <p><strong>Thank you — your application is confirmed.</strong>
+       The committee will consider it and you'll hear from us by email.</p>
+</section>
+
+<section id="badLink" class="thanks" hidden>
+    <p>That confirmation link wasn't recognised — it may have expired.
+       You can <a href="apply.html">apply again</a>, or contact the society.</p>
+</section>
+</main>
+
+<script src="apply.js"></script>
+</body>
+</html>

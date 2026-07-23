@@ -405,6 +405,43 @@ group (LIFE) imports ACTIVE/approved with NO payment row regardless of
 `paid` (a $0 payment would trip `amount_cents <> 0` and roll the whole
 import back), and the preview's payment count excludes it.
 
+CR-007 added the public application form (constitution clause 3) on the
+staging-not-register principle: `membership_application`(+`_person`,
+V10) is the app's ONE deletable people store — junk never touches the
+never-delete register, and V1's `APPLIED` membership status stays
+deliberately unused (this pair IS the applied state). Guest
+`ApplyResource` (no `@RolesAllowed`): `options` offers only the
+positively-priced types of the period covering today (LIFE never);
+submit runs honeypot-first (silent 202, nothing written) → validation →
+per-email cooldown (the LOST_LINK pattern) → a 50/hr global cap
+(per-IP was REJECTED: CGNAT false positives; 50 also keeps repeated
+matrix runs green) → 503 unless `formEnabled` AND `Mail.enabled()` (no
+relay = no round trip = honestly closed). Confirmation tokens are the
+CR-004 recipe (sha256-only, 7 days, unknown/expired = one 404); only
+the mailbox round trip (the CR-006 trust anchor) moves RECEIVED →
+CONFIRMED into the queue, and the first confirmation alerts
+`application_settings.alertMailbox` (a CR-014-style blob, page-settable
+per the committee; falls back to the CR-013 secretary contacts seam).
+`formEnabled` defaults FALSE — the form ships dark until the
+committee's clause-3 minute; flipping it on IS go-live.
+`AdminApplicationsResource` approve/reject RECORD a committee decision
+(decision date + optional minute reference; not-future guard;
+`FOR UPDATE` serialised; CONFIRMED-only, else 409; `Mail.enabled()`
+required, else 503 — the notice is the clause 3(5)(a) deliverable).
+Approve is ONE transaction through the CR-010 path to PENDING_PAYMENT,
+then stamps `application_date`=submission / `approved_date`=the
+committee's date (recompute's COALESCE preserves it at payment), is the
+FIRST writer of `household_address` (POSTAL preferred — labels and the
+CR-019 register pick it up free), and mints the CR-004 pay link into
+the approval notice (mint expiry ≥30d always covers the 28-day
+window). Duplicate flags are soft (email/name match, the ImportService
+recipe) — a lapsed re-applicant is a renewal, so approve always
+creates NEW rows; a decided application is never deletable (DELETE is
+junk removal, RECEIVED/CONFIRMED only); the APPROVED list carries
+paid/daysSinceDecision for the 28-day aging badge, and nothing
+auto-ceases (committee authority, the soft-guard posture). Rejection
+notices are a neutral template; the stored reason is internal-only.
+
 CR-008 readied production (docs/change-requests/008-production-deployment.md,
 go-live runbook included there): the deploy assets — frozen at CR-001 —
 caught up with the app. Prod compose now passes `PUBLIC_BASE_URL`
@@ -507,6 +544,12 @@ console is SSH-tunnel-only.
 - **Behind Caddy, scheme/IP correctness is the RemoteIpValve** in
   `server/deploy/tomcat/context.xml` — don't drop it when touching the
   Tomcat image.
+- **psql and the app disagree about `current_date` around UTC midnight**:
+  psql sessions compute it on the server's UTC clock, the app's JDBC
+  sessions on the JVM's local (AEST) zone. Matrix day-arithmetic that
+  writes via psql and reads via the API (or vice versa) must assert
+  `>=`/`IS NOT NULL`, never exact equality — bit CR-007's aging row;
+  the same physics behind the two documented "today" flakes.
 - **The JVM caches negative DNS for 10s**: while a compose-internal
   hostname's container is down, lookups fail AND the failure is cached —
   sends to a just-restarted `mailpit` fail instantly (not a timeout) for

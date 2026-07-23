@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — applications</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
+
+<section id="applicationsSection" hidden>
+    <h2>Membership applications</h2>
+    <p class="muted">Applications from the public form (constitution cl. 3). The
+        committee decides; this page records the decision. Approving creates the
+        person, household and membership and emails the applicant a payment link
+        — membership begins when they pay (within 28 days). Unconfirmed rows are
+        submissions whose email round trip never completed — spam lives there.</p>
+
+    <label>Show
+        <select id="appStatusFilter">
+            <option value="CONFIRMED" selected>Awaiting decision</option>
+            <option value="RECEIVED">Unconfirmed</option>
+            <option value="APPROVED">Approved</option>
+            <option value="REJECTED">Rejected</option>
+            <option value="">All</option>
+        </select>
+    </label>
+    <table id="applications">
+        <thead>
+        <tr><th>#</th><th>Submitted</th><th>Applicants</th><th>Type</th>
+            <th>Status</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <div id="applicationsEmpty" class="muted" hidden>Nothing here.</div>
+
+    <h3>Form settings</h3>
+    <p class="muted">The public form ships switched <strong>off</strong>: turn it
+        on only once the committee has minuted the website form as the society's
+        approved application form (cl. 3). New-application alerts go to the
+        mailbox below; when blank, the current secretary (from the Committee
+        register) is notified instead.</p>
+    <div id="appMailWarn" class="muted" hidden>⚠ Mail is not configured (see Mail
+        settings) — the form stays closed and decisions cannot be recorded until
+        it is.</div>
+    <label>Alert mailbox
+        <input id="appAlertMailbox" type="email" placeholder="e.g. membership@example.org"></label>
+    <label><input id="appFormEnabled" type="checkbox"> Public application form enabled</label>
+    <button id="appSettingsSave">Save settings</button>
+
+    <!-- detail + decisions -->
+    <dialog id="appDetail">
+        <article>
+            <header><h3 id="adTitle">Application</h3></header>
+            <div id="adBody"></div>
+            <footer>
+                <button id="adDelete" type="button" class="secondary">Delete</button>
+                <button id="adReject" type="button" class="secondary">Reject…</button>
+                <button id="adApprove" type="button">Approve…</button>
+                <button id="adClose" type="button" class="secondary">Close</button>
+            </footer>
+        </article>
+    </dialog>
+
+    <dialog id="appApproveForm">
+        <article>
+            <header><h3>Record approval</h3></header>
+            <p class="muted">Records a decision the committee has already made —
+                enter the meeting date. The applicant is emailed the approval
+                notice with a payment link.</p>
+            <label>Membership year <select id="aaPeriod"></select></label>
+            <label>Membership type <select id="aaType"></select></label>
+            <label>Committee decision date <input id="aaDate" type="date"></label>
+            <label>Minute reference <input id="aaMinute" placeholder="e.g. committee 2026-08 item 3"></label>
+            <label>Household name (optional) <input id="aaHousehold"></label>
+            <footer>
+                <button id="aaCancel" type="button" class="secondary">Cancel</button>
+                <button id="aaSave">Approve</button>
+            </footer>
+        </article>
+    </dialog>
+
+    <dialog id="appRejectForm">
+        <article>
+            <header><h3>Record rejection</h3></header>
+            <p class="muted">The applicant receives a neutral notice of the
+                decision; the reason below is kept internally and never emailed.</p>
+            <label>Committee decision date <input id="arDate" type="date"></label>
+            <label>Minute reference <input id="arMinute"></label>
+            <label>Reason (internal) <input id="arReason"></label>
+            <footer>
+                <button id="arCancel" type="button" class="secondary">Cancel</button>
+                <button id="arSave">Reject</button>
+            </footer>
+        </article>
+    </dialog>
+</section>
+</main>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

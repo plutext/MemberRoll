@@ -155,6 +155,21 @@ final class HouseholdStore {
         return AddResult.ADDED;
     }
 
+    /**
+     * The first writer of household_address (CR-007): approval materialises an
+     * application's postal address as the household's preferred POSTAL row,
+     * where the mailing-label export and the CR-019 register already look.
+     */
+    void addPostalAddress(Handle handle, long householdId, String line1, String line2,
+                          String locality, String state, String postcode) {
+        handle.createUpdate("INSERT INTO household_address (household_id, address_type,"
+                + " line_1, line_2, locality, state, postcode, is_preferred)"
+                + " VALUES (:hh, 'POSTAL', :l1, :l2, :loc, :state, :pc, true)")
+                .bind("hh", householdId).bind("l1", line1).bind("l2", line2)
+                .bind("loc", locality).bind("state", state).bind("pc", postcode)
+                .execute();
+    }
+
     RemoveResult removePerson(long householdId, long personId) {
         return jdbi.inTransaction(handle -> {
             boolean isPrimary = handle.createQuery(

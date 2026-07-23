@@ -30,6 +30,11 @@ and the running cost is little more than hosting.
   preferences, and safe resume if a send is interrupted.
 - **Member self-serve** — members can log in to see their household's
   membership status, pay online, and download their membership card.
+- **Public application form** — prospective members apply on the website
+  (no payment taken, no account needed); an email round trip keeps spam
+  out, the committee's decision is recorded with its meeting date, and
+  the approval notice carries a pay link for the constitution's 28-day
+  window. Ships switched off until the committee approves the form.
 - **Membership cards** — a printable/emailable card generated on demand
   from the current register, from the member page or the admin panel,
   with assignable member numbers (so life members can hold the low ones,

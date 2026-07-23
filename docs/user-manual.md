@@ -309,6 +309,45 @@ as usual. If the join date is past the period's late-joining cutoff, the app
 notes that so you can consider signing them up for the following year
 instead.
 
+## Membership applications
+
+The **Applications** page manages applications from the public form at
+`web/apply.html` (constitution clause 3). The flow: someone applies on
+the website → they confirm by clicking a link emailed to them (nothing
+reaches the queue without that — unconfirmed junk stays under the
+*Unconfirmed* filter) → the committee considers it at a meeting → you
+**record** the decision here. No payment is taken at application;
+membership starts when the approved applicant pays.
+
+- **Form settings** (bottom of the page): the form ships **switched
+  off**. Turn it on only once the committee has minuted the website form
+  as the society's approved application form and permitted electronic
+  lodgement — flipping the switch is go-live. The **alert mailbox** gets
+  an email whenever an application is confirmed; leave it blank and the
+  current secretary (from the Committee page) is notified instead. Both
+  need mail configured (Mail settings) — without it the form stays
+  closed and decisions can't be recorded, because the applicant's
+  written notice is a constitutional requirement.
+- **Deciding**: open the application (**View…**). A warning flags anyone
+  who may already be on the register — a lapsed member re-applying is
+  really a *renewal*: prefer minting them a pay link from the Renewals
+  page and deleting the application. **Approve…** asks for the
+  membership year, type (prefilled with what they asked for), the
+  committee's **decision date** (the meeting date — it's a record, not a
+  button that decides) and an optional minute reference. Approving
+  creates the person(s), household and membership in one step and emails
+  the applicant an approval notice with a pay link; they have 28 days to
+  pay. **Reject…** records the decision and sends a neutral notice — the
+  reason field is for the society's records and is never emailed.
+- **A second person on the application** is either *also applying*
+  (a voting member — needs a household type) or *a partner covered by
+  the membership* (never votes). This mirrors the register's rule.
+- **Afterwards**: approved applications show **paid** once the payment
+  lands, and an **unpaid Nd** badge past 28 days — what to do then
+  (chase, extend, or treat as lapsed) is the committee's call; the app
+  never auto-cancels. **Delete** exists for junk only; a decided
+  application is the society's record and can't be deleted.
+
 ## Reports
 
 The **Reports** page holds the cross-cutting exports — questions that span

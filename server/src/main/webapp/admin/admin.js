@@ -2644,6 +2644,263 @@ function wireReports() {
     });
 }
 
+// ---- membership applications (CR-007) ---------------------------------------
+
+// the queue records committee decisions (cl. 3), never makes them: approve
+// materialises person/household/membership via the CR-010 path server-side
+// and the server 400/409s are surfaced verbatim (the CR-018 dialog rule)
+
+let appsCache = [];
+let appOpenId = null; // the application the detail dialog is showing
+
+const APP_STATUS_BADGE = {
+    RECEIVED: "badge-grey", CONFIRMED: "badge-blue",
+    APPROVED: "badge-green", REJECTED: "badge-grey",
+};
+
+async function renderApplications() {
+    const status = document.getElementById("appStatusFilter").value;
+    const qs = status ? "?status=" + status : "";
+    const response = await registerCall("/admin/applications" + qs);
+    if (!response) return;
+    appsCache = (await response.json()).applications;
+    const body = document.querySelector("#applications tbody");
+    body.innerHTML = "";
+    for (const a of appsCache) {
+        const tr = document.createElement("tr");
+        const names = a.applicants.map(p => p.givenName + " " + p.familyName
+            + (p.relationship !== "MEMBER" ? " (" + p.relationship.toLowerCase() + ")" : ""))
+            .join(", ");
+        const cells = [String(a.id), a.submittedAt.slice(0, 10), names, a.typeName];
+        for (const text of cells) {
+            const td = document.createElement("td");
+            td.textContent = text;
+            tr.appendChild(td);
+        }
+        const st = document.createElement("td");
+        const badge = document.createElement("span");
+        badge.className = "badge " + (APP_STATUS_BADGE[a.status] || "badge-grey");
+        badge.textContent = a.status;
+        st.appendChild(badge);
+        // the 28-day aging flag (cl. 3(5)(b)): approved, unpaid, time up
+        if (a.status === "APPROVED" && a.paid === false && a.daysSinceDecision > 28) {
+            const warn = document.createElement("span");
+            warn.className = "badge badge-amber";
+            warn.textContent = "unpaid " + a.daysSinceDecision + "d";
+            st.appendChild(document.createTextNode(" "));
+            st.appendChild(warn);
+        }
+        tr.appendChild(st);
+        const act = document.createElement("td");
+        const view = document.createElement("button");
+        view.className = "secondary";
+        view.textContent = "View…";
+        view.onclick = () => openApplication(a.id);
+        act.appendChild(view);
+        tr.appendChild(act);
+        body.appendChild(tr);
+    }
+    document.getElementById("applicationsEmpty").hidden = appsCache.length > 0;
+}
+
+function appLine(label, value) {
+    if (value == null || value === "") return null;
+    const p = document.createElement("p");
+    const b = document.createElement("strong");
+    b.textContent = label + ": ";
+    p.appendChild(b);
+    p.appendChild(document.createTextNode(value));
+    return p;
+}
+
+async function openApplication(id) {
+    const response = await registerCall("/admin/applications/" + id);
+    if (!response) return;
+    const a = await response.json();
+    appOpenId = id;
+    document.getElementById("adTitle").textContent =
+        "Application #" + a.id + " — " + a.status;
+    const body = document.getElementById("adBody");
+    body.innerHTML = "";
+    for (const p of a.applicants) {
+        const card = document.createElement("div");
+        const h = document.createElement("h4");
+        h.textContent = p.givenName + " " + p.familyName
+            + (p.relationship === "MEMBER" ? " (applicant)"
+                : " (" + p.relationship.toLowerCase() + " — covered, not an applicant)");
+        card.appendChild(h);
+        for (const line of [appLine("Email", p.email), appLine("Phone", p.phone)]) {
+            if (line) card.appendChild(line);
+        }
+        for (const m of (p.matches || [])) {
+            const warn = document.createElement("p");
+            warn.className = "warn-note";
+            warn.textContent = "⚠ Possibly already on the register: " + m.name
+                + " (person " + m.personId + ")"
+                + (m.hasCurrentMembership
+                    ? " — HAS a current membership; a returning member should renew"
+                        + " via the Renewals page instead of a new application"
+                    : "");
+            card.appendChild(warn);
+        }
+        body.appendChild(card);
+    }
+    const address = [a.addressLine1, a.addressLine2, a.locality, a.state, a.postcode]
+        .filter(Boolean).join(", ");
+    for (const line of [
+        appLine("Requested type", a.typeName),
+        appLine("Submitted", a.submittedAt),
+        appLine("Confirmed", a.confirmedAt),
+        appLine("Postal address", address),
+        appLine("Message", a.message),
+        appLine("Decision date", a.decisionDate),
+        appLine("Minute", a.minuteReference),
+        appLine("Rejection reason (internal)", a.rejectionReason),
+        appLine("Decided by", a.decidedBy),
+    ]) {
+        if (line) body.appendChild(line);
+    }
+    if (a.createdHouseholdId != null) {
+        const p = document.createElement("p");
+        const link = document.createElement("a");
+        link.href = "index.html?household=" + a.createdHouseholdId;
+        link.textContent = "Open the created household";
+        p.appendChild(link);
+        body.appendChild(p);
+    }
+    const decidable = a.status === "CONFIRMED";
+    document.getElementById("adApprove").hidden = !decidable;
+    document.getElementById("adReject").hidden = !decidable;
+    document.getElementById("adDelete").hidden =
+        a.status === "APPROVED" || a.status === "REJECTED";
+    openDialog("appDetail");
+}
+
+function currentApp() {
+    return appsCache.find(a => a.id === appOpenId) || null;
+}
+
+function appFillApproveSelects() {
+    const todayStr = today();
+    const covering = periodsCache.find(p => p.startDate <= todayStr && todayStr <= p.endDate);
+    const periodSel = document.getElementById("aaPeriod");
+    periodSel.innerHTML = "";
+    for (const p of periodsCache) {
+        const o = document.createElement("option");
+        o.value = p.id;
+        o.textContent = p.name;
+        o.selected = covering ? p.id === covering.id : periodSel.options.length === 0;
+        periodSel.appendChild(o);
+    }
+    appFillApproveTypes();
+}
+
+function appFillApproveTypes() {
+    const period = periodsCache.find(p => p.id === Number(document.getElementById("aaPeriod").value));
+    const app = currentApp();
+    const sel = document.getElementById("aaType");
+    sel.innerHTML = "";
+    for (const pr of (period ? period.prices : [])) {
+        const o = document.createElement("option");
+        o.value = pr.typeId;
+        o.textContent = `${pr.type} — ${dollars(pr.amountCents)}`;
+        // prefill the applicant's requested type (advisory, overridable)
+        o.selected = app && pr.typeId === app.membershipTypeId;
+        sel.appendChild(o);
+    }
+}
+
+async function appApprove() {
+    const body = {
+        membershipPeriodId: Number(document.getElementById("aaPeriod").value),
+        membershipTypeId: Number(document.getElementById("aaType").value),
+        decisionDate: document.getElementById("aaDate").value,
+        minuteReference: document.getElementById("aaMinute").value.trim() || null,
+        householdName: document.getElementById("aaHousehold").value.trim() || null,
+    };
+    const response = await registerCall("/admin/applications/" + appOpenId + "/approve", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    if (!response) return;
+    const created = await response.json();
+    closeDialog("appApproveForm");
+    closeDialog("appDetail");
+    say("Approved — household " + created.householdId + ", membership "
+        + created.membershipId + " (" + created.status + ")."
+        + (created.warnings.length ? " " + created.warnings.join(" ") : ""));
+    await renderApplications();
+}
+
+async function appReject() {
+    const body = {
+        decisionDate: document.getElementById("arDate").value,
+        minuteReference: document.getElementById("arMinute").value.trim() || null,
+        reason: document.getElementById("arReason").value.trim() || null,
+    };
+    const response = await registerCall("/admin/applications/" + appOpenId + "/reject", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    if (!response) return;
+    closeDialog("appRejectForm");
+    closeDialog("appDetail");
+    say("Rejected — the applicant has been notified.");
+    await renderApplications();
+}
+
+async function appDelete() {
+    if (!confirm("Delete this application? This is for junk/spam — a real "
+        + "application should be decided, not deleted.")) return;
+    const response = await registerCall("/admin/applications/" + appOpenId, {method: "DELETE"});
+    if (!response) return;
+    closeDialog("appDetail");
+    say("Deleted.");
+    await renderApplications();
+}
+
+async function loadAppSettings() {
+    const response = await registerCall("/admin/applications/settings");
+    if (!response) return;
+    const s = await response.json();
+    document.getElementById("appAlertMailbox").value = s.alertMailbox || "";
+    document.getElementById("appFormEnabled").checked = s.formEnabled;
+    document.getElementById("appMailWarn").hidden = s.mailEnabled;
+}
+
+async function saveAppSettings() {
+    const body = {
+        alertMailbox: document.getElementById("appAlertMailbox").value.trim() || null,
+        formEnabled: document.getElementById("appFormEnabled").checked,
+    };
+    const response = await registerCall("/admin/applications/settings", {
+        method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    if (!response) return;
+    say("Settings saved." + (body.formEnabled ? " The public form is OPEN." : " The public form is closed."));
+    await loadAppSettings();
+}
+
+function wireApplications() {
+    document.getElementById("appStatusFilter").onchange = renderApplications;
+    document.getElementById("adClose").onclick = () => closeDialog("appDetail");
+    document.getElementById("adApprove").onclick = () => {
+        appFillApproveSelects();
+        document.getElementById("aaDate").value = today();
+        openDialog("appApproveForm");
+    };
+    document.getElementById("aaPeriod").onchange = appFillApproveTypes;
+    document.getElementById("aaCancel").onclick = () => closeDialog("appApproveForm");
+    document.getElementById("aaSave").onclick = appApprove;
+    document.getElementById("adReject").onclick = () => {
+        document.getElementById("arDate").value = today();
+        openDialog("appRejectForm");
+    };
+    document.getElementById("arCancel").onclick = () => closeDialog("appRejectForm");
+    document.getElementById("arSave").onclick = appReject;
+    document.getElementById("adDelete").onclick = appDelete;
+    document.getElementById("appSettingsSave").onclick = saveAppSettings;
+    document.getElementById("applicationsSection").hidden = false;
+}
+
 // ---- menu + per-page wiring -------------------------------------------------
 
 // the admin panel is split across pages that share this script; each page
@@ -2651,6 +2908,7 @@ function wireReports() {
 const MENU = [
     {href: "index.html", label: "Register & renewals"},
     {href: "new-member.html", label: "New member"},
+    {href: "applications.html", label: "Applications"},
     {href: "email.html", label: "Email"},
     {href: "committee.html", label: "Committee"},
     {href: "reports.html", label: "Reports"},
@@ -2712,6 +2970,12 @@ async function wireUsers() {
                 await loadPeriods(); // fills periodsCache (no Renewals table here)
                 wireReports();
                 document.getElementById("reportsSection").hidden = false;
+            }
+            if (document.getElementById("applicationsSection")) {
+                wireApplications();
+                await loadPeriods(); // fills periodsCache for the approve dialog
+                await loadAppSettings();
+                await renderApplications();
             }
             if (document.getElementById("mailSettingsSection")) {
                 wireMailSettings();

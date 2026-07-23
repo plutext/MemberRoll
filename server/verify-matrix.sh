@@ -2005,9 +2005,165 @@ else
   echo "SKIP CR20-07c/d,08b (import side effects need psql)"
 fi
 
+# --- public application form (CR-007) ----------------------------------------
+# Staging pair + email round trip: a submission lands RECEIVED, only the
+# emailed confirmation link moves it into the queue, and approval is the only
+# door into the register (the CR-010 path, recording the committee's decision
+# date). The application_settings row is deleted first (crash recovery) and
+# last (leave-as-found): with no row the form is CLOSED — the deploy-dark
+# default the clause-3-minute gate relies on. Emails are $$-unique so the
+# per-address cooldown never trips across runs; decision dates are -2d (the
+# CR10-13 UTC lesson: container current_date lags AEST mornings).
+
+check "CR7-01 applications guest 403"  "403" "$(code $API/admin/applications)"
+check "CR7-01b applications user 403"  "403" "$(code $API/admin/applications -H "Authorization: Bearer $USER")"
+check "CR7-01c applications noaud 401" "401" "$(code $API/admin/applications -H "Authorization: Bearer $NOAUD")"
+check "CR7-02 settings PUT guest 403"  "403" "$(code -X PUT $API/admin/applications/settings -H 'Content-Type: application/json' -d '{}')"
+check "CR7-02b settings PUT user 403"  "403" "$(code -X PUT $API/admin/applications/settings -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d '{}')"
+check "CR7-02c settings PUT noaud 401" "401" "$(code -X PUT $API/admin/applications/settings -H "Authorization: Bearer $NOAUD" -H 'Content-Type: application/json' -d '{}')"
+
+if [ "$PSQL_OK" = 1 ]; then
+  psqlq "DELETE FROM app_setting WHERE key='application_settings'" >/dev/null
+
+  # no row saved: settings default closed, options report closed, submit 503
+  check "CR7-03 settings default closed" "False|None" "$(curl -s $API/admin/applications/settings -H "Authorization: Bearer $ADMIN" | jsq "str(j['formEnabled'])+'|'+str(j['alertMailbox'])")"
+  check "CR7-04 options closed"          "False" "$(curl -s $API/apply/options | jsq "str(j['open'])")"
+  check "CR7-05 submit while closed 503" "503" "$(code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"Cade\",\"familyName\":\"Closed$$\",\"email\":\"closed.$$@example.com\"}")"
+
+  ALERT7="alert7.$$@example.com"
+  check "CR7-06 settings save 200"       "200" "$(JPUT $API/admin/applications/settings "{\"alertMailbox\":\"$ALERT7\",\"formEnabled\":true}")"
+  check "CR7-06b GET echoes"             "True|$ALERT7" "$(curl -s $API/admin/applications/settings -H "Authorization: Bearer $ADMIN" | jsq "str(j['formEnabled'])+'|'+j['alertMailbox']")"
+  check "CR7-06c bad mailbox 400"        "400" "$(JPUT $API/admin/applications/settings "{\"alertMailbox\":\"not-an-email\",\"formEnabled\":true}")"
+
+  # options: positively-priced types only — V8's LIFE $0 price must not be offered
+  check "CR7-07 options open"            "True" "$(curl -s $API/apply/options | jsq "str(j['open'])")"
+  check "CR7-07b SINGLE offered w/ price" "4500" "$(curl -s $API/apply/options | jsq "next(t['priceCents'] for t in j['types'] if t['name']=='SINGLE')")"
+  check "CR7-07c LIFE (zero-priced) absent" "False" "$(curl -s $API/apply/options | jsq "str(any(t['name']=='LIFE' for t in j['types']))")"
+
+  A1MAIL="apply1.$$@example.com"
+  check "CR7-08 submit 202"              "202" "$(code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"Ada\",\"familyName\":\"App$$\",\"email\":\"$A1MAIL\",\"phone\":\"0400 000 001\",\"addressLine1\":\"1 Staging St\",\"locality\":\"Yass\",\"state\":\"NSW\",\"postcode\":\"2582\",\"message\":\"via matrix\"}")"
+  check "CR7-08b row RECEIVED"           "RECEIVED" "$(psqlq "SELECT a.status FROM membership_application a JOIN membership_application_person p ON p.application_id=a.application_id WHERE p.email='$A1MAIL'")"
+
+  # honeypot: the bot gets its 202 and nothing is written
+  check "CR7-09 honeypot 202"            "202" "$(code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"Bot\",\"familyName\":\"Hp$$\",\"email\":\"hp.$$@example.com\",\"website\":\"http://spam.example\"}")"
+  check "CR7-09b nothing written"        "0" "$(psqlq "SELECT count(*) FROM membership_application_person WHERE email='hp.$$@example.com'")"
+
+  check "CR7-10 missing email 400"       "400" "$(code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"No\",\"familyName\":\"Mail$$\"}")"
+  check "CR7-10b missing name 400"       "400" "$(code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"email\":\"noname.$$@example.com\"}")"
+  check "CR7-10c unknown type 400"       "400" "$(code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":999999,\"givenName\":\"Bad\",\"familyName\":\"Type$$\",\"email\":\"badtype.$$@example.com\"}")"
+  check "CR7-10d zero-priced type 400"   "400" "$(code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_LIFE,\"givenName\":\"Life\",\"familyName\":\"Type$$\",\"email\":\"lifetype.$$@example.com\"}")"
+  check "CR7-10e single+second MEMBER 400" "400" "$(code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"One\",\"familyName\":\"Max$$\",\"email\":\"max.$$@example.com\",\"secondPerson\":{\"givenName\":\"Two\",\"familyName\":\"Max$$\",\"relationship\":\"MEMBER\"}}")"
+
+  # per-address cooldown: an immediate resubmit from the same address is 429
+  check "CR7-11 immediate resubmit 429"  "429" "$(code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"Ada\",\"familyName\":\"App$$\",\"email\":\"$A1MAIL\"}")"
+
+  if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
+    D2AGO=$(date -u -d '-2 days' +%F)
+    DFUT=$(date -u -d '+3 days' +%F)
+
+    # the round trip: token only ever exists in the confirmation email
+    TOK7=$(mailpit_text "$A1MAIL" | grep -o 'confirm=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2)
+    check "CR7-12 confirmation mail carries token" "yes" "$([ -n "$TOK7" ] && echo yes)"
+    check "CR7-12b confirm 200"          "200" "$(code -X POST $API/apply/confirm -H 'Content-Type: application/json' -d "{\"token\":\"$TOK7\"}")"
+    check "CR7-12c row CONFIRMED"        "CONFIRMED" "$(psqlq "SELECT a.status FROM membership_application a JOIN membership_application_person p ON p.application_id=a.application_id WHERE p.email='$A1MAIL'")"
+    check "CR7-12d alert mail to mailbox" "1" "$(mailpit_count "$ALERT7")"
+    check "CR7-13 confirm again 200"     "200" "$(code -X POST $API/apply/confirm -H 'Content-Type: application/json' -d "{\"token\":\"$TOK7\"}")"
+    check "CR7-13b still one alert"      "1" "$(mailpit_count "$ALERT7")"
+    check "CR7-14 garbage token 404"     "404" "$(code -X POST $API/apply/confirm -H 'Content-Type: application/json' -d '{"token":"nonsense"}')"
+
+    # expired: seed a submission and wind its expiry back — 404, same as unknown
+    A5MAIL="apply5.$$@example.com"
+    code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"Expi\",\"familyName\":\"Red$$\",\"email\":\"$A5MAIL\"}" >/dev/null
+    TOK5=$(mailpit_text "$A5MAIL" | grep -o 'confirm=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2)
+    A5=$(psqlq "SELECT a.application_id FROM membership_application a JOIN membership_application_person p ON p.application_id=a.application_id WHERE p.email='$A5MAIL'")
+    psqlq "UPDATE membership_application SET confirm_expires_at = now() - interval '1 hour' WHERE application_id = $A5" >/dev/null
+    check "CR7-15 expired token 404"     "404" "$(code -X POST $API/apply/confirm -H 'Content-Type: application/json' -d "{\"token\":\"$TOK5\"}")"
+
+    # approval guards: unconfirmed 409, future decision date 400
+    A1=$(psqlq "SELECT a.application_id FROM membership_application a JOIN membership_application_person p ON p.application_id=a.application_id WHERE p.email='$A1MAIL'")
+    check "CR7-16 approve unconfirmed 409" "409" "$(JPOST $API/admin/applications/$A5/approve "{\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE,\"decisionDate\":\"$D2AGO\"}")"
+    check "CR7-27 future decisionDate 400" "400" "$(JPOST $API/admin/applications/$A1/approve "{\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE,\"decisionDate\":\"$DFUT\"}")"
+
+    # the approval: one transaction into the register, committee dates stamped,
+    # household_address's FIRST writer, pay link in the clause-3(5)(a) notice
+    check "CR7-17 approve 200"           "200" "$(JPOST $API/admin/applications/$A1/approve "{\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE,\"decisionDate\":\"$D2AGO\",\"minuteReference\":\"committee $$ item 1\"}")"
+    M7=$(body | jsq "j['membershipId']"); H7=$(body | jsq "j['householdId']")
+    check "CR7-17b status PENDING_PAYMENT" "PENDING_PAYMENT" "$(psqlq "SELECT status FROM membership WHERE membership_id=$M7")"
+    check "CR7-17c committee dates stamped" "true|$D2AGO" "$(psqlq "SELECT (application_date IS NOT NULL)||'|'||approved_date FROM membership WHERE membership_id=$M7")"
+    check "CR7-18 postal address row"    "POSTAL|1 Staging St" "$(psqlq "SELECT address_type||'|'||line_1 FROM household_address WHERE household_id=$H7")"
+    check "CR7-18b person email landed"  "1" "$(psqlq "SELECT count(*) FROM email_address WHERE email='$A1MAIL'")"
+    PT7=$(mailpit_text "$A1MAIL" | grep -o 'pay\.html?t=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2)
+    check "CR7-18c notice carries pay link" "yes" "$([ -n "$PT7" ] && echo yes)"
+    check "CR7-19 pay link resolves"     "200" "$(code $API/pay/$PT7)"
+    check "CR7-19b pay view balance 4500" "4500" "$(body | jsq "j['balanceCents']")"
+    check "CR7-20 approve again 409"     "409" "$(JPOST $API/admin/applications/$A1/approve "{\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE,\"decisionDate\":\"$D2AGO\"}")"
+    check "CR7-20b reject decided 409"   "409" "$(JPOST $API/admin/applications/$A1/reject "{\"decisionDate\":\"$D2AGO\"}")"
+
+    # household application, second applicant a MEMBER: both get voting rights
+    A2MAIL="apply2.$$@example.com"
+    code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_HH,\"givenName\":\"Hera\",\"familyName\":\"Hh$$\",\"email\":\"$A2MAIL\",\"secondPerson\":{\"givenName\":\"Hugo\",\"familyName\":\"Hh$$\",\"relationship\":\"MEMBER\"}}" >/dev/null
+    TOK2=$(mailpit_text "$A2MAIL" | grep -o 'confirm=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2)
+    code -X POST $API/apply/confirm -H 'Content-Type: application/json' -d "{\"token\":\"$TOK2\"}" >/dev/null
+    A2=$(psqlq "SELECT a.application_id FROM membership_application a JOIN membership_application_person p ON p.application_id=a.application_id WHERE p.email='$A2MAIL'")
+    check "CR7-21 approve household 200" "200" "$(JPOST $API/admin/applications/$A2/approve "{\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_HH,\"decisionDate\":\"$D2AGO\"}")"
+    M7B=$(body | jsq "j['membershipId']")
+    check "CR7-21b both applicants vote" "2" "$(psqlq "SELECT count(*) FROM membership_person WHERE membership_id=$M7B AND has_voting_rights")"
+
+    # partner variant: covered, never voting, doesn't count against max people
+    A3MAIL="apply3.$$@example.com"
+    code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"Solo\",\"familyName\":\"Pt$$\",\"email\":\"$A3MAIL\",\"secondPerson\":{\"givenName\":\"Pal\",\"familyName\":\"Pt$$\",\"relationship\":\"PARTNER\"}}" >/dev/null
+    TOK3=$(mailpit_text "$A3MAIL" | grep -o 'confirm=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2)
+    code -X POST $API/apply/confirm -H 'Content-Type: application/json' -d "{\"token\":\"$TOK3\"}" >/dev/null
+    A3=$(psqlq "SELECT a.application_id FROM membership_application a JOIN membership_application_person p ON p.application_id=a.application_id WHERE p.email='$A3MAIL'")
+    check "CR7-22 approve single+partner 200" "200" "$(JPOST $API/admin/applications/$A3/approve "{\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE,\"decisionDate\":\"$D2AGO\"}")"
+    M7C=$(body | jsq "j['membershipId']")
+    check "CR7-22b partner covered not voting" "2|1" "$(psqlq "SELECT count(*)||'|'||count(*) FILTER (WHERE has_voting_rights) FROM membership_person WHERE membership_id=$M7C")"
+
+    # rejection: decision recorded, notice sent, register untouched
+    A4MAIL="apply4.$$@example.com"
+    code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"Rex\",\"familyName\":\"Rej$$\",\"email\":\"$A4MAIL\"}" >/dev/null
+    TOK4=$(mailpit_text "$A4MAIL" | grep -o 'confirm=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2)
+    code -X POST $API/apply/confirm -H 'Content-Type: application/json' -d "{\"token\":\"$TOK4\"}" >/dev/null
+    A4=$(psqlq "SELECT a.application_id FROM membership_application a JOIN membership_application_person p ON p.application_id=a.application_id WHERE p.email='$A4MAIL'")
+    check "CR7-23 reject 200"            "200" "$(JPOST $API/admin/applications/$A4/reject "{\"decisionDate\":\"$D2AGO\",\"reason\":\"internal only\"}")"
+    check "CR7-23b register untouched"   "0" "$(psqlq "SELECT count(*) FROM person WHERE family_name='Rej$$'")"
+    check "CR7-23c rejection notice sent" "2" "$(mailpit_count "$A4MAIL")"
+    check "CR7-23d reason never emailed" "0" "$(mailpit_text "$A4MAIL" | grep -c 'internal only')"
+
+    # delete: junk yes, decided records never
+    A6MAIL="apply6.$$@example.com"
+    code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"Junk\",\"familyName\":\"Del$$\",\"email\":\"$A6MAIL\"}" >/dev/null
+    A6=$(psqlq "SELECT a.application_id FROM membership_application a JOIN membership_application_person p ON p.application_id=a.application_id WHERE p.email='$A6MAIL'")
+    check "CR7-24 delete junk 204"       "204" "$(code -X DELETE $API/admin/applications/$A6 -H "Authorization: Bearer $ADMIN")"
+    check "CR7-24b cascade took people"  "0" "$(psqlq "SELECT count(*) FROM membership_application_person WHERE application_id=$A6")"
+    check "CR7-24c delete decided 409"   "409" "$(code -X DELETE $API/admin/applications/$A1 -H "Authorization: Bearer $ADMIN")"
+
+    # duplicate soft-flag: same name as the person CR7-17 created
+    A7MAIL="apply7.$$@example.com"
+    code -X POST $API/apply -H 'Content-Type: application/json' -d "{\"membershipTypeId\":$T_SINGLE,\"givenName\":\"Ada\",\"familyName\":\"App$$\",\"email\":\"$A7MAIL\"}" >/dev/null
+    A7=$(psqlq "SELECT a.application_id FROM membership_application a JOIN membership_application_person p ON p.application_id=a.application_id WHERE p.email='$A7MAIL'")
+    check "CR7-25 duplicate flagged"     "Ada App$$|True" "$(curl -s $API/admin/applications/$A7 -H "Authorization: Bearer $ADMIN" | jsq "j['applicants'][0]['matches'][0]['name']+'|'+str(j['applicants'][0]['matches'][0]['hasCurrentMembership'])")"
+
+    # the 28-day aging view: backdate the decision, the list shows it unpaid.
+    # >=30, not ==30: psql's session runs on server (UTC) time, the app's JDBC
+    # session on JVM (local) time, so the two current_dates can differ by a day
+    psqlq "UPDATE membership_application SET decision_date = current_date - 30 WHERE application_id = $A2" >/dev/null
+    check "CR7-26 aging visible"         "False|True" "$(curl -s "$API/admin/applications?status=APPROVED" -H "Authorization: Bearer $ADMIN" | jsq "next(str(a['paid'])+'|'+str(a['daysSinceDecision']>=30) for a in j['applications'] if a['id']==$A2)")"
+  else
+    echo "SKIP CR7-12..27 confirm/approve rows (Mailpit not reachable at $MAILPIT — the token only exists in the confirmation email)"
+  fi
+
+  # leave-as-found: the row gone means the form is closed again (deploy-dark)
+  psqlq "DELETE FROM app_setting WHERE key='application_settings'" >/dev/null
+else
+  echo "note: psql not found — skipping CR-007 data rows"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"
+check "CR7-28 apply page served"       "200" "$(code $ORIGIN/server/web/apply.html)"
+check "CR7-28b apply.js served"        "200" "$(code $ORIGIN/server/web/apply.js)"
 
 check "32 web page 200"                "200" "$(code $ORIGIN/server/web/)"
 check "33 admin page 200"              "200" "$(code $ORIGIN/server/admin/)"
@@ -2019,6 +2175,7 @@ check "33f admin email page 200"        "200" "$(code $ORIGIN/server/admin/email
 check "33g admin committee page 200"    "200" "$(code $ORIGIN/server/admin/committee.html)"
 check "33h admin mail-settings page 200" "200" "$(code $ORIGIN/server/admin/mail-settings.html)"
 check "33i admin reports page 200"       "200" "$(code $ORIGIN/server/admin/reports.html)"
+check "33j admin applications page 200"  "200" "$(code $ORIGIN/server/admin/applications.html)"
 check "34 auth.js served"              "200" "$(code $ORIGIN/server/shared/auth.js)"
 
 echo

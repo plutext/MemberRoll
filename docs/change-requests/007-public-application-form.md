@@ -1,8 +1,10 @@
 # CR 007: Public application form — APPLIED workflow with committee approval
 
-Status: PROPOSED (2026-07-23; pre-proposal notes 2026-07-18; the
-entrance-fee blocker was resolved by the committee 2026-07-23 — see
-Follow-ups)
+Status: IMPLEMENTED + VERIFIED (2026-07-23; proposed same day;
+pre-proposal notes 2026-07-18; the entrance-fee blocker was resolved by
+the committee 2026-07-23 — see Follow-ups). Go-live remains gated on
+the committee's clause-3 minute — the form ships with `formEnabled`
+false.
 
 ## Problem
 
@@ -235,7 +237,10 @@ one-atomic-value pattern), read per use, never cached:
 {"alertMailbox": "membership@yasshistory.org.au", "formEnabled": true}
 ```
 
-`GET`/`PUT /api/admin/application-settings` (admin-only) with a
+`GET`/`PUT /api/admin/applications/settings` (admin-only — nested under
+the applications resource rather than the proposal's standalone
+`application-settings` path: one resource class, and JAX-RS routes the
+literal `settings` ahead of the `{id}` template) with a
 settings card on the applications admin page — the committee's
 requirement that the society mailbox be page-settable, in the place an
 admin managing applications will look. Absent row = form **disabled**,
@@ -410,8 +415,8 @@ across runs):
 | # | case | expect |
 |---|---|---|
 | CR7-01 | guest/user/noaud GET /api/admin/applications | 403/403/401 |
-| CR7-02 | guest/user/noaud PUT /api/admin/application-settings | 403/403/401 |
-| CR7-03 | admin GET application-settings before any save | 200, formEnabled false, alertMailbox null |
+| CR7-02 | guest/user/noaud PUT /api/admin/applications/settings | 403/403/401 |
+| CR7-03 | admin GET applications/settings before any save | 200, formEnabled false, alertMailbox null |
 | CR7-04 | guest GET /api/apply/options while disabled | 200, open=false |
 | CR7-05 | guest POST /api/apply while disabled | 503 |
 | CR7-06 | admin PUT application-settings {alertMailbox: mailpit-visible addr, formEnabled: true}; GET echoes | 200/200 round trip |
@@ -450,7 +455,77 @@ backdated fixture.
 
 ## Results
 
-(after implementation)
+Implemented 2026-07-23 as proposed, with these recorded divergences:
+
+- **Settings endpoint nested**: `GET`/`PUT /api/admin/applications/settings`
+  instead of a standalone `application-settings` path — one resource
+  class covers the whole surface; JAX-RS routes the literal `settings`
+  segment ahead of the `{id}` template, so there is no collision.
+- **Global backstop 50/hour, not 30** — the matrix consumes ~8
+  cap-counting submissions per run and the in-memory window only resets
+  with the JVM, so 30 would flake the fourth full-matrix run inside an
+  hour. 50 keeps ~6 runs green and is still an order of magnitude above
+  any legitimate volume.
+- **Session-timezone lesson** (new, recorded in Things that bite): psql
+  sessions compute `current_date` on the server's UTC clock, the app's
+  JDBC sessions on the JVM's local zone — day arithmetic asserted
+  across the two must use `>=`/`IS NOT NULL`, never exact equality.
+  CR7-26 asserts `daysSinceDecision >= 30` for exactly this reason
+  (the backdate ran via psql, the read via JDBC, and the two
+  `current_date`s straddled UTC midnight on the first run).
+- The proposal's "nav edits across admin pages" is one edit in
+  practice: every admin page renders its nav from the shared `MENU`
+  array in `admin.js`.
+
+New pieces: `V10__membership_application.sql`, `ApplicationStore`,
+`ApplicationSettings`, `ApplyResource` (guest), `AdminApplicationsResource`
+(admin), `HouseholdStore.addPostalAddress` (the table's first writer),
+`web/apply.html`/`apply.js`, `admin/applications.html` + the
+applications block in `admin.js`. No change to any existing store's
+behaviour; `createForHousehold` is consumed as-is and the committee-date
+stamp rides a targeted UPDATE inside the approve transaction
+(`recompute`'s existing `COALESCE(approved_date, …)` preserves it, as
+predicted).
+
+### Verification
+
+Matrix: the CR7-01…28 block (60 checks — role-gate triads, settings
+defaults/round-trip, options shape incl. the LIFE exclusion, submit →
+RECEIVED + confirmation mail, honeypot-writes-nothing, five validation
+400s, per-address-cooldown 429, confirm/idempotent-confirm/404-parity
+incl. a psql-expired token, approve guards (unconfirmed 409, future
+decision date 400), the full approval (PENDING_PAYMENT, committee dates
+stamped, `household_address` POSTAL row, pay link extracted from the
+notice and resolved against `/api/pay` with the right balance), decided
+409s, household both-vote / partner-covered flag checks, rejection
+(register untouched, neutral notice, reason never emailed), junk delete
+204 + cascade / decided delete 409, duplicate soft-flag, aging view)
+plus static-page rows CR7-28/28b and 33j. The block deletes the
+`application_settings` row first (crash recovery) and last
+(leave-as-found: no row = form closed, the deploy-dark default).
+
+Full matrix runs 2026-07-23 (dev stack): 802/5 (two assertion bugs in
+the new rows — the `boolean||text` rendering and the `==30` timezone
+trap above — plus the three pre-existing environmental flakes), then
+**804/3** after fixing the two assertions (remaining 3 = the documented
+KC-listing 27b + two UTC-date "today" rows), then **806/1** on the
+final build (only 27b; the UTC rows pass once UTC crosses midnight).
+Three consecutive full runs prove the block re-runs clean ($$-unique
+emails keep the cooldown out of the way).
+
+Browser walkthrough (`tmp/cr007-fixtures/cr007-walkthrough.js`,
+Playwright): **18/18** — closed state while disabled; settings card
+save (form OPEN); live form with prices, no LIFE, SINGLE disabling the
+"also applying" second-person choice; submit → check-your-email;
+emailed confirm link → confirmed state; queue row → detail dialog
+(partner labelled "covered, not an applicant") → Approve dialog with
+the requested type prefilled → APPROVED filter; approval notice
+carrying the pay link; a second application rejected (neutral notice,
+internal reason absent); form switched off again and the public page
+closing. One implementation fix surfaced by the walkthrough: Jersey
+415s a `@Consumes(JSON)` endpoint when the browser fetch omits
+`Content-Type: application/json` — the three new admin.js calls now
+pass it explicitly like every other PUT/POST in the file.
 
 ## Follow-ups / amendments
 
