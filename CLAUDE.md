@@ -503,15 +503,33 @@ gated on its own `reconciliationSection`, deliberately NOT welded onto
 `renderMemberships`) is presence-gated so the same functions no-op on a
 page lacking their markup (`renderPeople`/`renderHouseholds` gained the
 same guard, making cross-table refreshers like the import applier safe
-everywhere). Two pages carry a `periodSelect` — Renewals as read-only
-context, System as the working selector — and since pages are separate
-documents sharing one script the duplicate id is fine. Deep links: the
+everywhere). Deep links: the
 household one moved to `households.html?household=<id>` (new-member
 success + applications detail produce it, the boot consumer sits under
 the `householdsSection` gate), the membership one stays
 `index.html?membership=<id>&period=<id>`. Menu order: `Renewals · People ·
 Households · New member · … · Mail settings · System` (System last, in
 the settings corner).
+
+CR-023 made the working period server state (CR-022 had left a working
+selector on BOTH Renewals and System, each page's choice DOM-only and
+re-defaulting to the newest period — which, with matrix-seeded far-future
+fixtures, isn't even the year being renewed). One `app_setting`
+(`selected_period`, the CR-014 blob shape): `GET /api/admin/periods`
+carries `selectedPeriodId` (null until saved) so every page learns it in
+the round trip it already makes, and `PUT /api/admin/periods/selected`
+(admin-only; unknown id = 400 "no such period" — a body reference, not a
+URI) upserts it. Client side, module vars `currentPeriodId`/
+`storedWorkingPeriodId` replace reading `#periodSelect` (only
+`system.html` still has one); resolution in `loadPeriods` is explicit
+`selectId` → stored → `workingPeriodDefault()` (covering-today, else
+newest), and the same default now seeds `nmPeriod`/`emPeriod`/`hmPeriod`.
+ONLY the System selector's change handler persists (`saveSelectedPeriod`)
+— deliberately shared across sessions AND admins (the society renews one
+period at a time), while creating a period still reselects it locally
+without hijacking anyone, and the Renewals `?period=` deep link overrides
+locally only (`renderPeriodSummary` labels it "Viewing period" vs
+"Working period").
 
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):

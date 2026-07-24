@@ -564,7 +564,7 @@ function fillImportPeriods() {
     if (hint) {
         const none = periodsCache.length === 0;
         hint.textContent = none
-            ? "No membership periods exist yet. Create one under Renewals → New period "
+            ? "No membership periods exist yet. Create one under System → New period "
               + "before importing rows that carry a membershipType."
             : "";
         hint.hidden = !none;
@@ -695,9 +695,15 @@ function toCents(value) {
     return Number.isFinite(n) ? n : 0;
 }
 
+// CR-023: the working period — server state (an app_setting the whole society
+// shares), not per-page DOM state. loadPeriods resolves it; the System page's
+// selector is the only place it changes (persisted on change). The Renewals
+// deep link ?period= overrides it locally for that page view only.
+let currentPeriodId = null;
+let storedWorkingPeriodId = null; // what the server has saved (may differ under a ?period= deep link)
+
 function selectedPeriodId() {
-    const v = document.getElementById("periodSelect").value;
-    return v ? Number(v) : null;
+    return currentPeriodId;
 }
 function selectedPeriod() {
     return periodsCache.find(p => p.id === selectedPeriodId()) || null;
@@ -709,25 +715,53 @@ function allTypes() {
     return [...seen.entries()].map(([type, typeId]) => ({type, typeId}));
 }
 
+// the working-period default for period selects across the panel (CR-023):
+// the stored selection, else the period covering today, else the newest
+// (periodsCache is newest-first, per PeriodStore.list())
+function workingPeriodDefault() {
+    if (currentPeriodId && periodsCache.some(p => p.id === currentPeriodId)) return currentPeriodId;
+    const todayStr = today();
+    const covering = periodsCache.find(p => p.startDate <= todayStr && todayStr <= p.endDate);
+    return covering ? covering.id : (periodsCache[0] && periodsCache[0].id) || null;
+}
+
 async function loadPeriods(selectId) {
     const response = await registerCall("/admin/periods");
     if (!response) return;
-    periodsCache = (await response.json()).periods;
+    const payload = await response.json();
+    periodsCache = payload.periods;
+    // CR-023: explicit override (deep link / post-save reselect) → the stored
+    // working period → the covering-today/newest fallback
+    storedWorkingPeriodId = payload.selectedPeriodId ?? null;
+    currentPeriodId = selectId ?? storedWorkingPeriodId ?? workingPeriodDefault();
     fillImportPeriods(); // the CSV-import "Target period" picker shares the same list
     const select = document.getElementById("periodSelect");
-    if (!select) return; // import page only needs the dropdown above — no renewals UI here
-    const keep = selectId ?? (selectedPeriodId() || (periodsCache[0] && periodsCache[0].id));
-    select.innerHTML = "";
-    for (const p of periodsCache) {
-        const o = document.createElement("option");
-        o.value = p.id;
-        o.textContent = p.name;
-        o.selected = p.id === keep;
-        select.appendChild(o);
+    if (select) { // the System page's working selector (CR-022/023)
+        select.innerHTML = "";
+        for (const p of periodsCache) {
+            const o = document.createElement("option");
+            o.value = p.id;
+            o.textContent = p.name;
+            o.selected = p.id === currentPeriodId;
+            select.appendChild(o);
+        }
     }
     renderPeriodSummary();
     fillTypeFilter();
     await renderMemberships();
+}
+
+// persists the working period for everyone — the System selector's change
+// handler is deliberately the ONLY caller (creating a period reselects it
+// locally but must not hijack every admin's Renewals page)
+async function saveSelectedPeriod(id) {
+    const response = await registerCall("/admin/periods/selected", {
+        method: "PUT", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({periodId: id}),
+    });
+    if (!response) return;
+    storedWorkingPeriodId = id;
+    say(`Working period set to ${(selectedPeriod() || {}).name || id} for all admins.`);
 }
 
 // CR-018: the Renewals Type filter — the ?type= param has existed since
@@ -755,9 +789,14 @@ function renderPeriodSummary() {
     const el = document.getElementById("periodSummary");
     if (!el) return; // pages without a period summary line (CR-022)
     const p = selectedPeriod();
-    if (!p) { el.textContent = "No period. Create one to begin."; return; }
+    if (!p) { el.textContent = "No period. Create one on the System page to begin."; return; }
     const prices = p.prices.map(pr => `${pr.type} ${dollars(pr.amountCents)}`).join(", ");
-    el.textContent = `${p.name}: ${p.startDate} → ${p.endDate}. Prices: ${prices || "—"}.`
+    // CR-023: on the selector-less Renewals page the summary line is the only
+    // period cue — name its role, and flag a ?period= deep-link view that is
+    // NOT the shared working period
+    const prefix = document.getElementById("periodSelect") ? ""
+        : (p.id === storedWorkingPeriodId ? "Working period " : "Viewing period ");
+    el.textContent = `${prefix}${p.name}: ${p.startDate} → ${p.endDate}. Prices: ${prices || "—"}.`
         + (p.journalPriceCents != null ? ` Journal add-on ${dollars(p.journalPriceCents)}.` : "");
     // CR-022: the journalPrice input lives only on the System page
     const jp = document.getElementById("journalPrice");
@@ -1447,10 +1486,12 @@ async function saveXeroMapping() {
 function fillPeriodTypeSelects() {
     const periodSel = document.getElementById("hmPeriod");
     periodSel.innerHTML = "";
+    const defaultId = workingPeriodDefault(); // CR-023: not just the newest period
     for (const p of periodsCache) {
         const o = document.createElement("option");
         o.value = p.id;
         o.textContent = p.name;
+        o.selected = p.id === defaultId;
         periodSel.appendChild(o);
     }
     const typeSel = document.getElementById("hmType");
@@ -1478,15 +1519,12 @@ async function createHouseholdMembership() {
     renderMemberships();
 }
 
-// CR-022: the Renewals page (index.html) — the members list and its dialogs.
-// The period selector here is read-only context; period admin (new period,
-// journal price, rollover) moved to the System page, reconciliation to Reports.
+// CR-022/023: the Renewals page (index.html) — the members list and its
+// dialogs. No period selector here: the page follows the stored working
+// period (context shown by renderPeriodSummary); period admin (new period,
+// journal price, rollover) lives on the System page, reconciliation on Reports.
 function wireRenewals() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
-    document.getElementById("periodSelect").onchange = () => {
-        renderPeriodSummary();
-        renderMemberships();
-    };
     on("memberSearchGo", renderMemberships);
     document.getElementById("memberSearch").onkeydown = (e) => { if (e.key === "Enter") renderMemberships(); };
     document.getElementById("statusFilter").onchange = renderMemberships;
@@ -1517,12 +1555,15 @@ function wireRenewals() {
 // CR-022: the System page (system.html) — once-a-year period admin. Its
 // periodSelect is the working selector (journal price, rollover context);
 // renderPeriodSummary fills the journalPrice input, which lives only here.
+// CR-023: an explicit change here persists the working period for everyone.
 function wireSystem() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
-    document.getElementById("periodSelect").onchange = () => {
+    document.getElementById("periodSelect").onchange = async () => {
+        currentPeriodId = Number(document.getElementById("periodSelect").value) || null;
         renderPeriodSummary();
         document.getElementById("rolloverApply").disabled = true;
         document.getElementById("rolloverReport").innerHTML = "";
+        if (currentPeriodId) await saveSelectedPeriod(currentPeriodId);
     };
     on("periodNew", openPeriodForm);
     on("journalPriceSave", saveJournalPrice);
@@ -1609,11 +1650,8 @@ function nmSelectedType() {
 
 function nmFillPeriods() {
     const select = document.getElementById("nmPeriod");
-    const todayStr = today();
-    // default: the period covering today, else the newest (periodsCache is
-    // newest-first, per PeriodStore.list())
-    const covering = periodsCache.find(p => p.startDate <= todayStr && todayStr <= p.endDate);
-    const defaultId = covering ? covering.id : (periodsCache[0] && periodsCache[0].id);
+    // default: the stored working period, else covering-today/newest (CR-023)
+    const defaultId = workingPeriodDefault();
     select.innerHTML = "";
     for (const p of periodsCache) {
         const o = document.createElement("option");
@@ -2248,9 +2286,8 @@ function emFillSelects() {
     const periodSel = document.getElementById("emPeriod");
     if (!periodSel) return;
     periodSel.innerHTML = "";
-    const todayStr = today();
-    const covering = periodsCache.find(p => p.startDate <= todayStr && todayStr <= p.endDate);
-    const defaultId = covering ? covering.id : (periodsCache[0] && periodsCache[0].id);
+    // default: the stored working period, else covering-today/newest (CR-023)
+    const defaultId = workingPeriodDefault();
     for (const p of periodsCache) {
         const o = document.createElement("option");
         o.value = p.id;

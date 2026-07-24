@@ -24,7 +24,11 @@
         lives on the Renewals page.</p>
 
     <h3>Period</h3>
-    <label>Period <select id="periodSelect"></select></label>
+    <!-- CR-023: changing this selector persists the working period (an
+         app_setting) — every admin's Renewals page follows it -->
+    <label>Working period <select id="periodSelect"></select></label>
+    <p class="muted">Remembered for everyone — the Renewals page (and the
+        default on new-member and new-membership forms) follows it.</p>
     <button id="periodNew">New period</button>
     <div id="periodSummary" class="muted"></div>
     <label>Journal add-on price ($, blank = not offered)

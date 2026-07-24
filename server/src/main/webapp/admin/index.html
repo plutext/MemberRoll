@@ -18,15 +18,16 @@
 
 <section id="renewalsSection" hidden>
     <h2>Renewals</h2>
-    <p class="muted">The membership year's daily work: pick the period, record the
-        cash and transfers as they arrive, and export the AGM and mailing lists.
-        Opening a period, pricing the journal add-on and the rollover live on the
-        System page. Payments are insert-only — a mistake is fixed with a Reverse
-        (an equal-and-opposite entry), never an edit.</p>
+    <p class="muted">The membership year's daily work: record the cash and
+        transfers as they arrive, and export the AGM and mailing lists. This
+        page follows the working period, which is chosen once a year on the
+        System page — where opening a period, pricing the journal add-on and
+        the rollover also live. Payments are insert-only — a mistake is fixed
+        with a Reverse (an equal-and-opposite entry), never an edit.</p>
 
-    <!-- CR-022: read-only period context here; the working period selector (for
-         journal price and rollover) is on the System page. -->
-    <label>Period <select id="periodSelect"></select></label>
+    <!-- CR-023: no selector — the page follows the stored working period
+         (renderPeriodSummary names it; a ?period= deep link overrides it for
+         this page view only, shown as "Viewing period") -->
     <div id="periodSummary" class="muted"></div>
 
     <h3>Members</h3>

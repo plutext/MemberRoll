@@ -100,17 +100,21 @@ re-running a corrected file converges instead of duplicating.
 
 ## Renewals
 
-The **Renewals** page is the membership year's daily driver: pick the period,
-record the cash and transfers as they arrive, and export the AGM and mailing
-lists. The once-a-year setup — opening a period with its prices, and rolling
-the prior year's paid members forward — lives on the **System** page (see
-[System](#system) below).
+The **Renewals** page is the membership year's daily driver: record the cash
+and transfers as they arrive, and export the AGM and mailing lists. The
+once-a-year setup — opening a period with its prices, choosing the working
+period, and rolling the prior year's paid members forward — lives on the
+**System** page (see [System](#system) below).
 
-At the top, the **Period** dropdown chooses which year you're working in (here
-it is read-only context; the working copy that sets the journal price and
-scopes the rollover is on the System page). Beneath it a summary shows that
-period's dates and prices; below the members table, a totals line shows the
-count in each status and how much has been collected against how much is due.
+At the top, a **Working period** line names the year you're working in — there
+is no dropdown here. The working period is chosen once a year on the System
+page and is remembered for **everyone**: every admin's Renewals page follows
+the same one, on every device, until it is changed there again. The line also
+shows that period's dates and prices; below the members table, a totals line
+shows the count in each status and how much has been collected against how
+much is due. (Following a link to a membership in another year shows
+"Viewing period" instead — that view is yours alone and changes nothing for
+other admins.)
 
 ### Who has paid — the members table
 
@@ -197,8 +201,9 @@ touch this app.
   membership year ends. (The renewal-email feature will later send these
   automatically.)
 - **What the member sees**: household, year, amount due and paid. If a
-  **journal add-on price** is set on the period (the field next to the
-  period selector), the page offers the journal as a tick-box; there's
+  **journal add-on price** is set on the period (the field under the
+  working-period dropdown on the System page), the page offers the journal
+  as a tick-box; there's
   also an optional donation amount. After paying they land back on the
   page, which confirms "you are financial for …", and they receive a
   receipt email. The membership flips to **Paid** here automatically —
@@ -358,9 +363,11 @@ page too, below the reports.
 ## System
 
 The **System** page is the once-a-year setup, kept off the daily path so a
-volunteer recording payments never scrolls past it. It carries its own
-**Period** dropdown — the working selector for the journal price and the
-rollover context.
+volunteer recording payments never scrolls past it. It carries the
+**Working period** dropdown — the one place the working period is chosen.
+Changing it is remembered on the server for **all admins**: the Renewals page,
+and the default period on the new-member and new-membership forms, follow it.
+The dropdown also scopes the journal price and the rollover below it.
 
 ### Creating a new period
 

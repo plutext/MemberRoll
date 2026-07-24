@@ -31,8 +31,10 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
@@ -68,9 +70,67 @@ public class AdminPeriodsResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     public Response list() {
+        List<PeriodStore.Period> all = periods.list();
         JsonArrayBuilder out = Json.createArrayBuilder();
-        for (PeriodStore.Period p : periods.list()) out.add(periodJson(p));
-        return Response.ok(Json.createObjectBuilder().add("periods", out).build().toString()).build();
+        for (PeriodStore.Period p : all) out.add(periodJson(p));
+        JsonObjectBuilder b = Json.createObjectBuilder().add("periods", out);
+        // CR-023: the stored working period rides along so every page that
+        // loads periods learns it in the same round trip; null until first
+        // saved (or if the stored id no longer names a period — defensive,
+        // periods are not deletable today)
+        Long stored = storedSelectedPeriodId();
+        Long selected = stored != null && all.stream().anyMatch(p -> p.id() == stored) ? stored : null;
+        if (selected == null) b.addNull("selectedPeriodId"); else b.add("selectedPeriodId", selected);
+        return Response.ok(b.build().toString()).build();
+    }
+
+    // ---- the working period (CR-023) ----------------------------------------
+
+    /** The {@code app_setting} row naming the working period, `{"periodId": N}`. */
+    static final String SELECTED_KEY = "selected_period";
+
+    /**
+     * Persists the working period — the one the Renewals page operates over,
+     * chosen on the System page. Server state on purpose: the society renews
+     * one period at a time, so the selection is shared across sessions AND
+     * admins (per-user memory would let two admins disagree about it).
+     */
+    @PUT
+    @Path("selected")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response putSelected(String body, @Context SecurityContext security) {
+        JsonObject request = Payloads.read(body);
+        if (request == null) return badRequest("body must be a JSON object");
+        Long periodId = Payloads.optLong(request, "periodId");
+        if (periodId == null) return badRequest("periodId is required");
+        // a body reference, not a URI — an unknown period is a 400, not a 404
+        if (periods.get(periodId).isEmpty()) return badRequest("no such period");
+        String value = Json.createObjectBuilder().add("periodId", periodId).build().toString();
+        jdbi.useHandle(h -> h.createUpdate(
+                "INSERT INTO app_setting (key, value, updated_by) VALUES (:k, :v, :by)"
+                        + " ON CONFLICT (key) DO UPDATE SET value = :v, updated_by = :by, updated_at = now()")
+                .bind("k", SELECTED_KEY).bind("v", value).bind("by", whom(security)).execute());
+        return Response.ok(Json.createObjectBuilder().add("selectedPeriodId", periodId)
+                .build().toString()).build();
+    }
+
+    /** The stored working period id, or null when unset (or the blob is unreadable). */
+    private Long storedSelectedPeriodId() {
+        Optional<String> json = jdbi.withHandle(h ->
+                h.createQuery("SELECT value FROM app_setting WHERE key = :k")
+                        .bind("k", SELECTED_KEY).mapTo(String.class).findOne());
+        if (json.isEmpty()) return null;
+        try {
+            JsonObject o = Payloads.read(json.get());
+            return o == null ? null : Payloads.optLong(o, "periodId");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String whom(SecurityContext security) {
+        return security.getUserPrincipal() instanceof UserPrincipal user ? user.getUsername() : "admin";
     }
 
     @POST

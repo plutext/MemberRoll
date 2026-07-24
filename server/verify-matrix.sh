@@ -2267,6 +2267,24 @@ fi
 code -X DELETE $MS -H "Authorization: Bearer $ADMIN" >/dev/null
 check "CR21-10 settings cleared at end" "ENV" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
 
+# --- CR-023: persistent working period ------------------------------------------
+# The stored selection is server state shared by every admin (an app_setting).
+# Re-runnable: the rows leave it pointing at 2025-2026 — a sensible resting
+# state for the dev stack (falls back to the newest period on a DB without it).
+P23=$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "next((p['id'] for p in j['periods'] if p['name']=='2025-2026'), j['periods'][0]['id'])")
+check "CR23-01 periods GET carries key" "true" "$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "str('selectedPeriodId' in j).lower()")"
+check "CR23-02 PUT selected 200"        "200" "$(JPUT $API/admin/periods/selected "{\"periodId\":$P23}")"
+check "CR23-02b echoes id"              "$P23" "$(body | jsq "j['selectedPeriodId']")"
+check "CR23-03 GET reflects selection"  "$P23" "$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "j['selectedPeriodId']")"
+check "CR23-04 unknown period 400"      "400" "$(JPUT $API/admin/periods/selected '{"periodId":99999999}')"
+check "CR23-04b names the rule"         "no such period" "$(body | jsq "j['error']")"
+check "CR23-05 missing periodId 400"    "400" "$(JPUT $API/admin/periods/selected '{}')"
+check "CR23-06 non-object body 400"     "400" "$(JPUT $API/admin/periods/selected 'nonsense')"
+check "CR23-07 member 403"              "403" "$(code -X PUT $API/admin/periods/selected -H "Authorization: Bearer $USER" -H 'Content-Type: application/json' -d "{\"periodId\":$P23}")"
+check "CR23-08 guest 403"               "403" "$(code -X PUT $API/admin/periods/selected -H 'Content-Type: application/json' -d "{\"periodId\":$P23}")"
+check "CR23-09 noaud 401"               "401" "$(code -X PUT $API/admin/periods/selected -H "Authorization: Bearer $NOAUD" -H 'Content-Type: application/json' -d "{\"periodId\":$P23}")"
+check "CR23-10 selection survived rows" "$P23" "$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "j['selectedPeriodId']")"
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"
@@ -2284,6 +2302,9 @@ check "33g admin committee page 200"    "200" "$(code $ORIGIN/server/admin/commi
 check "33h admin mail-settings page 200" "200" "$(code $ORIGIN/server/admin/mail-settings.html)"
 check "33i admin reports page 200"       "200" "$(code $ORIGIN/server/admin/reports.html)"
 check "33j admin applications page 200"  "200" "$(code $ORIGIN/server/admin/applications.html)"
+check "33k admin people page 200"        "200" "$(code $ORIGIN/server/admin/people.html)"
+check "33l admin households page 200"    "200" "$(code $ORIGIN/server/admin/households.html)"
+check "33m admin system page 200"        "200" "$(code $ORIGIN/server/admin/system.html)"
 check "34 auth.js served"              "200" "$(code $ORIGIN/server/shared/auth.js)"
 
 echo
