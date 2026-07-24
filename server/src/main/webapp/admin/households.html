@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — households</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
+
+<section id="householdsSection" hidden>
+    <h2>Households</h2>
+    <p class="muted">The billing unit. Removing a member records a leaving
+        date (history stays); reassign the primary contact before removing them.</p>
+    <label>Search: <input id="householdSearch" placeholder="household or member name"></label>
+    <button id="householdSearchGo">Search</button>
+    <button id="householdNew">New household</button>
+    <table id="households">
+        <thead>
+        <tr><th>Id</th><th>Name</th><th>Primary contact</th><th>Status</th><th>Current members</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <div id="householdsTotal" class="muted"></div>
+
+    <dialog id="householdForm">
+        <article>
+            <header><h3 id="householdFormTitle">New household</h3></header>
+            <label>Name <input id="hfName" placeholder="e.g. Smith household"></label>
+            <label>Primary contact*
+                <input id="hfContact" type="search" autocomplete="off"
+                       placeholder="search people by name or email"></label>
+            <ul id="hfContactResults" class="picker-results" hidden></ul>
+            <footer>
+                <button id="householdCancel" type="button" class="secondary">Cancel</button>
+                <button id="householdSave">Save</button>
+            </footer>
+        </article>
+    </dialog>
+
+    <dialog id="householdDetail">
+        <article>
+            <header><h3 id="householdDetailTitle">Household</h3></header>
+            <table id="householdMembers">
+                <thead>
+                <tr><th>Person</th><th>Relationship</th><th>Joined</th><th>Left</th><th></th></tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <label>Add person
+                <input id="hdPersonId" type="search" autocomplete="off"
+                       placeholder="search people by name or email"></label>
+            <ul id="hdPersonIdResults" class="picker-results" hidden></ul>
+            <label>Relationship
+                <select id="hdRelationship">
+                    <option>MEMBER</option><option>PARTNER</option>
+                    <option>DEPENDANT</option><option>OTHER</option>
+                </select></label>
+            <button id="hdAdd">Add member</button>
+            <hr>
+            <p class="muted">Sign this household up for a period (a returning or brand-new member mid-year).</p>
+            <label>New membership — period <select id="hmPeriod"></select></label>
+            <label>Type <select id="hmType"></select></label>
+            <button id="hmCreate">Create membership</button>
+            <hr>
+            <h4>Communication preferences (household default)</h4>
+            <p class="muted">The household-level default for each communication type;
+                a person's own exception (in their record) overrides it. A greyed row is EMAIL by default.</p>
+            <div id="hdPrefs"></div>
+            <footer>
+                <button id="hdClose" type="button" class="secondary">Close</button>
+            </footer>
+        </article>
+    </dialog>
+</section>
+</main>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

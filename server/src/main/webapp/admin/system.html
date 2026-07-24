@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — system</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
+
+<section id="systemSection" hidden>
+    <h2>System</h2>
+    <p class="muted">The once-a-year setup: open a membership period with its
+        prices, set the journal add-on price, and roll the prior year's paid
+        members forward. The daily work — recording payments, finding members —
+        lives on the Renewals page.</p>
+
+    <h3>Period</h3>
+    <label>Period <select id="periodSelect"></select></label>
+    <button id="periodNew">New period</button>
+    <div id="periodSummary" class="muted"></div>
+    <label>Journal add-on price ($, blank = not offered)
+        <input id="journalPrice" type="number" step="0.01" min="0" placeholder="not offered"></label>
+    <button id="journalPriceSave">Save journal price</button>
+
+    <dialog id="periodForm">
+        <article>
+            <header><h3>New period</h3></header>
+            <label>Name <input id="npName" placeholder="e.g. 2026-2027"></label>
+            <label>Start date <input id="npStart" type="date"></label>
+            <label>End date <input id="npEnd" type="date"></label>
+            <label>Renewal opens <input id="npRenewalOpen" type="date"></label>
+            <label>Late-joining cutoff <input id="npCutoff" type="date"></label>
+            <div id="npPrices"></div>
+            <label>Journal add-on price ($, blank = not offered)
+                <input id="npJournal" type="number" step="0.01" min="0"></label>
+            <footer>
+                <button id="npCancel" type="button" class="secondary">Cancel</button>
+                <button id="npSave">Create period</button>
+            </footer>
+        </article>
+    </dialog>
+
+    <h3>Rollover</h3>
+    <p class="muted">Creates a membership for every household with an ACTIVE
+        membership in the prior period. Preview first — it writes nothing.</p>
+    <button id="rolloverPreview">Preview</button>
+    <button id="rolloverApply" disabled>Apply rollover</button>
+    <div id="rolloverReport"></div>
+</section>
+</main>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # CR 022: Admin page reorganisation — People / Households / Renewals / System
 
-Status: PROPOSED (2026-07-24)
+Status: IMPLEMENTED + VERIFIED (2026-07-24)
 
 ## Problem
 
@@ -202,3 +202,53 @@ not page layout).
      index.html with the dialog open; applications detail → created
      household link.
 4. Record results in this doc, per the workflow convention.
+
+## Verification results (2026-07-24, Opus 4.8)
+
+Implemented exactly as designed — a pure static reshuffle, no Java/API
+touched. New pages `people.html`, `households.html`, `system.html`;
+`index.html` slimmed to Renewals (retitled); reconciliation moved onto
+`reports.html`. In `admin.js`: `MENU` rewritten; `wireRegister` split into
+`wirePeople`+`wireHouseholds` (with `hmCreate`); `wireRenewals` slimmed;
+new `wireSystem`+`wireReconciliation`; `renderPeople`/`renderHouseholds`/
+`renderMemberships`/`fillTypeFilter`/`renderPeriodSummary` (journalPrice
+write) presence-gated; deep links → `households.html`; boot sequence split
+along the new section ids. Docs updated: `user-manual.md` (new System
+section, People/Households as separate pages, reconciliation now on
+Reports, menu-path fixes), `reports.html` prose, CLAUDE.md architecture
+note.
+
+1. **Full matrix** — baseline (pre-change, running war) `PASS=841 FAIL=3`;
+   after rebuild + cargo restart `PASS=841 FAIL=3`; `diff` of the sorted
+   ok/FAIL check set is **empty** (byte-identical — no regression, no new
+   pass/fail). The 3 failures are the known environmental flakes
+   (`27b` Keycloak-listing eventual consistency; `CR10-04g2` and
+   `CR10-12c` the UTC-vs-AEST "today" date arithmetic), unrelated to this
+   CR. Logs: `tmp/cr022-baseline-matrix.log`, `tmp/cr022-after-matrix.log`.
+
+2. **Grep audit** — no stale `wireRegister`/`registerSection` references
+   remain (the one match is a history comment). Each new section id
+   (`peopleSection`, `householdsSection`, `systemSection`,
+   `reconciliationSection`) is defined in exactly one HTML file and
+   referenced twice in JS (boot gate + `.hidden=false`). Every id touched
+   by each of the five wire functions (via `getElementById`, `on(...)`,
+   `enter(...)`, `wirePersonPicker(...)`) was confirmed present on that
+   function's target page (6/12/24/9/8 ids respectively, all present).
+
+3. **Playwright walkthrough** (`tmp/cr022-fixtures/cr022-walkthrough.js`,
+   dev stack) — **PASS=63 FAIL=0**, zero JS errors captured on any page.
+   Covered: all five pages boot with their section visible, the new menu
+   (People/Households/System present, "Register & renewals" gone) and the
+   correct single active item; Renewals has the members table but NOT
+   journalPrice/New-period/reconciliation; People search→open→verify
+   member-no + preferences→save; Households deep-link opens the detail
+   dialog with `hmPeriod`/`hmType` populated (periodsCache booted),
+   `hmCreate` carries an onclick handler and creates a membership from the
+   dialog; System has periodSelect + journalPrice + rollover but no members
+   table, creates a throwaway period and previews a rollover; Reports shows
+   the reconciliation section, previews it and opens the Xero-mapping
+   dialog; new-member success screen's "Open household" link targets
+   `households.html` while "Open membership" stays `index.html`; the
+   ambient CR-021 sandbox banner appears on people/households/system while
+   a redirect is set and is gone after clearing (mail source restored to
+   ENV). Screenshots under the session scratchpad (`cr22-*.png`).

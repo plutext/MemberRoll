@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>memberroll admin — register &amp; renewals</title>
+    <title>memberroll admin — renewals</title>
     <link rel="stylesheet" href="../shared/pico.classless.min.css">
     <link rel="stylesheet" href="admin.css">
 </head>
@@ -16,161 +16,18 @@
     <div id="message"></div>
 </header>
 
-<section id="registerSection" hidden>
-    <h2>Register</h2>
-
-    <h3>People</h3>
-    <p class="muted">People are never deleted — the register is the historical record.</p>
-    <label>Search: <input id="personSearch" placeholder="name or email"></label>
-    <button id="personSearchGo">Search</button>
-    <button id="personNew">New person</button>
-    <table id="people">
-        <thead>
-        <tr><th>Id</th><th>Name</th><th>Emails</th><th>Phones</th><th>Notes</th><th></th></tr>
-        </thead>
-        <tbody></tbody>
-    </table>
-    <div id="peopleTotal" class="muted"></div>
-
-    <dialog id="personForm">
-        <article>
-            <header><h3 id="personFormTitle">New person</h3></header>
-            <label>Title <input id="pfTitle"></label>
-            <label>Given name* <input id="pfGiven"></label>
-            <label>Family name* <input id="pfFamily"></label>
-            <label>Preferred name <input id="pfPreferred"></label>
-            <label>Date of birth <input id="pfDob" type="date"></label>
-            <!-- CR-020: the number the membership card shows; blank = unassigned
-                 (the card falls back to the person id). 1-30 are reserved for
-                 life members by committee policy, not enforced here. -->
-            <label>Member no. (blank = unassigned; shown on the membership card)
-                <input id="pfMemberNo" type="number" min="1" step="1"></label>
-            <label>Emails (one per line; first is primary)
-                <textarea id="pfEmails" rows="2"></textarea></label>
-            <label>Phones (one per line: number, optionally followed by MOBILE/HOME/WORK)
-                <textarea id="pfPhones" rows="2"></textarea></label>
-            <label>Notes <textarea id="pfNotes" rows="2"></textarea></label>
-            <div id="pfPrefsWrap" hidden>
-                <h4>Communication preferences</h4>
-                <p class="muted">A greyed row is the inherited default (household, else EMAIL).
-                    Change one to record a personal exception.</p>
-                <div id="pfPrefs"></div>
-            </div>
-            <div id="pfLinkWrap" hidden>
-                <h4>Self-serve account</h4>
-                <p id="pfLinkStatus" class="muted"></p>
-                <button id="pfUnlink" type="button" class="secondary" hidden>Unlink</button>
-            </div>
-            <footer>
-                <button id="personCancel" type="button" class="secondary">Cancel</button>
-                <button id="personSave">Save</button>
-            </footer>
-        </article>
-    </dialog>
-
-    <h3>Households</h3>
-    <p class="muted">The billing unit. Removing a member records a leaving
-        date (history stays); reassign the primary contact before removing them.</p>
-    <label>Search: <input id="householdSearch" placeholder="household or member name"></label>
-    <button id="householdSearchGo">Search</button>
-    <button id="householdNew">New household</button>
-    <table id="households">
-        <thead>
-        <tr><th>Id</th><th>Name</th><th>Primary contact</th><th>Status</th><th>Current members</th><th></th></tr>
-        </thead>
-        <tbody></tbody>
-    </table>
-    <div id="householdsTotal" class="muted"></div>
-
-    <dialog id="householdForm">
-        <article>
-            <header><h3 id="householdFormTitle">New household</h3></header>
-            <label>Name <input id="hfName" placeholder="e.g. Smith household"></label>
-            <label>Primary contact*
-                <input id="hfContact" type="search" autocomplete="off"
-                       placeholder="search people by name or email"></label>
-            <ul id="hfContactResults" class="picker-results" hidden></ul>
-            <footer>
-                <button id="householdCancel" type="button" class="secondary">Cancel</button>
-                <button id="householdSave">Save</button>
-            </footer>
-        </article>
-    </dialog>
-
-    <dialog id="householdDetail">
-        <article>
-            <header><h3 id="householdDetailTitle">Household</h3></header>
-            <table id="householdMembers">
-                <thead>
-                <tr><th>Person</th><th>Relationship</th><th>Joined</th><th>Left</th><th></th></tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-            <label>Add person
-                <input id="hdPersonId" type="search" autocomplete="off"
-                       placeholder="search people by name or email"></label>
-            <ul id="hdPersonIdResults" class="picker-results" hidden></ul>
-            <label>Relationship
-                <select id="hdRelationship">
-                    <option>MEMBER</option><option>PARTNER</option>
-                    <option>DEPENDANT</option><option>OTHER</option>
-                </select></label>
-            <button id="hdAdd">Add member</button>
-            <hr>
-            <p class="muted">Sign this household up for a period (a returning or brand-new member mid-year).</p>
-            <label>New membership — period <select id="hmPeriod"></select></label>
-            <label>Type <select id="hmType"></select></label>
-            <button id="hmCreate">Create membership</button>
-            <hr>
-            <h4>Communication preferences (household default)</h4>
-            <p class="muted">The household-level default for each communication type;
-                a person's own exception (in their record) overrides it. A greyed row is EMAIL by default.</p>
-            <div id="hdPrefs"></div>
-            <footer>
-                <button id="hdClose" type="button" class="secondary">Close</button>
-            </footer>
-        </article>
-    </dialog>
-</section>
-
 <section id="renewalsSection" hidden>
     <h2>Renewals</h2>
-    <p class="muted">Run a membership year: open a period with its prices, roll the
-        prior year's paid members forward, record the cash and transfers as they
-        arrive, and export the AGM and mailing lists. Payments are insert-only —
-        a mistake is fixed with a Reverse (an equal-and-opposite entry), never an edit.</p>
+    <p class="muted">The membership year's daily work: pick the period, record the
+        cash and transfers as they arrive, and export the AGM and mailing lists.
+        Opening a period, pricing the journal add-on and the rollover live on the
+        System page. Payments are insert-only — a mistake is fixed with a Reverse
+        (an equal-and-opposite entry), never an edit.</p>
 
+    <!-- CR-022: read-only period context here; the working period selector (for
+         journal price and rollover) is on the System page. -->
     <label>Period <select id="periodSelect"></select></label>
-    <button id="periodNew">New period</button>
     <div id="periodSummary" class="muted"></div>
-    <label>Journal add-on price ($, blank = not offered)
-        <input id="journalPrice" type="number" step="0.01" min="0" placeholder="not offered"></label>
-    <button id="journalPriceSave">Save journal price</button>
-
-    <dialog id="periodForm">
-        <article>
-            <header><h3>New period</h3></header>
-            <label>Name <input id="npName" placeholder="e.g. 2026-2027"></label>
-            <label>Start date <input id="npStart" type="date"></label>
-            <label>End date <input id="npEnd" type="date"></label>
-            <label>Renewal opens <input id="npRenewalOpen" type="date"></label>
-            <label>Late-joining cutoff <input id="npCutoff" type="date"></label>
-            <div id="npPrices"></div>
-            <label>Journal add-on price ($, blank = not offered)
-                <input id="npJournal" type="number" step="0.01" min="0"></label>
-            <footer>
-                <button id="npCancel" type="button" class="secondary">Cancel</button>
-                <button id="npSave">Create period</button>
-            </footer>
-        </article>
-    </dialog>
-
-    <h3>Rollover</h3>
-    <p class="muted">Creates a membership for every household with an ACTIVE
-        membership in the prior period. Preview first — it writes nothing.</p>
-    <button id="rolloverPreview">Preview</button>
-    <button id="rolloverApply" disabled>Apply rollover</button>
-    <div id="rolloverReport"></div>
 
     <h3>Members</h3>
     <label>Search <input id="memberSearch" placeholder="household or member name"></label>
@@ -202,54 +59,6 @@
         <tbody></tbody>
     </table>
     <div id="membershipsTotal" class="muted"></div>
-
-    <!-- CR-015: categorised reconciliation export for the treasurer's Xero books.
-         Preview (JSON summary) → Download CSV → Mark reconciled; the Xero journal
-         button appears only once the account mapping is saved. -->
-    <h3>Reconciliation export</h3>
-    <p class="muted">Export categorised payments for a window (each payment's
-        allocation split in columns, plus net totals), book the Stripe side with
-        one clearing-account journal, then mark them reconciled so next month
-        starts where this one ended. See the user manual for the journal procedure.</p>
-    <label>From <input id="recFrom" type="date"></label>
-    <label>To <input id="recTo" type="date"></label>
-    <label>Method
-        <select id="recMethod">
-            <option value="">All</option>
-            <option value="STRIPE">Stripe</option>
-            <option value="BANK_TRANSFER">Bank transfer</option>
-            <option value="CASH">Cash</option>
-            <option value="CHEQUE">Cheque</option>
-            <option value="OTHER">Other</option>
-        </select></label>
-    <label><input id="recUnreconciled" type="checkbox" checked> Unreconciled only</label>
-    <div>
-        <button id="recPreview">Preview</button>
-        <button id="recDownload">Download CSV</button>
-        <button id="recAccounts" type="button" class="secondary">Accounts…</button>
-        <button id="recJournal" hidden>Download Xero journal</button>
-        <button id="recMark" disabled>Mark these reconciled</button>
-    </div>
-    <div id="recSummary" class="muted"></div>
-
-    <dialog id="xeroForm">
-        <article>
-            <header><h3>Xero account mapping</h3></header>
-            <p class="muted">Opaque account codes from your Xero chart of accounts
-                — the server never interprets them; a wrong code fails at Xero's
-                import. The journal export stays dormant until these are saved.</p>
-            <label>Membership income code <input id="xeMembership"></label>
-            <label>Journal income code <input id="xeJournal"></label>
-            <label>Donation income code <input id="xeDonation"></label>
-            <label>Other income code <input id="xeOther"></label>
-            <label>Stripe Clearing code <input id="xeClearing"></label>
-            <label>Tax rate <input id="xeTaxRate" placeholder="BAS Excluded"></label>
-            <footer>
-                <button id="xeCancel" type="button" class="secondary">Cancel</button>
-                <button id="xeSave">Save mapping</button>
-            </footer>
-        </article>
-    </dialog>
 
     <dialog id="membershipDetail">
         <article>

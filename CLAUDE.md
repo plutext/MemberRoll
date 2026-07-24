@@ -483,6 +483,36 @@ Mailpit capture option. Matrix note: dev Mailpit advertises no AUTH,
 so the CR21 send rows run an auth-free blob; the password keep/survive
 rows sit beside them (CR21-02/09).
 
+CR-022 reorganised the admin panel's oldest page: `admin/index.html` (the
+`/admin/` landing page) split from a six-job junk drawer into four
+one-job pages — `index.html` slimmed to **Renewals** (the members list +
+membership/payment/receipt/card dialogs), new `people.html`/
+`households.html` (the register tables + their dialogs), new `system.html`
+(period admin, journal price, rollover), and the CR-015 reconciliation
+export moved onto the existing `reports.html`. A **pure static reshuffle —
+no API/schema/endpoint change** (`verify-matrix.sh` untouched,
+byte-identical before/after): the shared `admin.js` boot still wires
+whatever sections a page carries, so `wireRegister` became
+`wirePeople`+`wireHouseholds` (the household detail dialog's `hmCreate`
+moved with it — it had always been mis-wired in `wireRenewals`, harmless
+only while both shared a page), `wireRenewals` shed period admin +
+reconciliation into new `wireSystem`/`wireReconciliation` (the latter
+gated on its own `reconciliationSection`, deliberately NOT welded onto
+`wireReports`), and `loadPeriods`'s tail (`renderPeriodSummary` — whose
+`journalPrice` write is System-only — plus `fillTypeFilter`/
+`renderMemberships`) is presence-gated so the same functions no-op on a
+page lacking their markup (`renderPeople`/`renderHouseholds` gained the
+same guard, making cross-table refreshers like the import applier safe
+everywhere). Two pages carry a `periodSelect` — Renewals as read-only
+context, System as the working selector — and since pages are separate
+documents sharing one script the duplicate id is fine. Deep links: the
+household one moved to `households.html?household=<id>` (new-member
+success + applications detail produce it, the boot consumer sits under
+the `householdsSection` gate), the membership one stays
+`index.html?membership=<id>&period=<id>`. Menu order: `Renewals · People ·
+Households · New member · … · Mail settings · System` (System last, in
+the settings corner).
+
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
 `MembershipStore.insertMembershipPerson` sets

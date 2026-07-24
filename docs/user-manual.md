@@ -20,6 +20,11 @@ payments, exports).
 
 ## The register
 
+People and households each have their own page in the admin menu (**People**
+and **Households**), alongside **New member** for the common walk-in case.
+Together they are the register — the who's-who the renewals and reports draw
+on.
+
 ### People
 
 Each person is a record of an individual — a member, a partner, a past
@@ -74,14 +79,14 @@ between People, Households and Renewals in the right order:
 
 ### Importing members from a spreadsheet
 
-Under **Register → Import members (CSV)**:
+Under **Import members** (in the admin menu):
 
 1. Shape your spreadsheet to the columns in `docs/import-template.csv` and
    export it as **CSV UTF-8** (plain "CSV" from Excel mangles accented
    names).
 2. Pick the **Target period** from the dropdown — leave it on
    *(current period)* to use the period covering today. If no period exists
-   yet, the app says so here: create one under **Renewals → New period**
+   yet, the app says so here: create one under **System → New period**
    first (a fresh install ships with the current year's period already set
    up). People and households still import without a period; only rows that
    carry a `membershipType` need one.
@@ -95,51 +100,17 @@ re-running a corrected file converges instead of duplicating.
 
 ## Renewals
 
-The **Renewals** area runs a membership year end to end: open a period with
-its prices, roll the prior year's paid members forward, record the cash and
-transfers as they arrive, and export the AGM and mailing lists.
+The **Renewals** page is the membership year's daily driver: pick the period,
+record the cash and transfers as they arrive, and export the AGM and mailing
+lists. The once-a-year setup — opening a period with its prices, and rolling
+the prior year's paid members forward — lives on the **System** page (see
+[System](#system) below).
 
-At the top, the **Period** dropdown chooses which year you're working in.
-Beneath it a summary shows that period's dates and prices; below the members
-table, a totals line shows the count in each status and how much has been
-collected against how much is due.
-
-### Creating a new period
-
-Press **New period**. The form **pre-populates from the period currently
-selected** in the dropdown, because the common case is "next year, same
-fees":
-
-- **Name** is left blank — type the new one (e.g. `2026-2027`).
-- **Start date, End date, Renewal opens, Late-joining cutoff** are each the
-  selected period's dates **wound forward by one year** (so `2025-09-01`
-  becomes `2026-09-01`). A date the source period didn't set stays blank.
-- **Prices** are carried over unchanged, one box per membership type,
-  shown in dollars.
-
-Adjust whatever actually changed — a fee rise, a shifted cutoff — then
-**Create period**. A price is required for **every** membership type (so a
-later rollover can never fail for want of one), and a duplicate period name
-is refused.
-
-### Rolling last year's members forward
-
-Rollover creates a membership in the selected (target) period for **every
-household that had an ACTIVE (paid) membership in the prior period**, at the
-target period's prices.
-
-1. Select the new period, then **Preview** — it reports the source period it
-   found, how many memberships it *would* create, and which households it
-   skips. **It writes nothing.**
-2. **Apply rollover** performs it. New memberships start **Unpaid**
-   (awaiting payment), except life/honorary memberships, which come across
-   as **$0 Paid** automatically.
-
-Households that already have a membership in the target period (an early
-renewal), and households with no current members, are **skipped** and
-listed. Rollover is safe to run again — a second run creates nothing and
-skips everyone. Members who *didn't* pay last year are not rolled over; sign
-them up manually if they return.
+At the top, the **Period** dropdown chooses which year you're working in (here
+it is read-only context; the working copy that sets the journal price and
+scopes the rollover is on the System page). Beneath it a summary shows that
+period's dates and prices; below the members table, a totals line shows the
+count in each status and how much has been collected against how much is due.
 
 ### Who has paid — the members table
 
@@ -301,7 +272,7 @@ For a **brand-new** member, use **New member** (above) instead — it
 creates the person, household and membership together. This section is
 for a household that **already exists** (a returning member outside of
 rollover, or one already in the register): open the household
-(**Register → Households → Members**) and use **New membership**:
+(**Households → Members**) and use **New membership**:
 pick the period and the membership type, then **Create membership**. It's
 created Unpaid (or $0 Paid for a life/honorary type), with the household's
 current members copied onto it. Record their payment from the members table
@@ -379,8 +350,56 @@ work. Each downloads a CSV to open in a spreadsheet.
   as negative rows, so the total always matches the ledger.
 
 The per-year exports (AGM register, mailing labels, financial) stay on the
-Renewals page — see [Exports](#exports) above — and the treasurer's
-reconciliation exports are there too.
+Renewals page — see [Exports](#exports) above. The treasurer's
+**reconciliation export** (categorised payments for a window, plus the Xero
+clearing-account journal and the mark-reconciled step) is on this Reports
+page too, below the reports.
+
+## System
+
+The **System** page is the once-a-year setup, kept off the daily path so a
+volunteer recording payments never scrolls past it. It carries its own
+**Period** dropdown — the working selector for the journal price and the
+rollover context.
+
+### Creating a new period
+
+Press **New period**. The form **pre-populates from the period currently
+selected** in the dropdown, because the common case is "next year, same
+fees":
+
+- **Name** is left blank — type the new one (e.g. `2026-2027`).
+- **Start date, End date, Renewal opens, Late-joining cutoff** are each the
+  selected period's dates **wound forward by one year** (so `2025-09-01`
+  becomes `2026-09-01`). A date the source period didn't set stays blank.
+- **Prices** are carried over unchanged, one box per membership type,
+  shown in dollars.
+
+Adjust whatever actually changed — a fee rise, a shifted cutoff — then
+**Create period**. A price is required for **every** membership type (so a
+later rollover can never fail for want of one), and a duplicate period name
+is refused. The **Journal add-on price** for the selected period is set here
+too.
+
+### Rolling last year's members forward
+
+Rollover creates a membership in the selected (target) period for **every
+household that had an ACTIVE (paid) membership in the prior period**, at the
+target period's prices.
+
+1. Select the new period, then **Preview** — it reports the source period it
+   found, how many memberships it *would* create, and which households it
+   skips. **It writes nothing.**
+2. **Apply rollover** performs it. New memberships start **Unpaid**
+   (awaiting payment), except life/honorary memberships, which come across
+   as **$0 Paid** automatically.
+
+Households that already have a membership in the target period (an early
+renewal), and households with no current members, are **skipped** and
+listed. Rollover is safe to run again — a second run creates nothing and
+skips everyone. Members who *didn't* pay last year are not rolled over; sign
+them up manually if they return. Once rolled over, the new year's members
+appear on the **Renewals** page, ready to take payments.
 
 ## Mail settings and the testing sandbox
 
@@ -451,7 +470,7 @@ pay only: members can't edit their details online.
   couldn't find a membership linked to this account — contact the
   society". There's deliberately no way for a visitor to look up
   membership records.
-- **Unlinking**: in a person's record (Register → People → Edit), the
+- **Unlinking**: in a person's record (People → Edit), the
   **Self-serve account** section shows whether they're linked, with an
   **Unlink** button (use it if an email address was reassigned or linked
   to the wrong person). Their login keeps working but shows no

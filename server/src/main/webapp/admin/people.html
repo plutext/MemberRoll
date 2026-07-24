@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>memberroll admin — people</title>
+    <link rel="stylesheet" href="../shared/pico.classless.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+<header>
+    <h1>memberroll — admin</h1>
+    <div id="status">Checking login…</div>
+    <nav id="menu"></nav>
+    <div id="message"></div>
+</header>
+
+<section id="peopleSection" hidden>
+    <h2>People</h2>
+    <p class="muted">People are never deleted — the register is the historical record.</p>
+    <label>Search: <input id="personSearch" placeholder="name or email"></label>
+    <button id="personSearchGo">Search</button>
+    <button id="personNew">New person</button>
+    <table id="people">
+        <thead>
+        <tr><th>Id</th><th>Name</th><th>Emails</th><th>Phones</th><th>Notes</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <div id="peopleTotal" class="muted"></div>
+
+    <dialog id="personForm">
+        <article>
+            <header><h3 id="personFormTitle">New person</h3></header>
+            <label>Title <input id="pfTitle"></label>
+            <label>Given name* <input id="pfGiven"></label>
+            <label>Family name* <input id="pfFamily"></label>
+            <label>Preferred name <input id="pfPreferred"></label>
+            <label>Date of birth <input id="pfDob" type="date"></label>
+            <!-- CR-020: the number the membership card shows; blank = unassigned
+                 (the card falls back to the person id). 1-30 are reserved for
+                 life members by committee policy, not enforced here. -->
+            <label>Member no. (blank = unassigned; shown on the membership card)
+                <input id="pfMemberNo" type="number" min="1" step="1"></label>
+            <label>Emails (one per line; first is primary)
+                <textarea id="pfEmails" rows="2"></textarea></label>
+            <label>Phones (one per line: number, optionally followed by MOBILE/HOME/WORK)
+                <textarea id="pfPhones" rows="2"></textarea></label>
+            <label>Notes <textarea id="pfNotes" rows="2"></textarea></label>
+            <div id="pfPrefsWrap" hidden>
+                <h4>Communication preferences</h4>
+                <p class="muted">A greyed row is the inherited default (household, else EMAIL).
+                    Change one to record a personal exception.</p>
+                <div id="pfPrefs"></div>
+            </div>
+            <div id="pfLinkWrap" hidden>
+                <h4>Self-serve account</h4>
+                <p id="pfLinkStatus" class="muted"></p>
+                <button id="pfUnlink" type="button" class="secondary" hidden>Unlink</button>
+            </div>
+            <footer>
+                <button id="personCancel" type="button" class="secondary">Cancel</button>
+                <button id="personSave">Save</button>
+            </footer>
+        </article>
+    </dialog>
+</section>
+</main>
+
+<script src="../shared/sha256.js"></script>
+<script src="../shared/auth.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

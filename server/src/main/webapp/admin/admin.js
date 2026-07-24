@@ -257,6 +257,7 @@ async function registerCall(path, options) {
 }
 
 async function renderPeople() {
+    if (!document.getElementById("people")) return; // People-page-only table (CR-022)
     const q = document.getElementById("personSearch").value.trim();
     const params = new URLSearchParams({limit: "50"});
     if (q) params.set("q", q);
@@ -434,6 +435,7 @@ function personName(p) {
 }
 
 async function renderHouseholds() {
+    if (!document.getElementById("households")) return; // Households-page-only table (CR-022)
     const q = document.getElementById("householdSearch").value.trim();
     const params = new URLSearchParams({limit: "50"});
     if (q) params.set("q", q);
@@ -733,6 +735,7 @@ async function loadPeriods(selectId) {
 // period's prices, like the email compose page. Selection survives a reload.
 function fillTypeFilter() {
     const select = document.getElementById("typeFilter");
+    if (!select) return; // Renewals-page-only filter (CR-022)
     const keep = select.value;
     select.innerHTML = "";
     const all = document.createElement("option");
@@ -749,14 +752,16 @@ function fillTypeFilter() {
 }
 
 function renderPeriodSummary() {
-    const p = selectedPeriod();
     const el = document.getElementById("periodSummary");
+    if (!el) return; // pages without a period summary line (CR-022)
+    const p = selectedPeriod();
     if (!p) { el.textContent = "No period. Create one to begin."; return; }
     const prices = p.prices.map(pr => `${pr.type} ${dollars(pr.amountCents)}`).join(", ");
     el.textContent = `${p.name}: ${p.startDate} → ${p.endDate}. Prices: ${prices || "—"}.`
         + (p.journalPriceCents != null ? ` Journal add-on ${dollars(p.journalPriceCents)}.` : "");
-    document.getElementById("journalPrice").value =
-        p.journalPriceCents != null ? (p.journalPriceCents / 100).toFixed(2) : "";
+    // CR-022: the journalPrice input lives only on the System page
+    const jp = document.getElementById("journalPrice");
+    if (jp) jp.value = p.journalPriceCents != null ? (p.journalPriceCents / 100).toFixed(2) : "";
 }
 
 async function saveJournalPrice() {
@@ -774,6 +779,7 @@ async function saveJournalPrice() {
 }
 
 async function renderMemberships() {
+    if (!document.getElementById("memberships")) return; // Renewals-page-only table (CR-022)
     const periodId = selectedPeriodId();
     if (!periodId) return;
     const q = document.getElementById("memberSearch").value.trim();
@@ -1472,20 +1478,15 @@ async function createHouseholdMembership() {
     renderMemberships();
 }
 
+// CR-022: the Renewals page (index.html) — the members list and its dialogs.
+// The period selector here is read-only context; period admin (new period,
+// journal price, rollover) moved to the System page, reconciliation to Reports.
 function wireRenewals() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
     document.getElementById("periodSelect").onchange = () => {
         renderPeriodSummary();
         renderMemberships();
-        document.getElementById("rolloverApply").disabled = true;
-        document.getElementById("rolloverReport").innerHTML = "";
     };
-    on("periodNew", openPeriodForm);
-    on("journalPriceSave", saveJournalPrice);
-    on("npSave", savePeriod);
-    on("npCancel", () => closeDialog("periodForm"));
-    on("rolloverPreview", rolloverPreview);
-    on("rolloverApply", rolloverApply);
     on("memberSearchGo", renderMemberships);
     document.getElementById("memberSearch").onkeydown = (e) => { if (e.key === "Enter") renderMemberships(); };
     document.getElementById("statusFilter").onchange = renderMemberships;
@@ -1494,15 +1495,6 @@ function wireRenewals() {
     on("exportAgm", () => exportCsv("agm-register.csv"));
     on("exportLabels", () => exportCsv("mailing-labels.csv"));
     on("exportFinancial", () => exportCsv("financial.csv"));
-    on("recPreview", previewReconciliation);
-    on("recDownload", downloadReconciliationCsv);
-    on("recAccounts", openXeroForm);
-    on("recJournal", downloadXeroJournal);
-    on("recMark", markReconciled);
-    on("xeSave", saveXeroMapping);
-    on("xeCancel", () => closeDialog("xeroForm"));
-    document.getElementById("recMark").disabled = true;
-    loadXeroMappingState(); // reveal the journal button if a mapping already exists
     on("mdTypeChange", () => {
         const typeId = Number(document.getElementById("mdTypeSelect").value);
         if (typeId) transition(openMembershipId, {membershipTypeId: typeId});
@@ -1519,8 +1511,42 @@ function wireRenewals() {
     on("cdDownload", downloadCard);
     on("cdEmail", emailCard);
     on("cdClose", () => closeDialog("cardDialog"));
-    on("hmCreate", createHouseholdMembership);
     document.getElementById("renewalsSection").hidden = false;
+}
+
+// CR-022: the System page (system.html) — once-a-year period admin. Its
+// periodSelect is the working selector (journal price, rollover context);
+// renderPeriodSummary fills the journalPrice input, which lives only here.
+function wireSystem() {
+    const on = (id, handler) => { document.getElementById(id).onclick = handler; };
+    document.getElementById("periodSelect").onchange = () => {
+        renderPeriodSummary();
+        document.getElementById("rolloverApply").disabled = true;
+        document.getElementById("rolloverReport").innerHTML = "";
+    };
+    on("periodNew", openPeriodForm);
+    on("journalPriceSave", saveJournalPrice);
+    on("npSave", savePeriod);
+    on("npCancel", () => closeDialog("periodForm"));
+    on("rolloverPreview", rolloverPreview);
+    on("rolloverApply", rolloverApply);
+    document.getElementById("systemSection").hidden = false;
+}
+
+// CR-022: the reconciliation export (reports.html) — its own section/wiring,
+// gated on reconciliationSection, deliberately not welded onto wireReports.
+function wireReconciliation() {
+    const on = (id, handler) => { document.getElementById(id).onclick = handler; };
+    on("recPreview", previewReconciliation);
+    on("recDownload", downloadReconciliationCsv);
+    on("recAccounts", openXeroForm);
+    on("recJournal", downloadXeroJournal);
+    on("recMark", markReconciled);
+    on("xeSave", saveXeroMapping);
+    on("xeCancel", () => closeDialog("xeroForm"));
+    document.getElementById("recMark").disabled = true;
+    loadXeroMappingState(); // reveal the journal button if a mapping already exists
+    document.getElementById("reconciliationSection").hidden = false;
 }
 
 // the CSV import lives on its own page (import.html) — a one-off bulk load
@@ -1530,7 +1556,10 @@ function wireImport() {
     document.getElementById("importSection").hidden = false;
 }
 
-function wireRegister() {
+// CR-022: the register split into its own pages — People (people.html) and
+// Households (households.html); wireRegister became these two, each gated on
+// its own section id like every other page.
+function wirePeople() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
     const enter = (id, handler) =>
         { document.getElementById(id).onkeydown = (e) => { if (e.key === "Enter") handler(); }; };
@@ -1538,6 +1567,13 @@ function wireRegister() {
     on("personNew", () => openPersonForm(null));
     on("personSave", savePerson);
     on("personCancel", () => closeDialog("personForm"));
+    document.getElementById("peopleSection").hidden = false;
+}
+
+function wireHouseholds() {
+    const on = (id, handler) => { document.getElementById(id).onclick = handler; };
+    const enter = (id, handler) =>
+        { document.getElementById(id).onkeydown = (e) => { if (e.key === "Enter") handler(); }; };
     on("householdSearchGo", renderHouseholds); enter("householdSearch", renderHouseholds);
     on("householdNew", () => {
         document.getElementById("hfName").value = "";
@@ -1548,9 +1584,12 @@ function wireRegister() {
     on("householdCancel", () => closeDialog("householdForm"));
     on("hdAdd", addHouseholdMember);
     on("hdClose", () => closeDialog("householdDetail"));
+    // CR-022: hmCreate lives in the household detail dialog (this page) — it was
+    // historically wired in wireRenewals, harmless while both shared index.html.
+    on("hmCreate", createHouseholdMembership);
     wirePersonPicker("hfContact");   // household primary-contact search
     wirePersonPicker("hdPersonId");  // household add-member search
-    document.getElementById("registerSection").hidden = false;
+    document.getElementById("householdsSection").hidden = false;
 }
 
 // ---- new member (CR-010) -----------------------------------------------------
@@ -1775,7 +1814,7 @@ function nmShowSuccess(result, periodId) {
     line(`Created household #${result.householdId} and membership #${result.membershipId} — `
         + `${statusLabel(result.status)}, due ${dollars(result.amountDueCents)}.`);
     for (const w of result.warnings) line(`<span class="warn-note">${w}</span>`);
-    line(`<a href="index.html?household=${result.householdId}">Open household</a> · `
+    line(`<a href="households.html?household=${result.householdId}">Open household</a> · `
         + `<a href="index.html?membership=${result.membershipId}&period=${periodId}">`
         + "Open membership (renewals — record a payment)</a>");
     const pay = document.createElement("button");
@@ -2777,7 +2816,7 @@ async function openApplication(id) {
     if (a.createdHouseholdId != null) {
         const p = document.createElement("p");
         const link = document.createElement("a");
-        link.href = "index.html?household=" + a.createdHouseholdId;
+        link.href = "households.html?household=" + a.createdHouseholdId;
         link.textContent = "Open the created household";
         p.appendChild(link);
         body.appendChild(p);
@@ -2920,7 +2959,9 @@ function wireApplications() {
 // the admin panel is split across pages that share this script; each page
 // carries only its own sections, and the boot wires whatever is present
 const MENU = [
-    {href: "index.html", label: "Register & renewals"},
+    {href: "index.html", label: "Renewals"},
+    {href: "people.html", label: "People"},
+    {href: "households.html", label: "Households"},
     {href: "new-member.html", label: "New member"},
     {href: "applications.html", label: "Applications"},
     {href: "email.html", label: "Email"},
@@ -2929,6 +2970,7 @@ const MENU = [
     {href: "import.html", label: "Import members"},
     {href: "users.html", label: "Users"},
     {href: "mail-settings.html", label: "Mail settings"},
+    {href: "system.html", label: "System"},
 ];
 
 // CR-021: the ambient sandbox banner — every admin page shows it in the shared
@@ -3011,6 +3053,9 @@ async function wireUsers() {
                 wireReports();
                 document.getElementById("reportsSection").hidden = false;
             }
+            if (document.getElementById("reconciliationSection")) {
+                wireReconciliation(); // CR-022: also on reports.html; periodsCache already loaded above
+            }
             if (document.getElementById("applicationsSection")) {
                 wireApplications();
                 await loadPeriods(); // fills periodsCache for the approve dialog
@@ -3021,12 +3066,16 @@ async function wireUsers() {
                 wireMailSettings();
                 await loadMailSettings();
             }
-            // CR-010 success-screen deep links: index.html?household=<id> and
-            // ?membership=<id>&period=<id> open straight to that detail dialog
+            // CR-010/CR-022 success-screen deep links: households.html?household=<id>
+            // and index.html?membership=<id>&period=<id> open straight to the dialog
             const params = new URLSearchParams(location.search);
-            if (document.getElementById("registerSection")) {
-                wireRegister();
+            if (document.getElementById("peopleSection")) {
+                wirePeople();
                 await renderPeople();
+            }
+            if (document.getElementById("householdsSection")) {
+                wireHouseholds();
+                await loadPeriods(); // fills periodsCache for the detail dialog's hmPeriod/hmType
                 await renderHouseholds();
                 if (params.has("household")) await openHousehold(Number(params.get("household")));
             }
@@ -3034,6 +3083,10 @@ async function wireUsers() {
                 wireRenewals();
                 await loadPeriods(params.has("period") ? Number(params.get("period")) : undefined);
                 if (params.has("membership")) await openMembership(Number(params.get("membership")));
+            }
+            if (document.getElementById("systemSection")) {
+                wireSystem();
+                await loadPeriods(); // fills the working periodSelect (journal price + rollover)
             }
         }
     } catch (e) {
