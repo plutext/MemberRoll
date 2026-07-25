@@ -49,7 +49,7 @@ import java.util.Set;
  * deleted; they close via status when that arrives with CR-003.
  */
 @Path("admin/households")
-@RolesAllowed("admin")
+@RolesAllowed({"admin", "manager"})   // CR-024: manager territory (register maintenance)
 public class AdminHouseholdsResource {
 
     private static final Set<String> RELATIONSHIP_TYPES =

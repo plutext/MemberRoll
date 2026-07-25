@@ -42,19 +42,23 @@
     </table>
     <div id="applicationsEmpty" class="muted" hidden>Nothing here.</div>
 
-    <h3>Form settings</h3>
-    <p class="muted">The public form ships switched <strong>off</strong>: turn it
-        on only once the committee has minuted the website form as the society's
-        approved application form (cl. 3). New-application alerts go to the
-        mailbox below; when blank, the current secretary (from the Committee
-        register) is notified instead.</p>
-    <div id="appMailWarn" class="muted" hidden>⚠ Mail is not configured (see Mail
-        settings) — the form stays closed and decisions cannot be recorded until
-        it is.</div>
-    <label>Alert mailbox
-        <input id="appAlertMailbox" type="email" placeholder="e.g. membership@example.org"></label>
-    <label><input id="appFormEnabled" type="checkbox"> Public application form enabled</label>
-    <button id="appSettingsSave">Save settings</button>
+    <!-- CR-024: system config that happens to render here — admin-only; hidden
+         for managers (the boot sets [data-admin-only] hidden and skips its load). -->
+    <div data-admin-only>
+        <h3>Form settings</h3>
+        <p class="muted">The public form ships switched <strong>off</strong>: turn it
+            on only once the committee has minuted the website form as the society's
+            approved application form (cl. 3). New-application alerts go to the
+            mailbox below; when blank, the current secretary (from the Committee
+            register) is notified instead.</p>
+        <div id="appMailWarn" class="muted" hidden>⚠ Mail is not configured (see Mail
+            settings) — the form stays closed and decisions cannot be recorded until
+            it is.</div>
+        <label>Alert mailbox
+            <input id="appAlertMailbox" type="email" placeholder="e.g. membership@example.org"></label>
+        <label><input id="appFormEnabled" type="checkbox"> Public application form enabled</label>
+        <button id="appSettingsSave">Save settings</button>
+    </div>
 
     <!-- detail + decisions -->
     <dialog id="appDetail">

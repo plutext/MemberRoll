@@ -49,7 +49,7 @@ import java.util.Map;
  * the intended dry-run.
  */
 @Path("admin/email")
-@RolesAllowed("admin")
+@RolesAllowed({"admin", "manager"})   // CR-024: manager territory (segment email)
 public class AdminEmailResource {
 
     private final Jdbi jdbi = Db.jdbi();

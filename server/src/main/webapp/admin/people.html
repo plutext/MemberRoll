@@ -54,7 +54,10 @@
                     Change one to record a personal exception.</p>
                 <div id="pfPrefs"></div>
             </div>
-            <div id="pfLinkWrap" hidden>
+            <!-- CR-024: identity plumbing — admin-only; the person dialog hides
+                 this block for managers (data-admin-only + the isAdmin gate in
+                 the dialog-open toggle, which also skips the admin-only GET). -->
+            <div id="pfLinkWrap" data-admin-only hidden>
                 <h4>Self-serve account</h4>
                 <p id="pfLinkStatus" class="muted"></p>
                 <button id="pfUnlink" type="button" class="secondary" hidden>Unlink</button>

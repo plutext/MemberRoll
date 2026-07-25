@@ -62,6 +62,7 @@ public class AdminPeopleResource {
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: register maintenance is manager territory (keycloak-link stays admin-only)
     public Response list(@QueryParam("q") String q,
                          @QueryParam("limit") @DefaultValue("50") int limit,
                          @QueryParam("offset") @DefaultValue("0") int offset) {
@@ -80,6 +81,7 @@ public class AdminPeopleResource {
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: register maintenance is manager territory
     public Response create(String body) {
         PersonStore.Person draft;
         try {
@@ -99,6 +101,7 @@ public class AdminPeopleResource {
     @GET
     @Path("{id}")
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: register maintenance is manager territory
     public Response get(@PathParam("id") long id) {
         return store.get(id)
                 .map(person -> Response.ok(toJson(person).toString()).build())
@@ -109,6 +112,7 @@ public class AdminPeopleResource {
     @Path("{id}")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: register maintenance is manager territory
     public Response update(@PathParam("id") long id, String body) {
         PersonStore.Person draft;
         try {
@@ -164,6 +168,7 @@ public class AdminPeopleResource {
     @GET
     @Path("{id}/preferences")
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: register maintenance is manager territory
     public Response getPreferences(@PathParam("id") long id) {
         return jdbi.withHandle(handle -> {
             if (!CommunicationPreferenceStore.personExists(handle, id)) return notFound();
@@ -177,6 +182,7 @@ public class AdminPeopleResource {
     @Path("{id}/preferences")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: register maintenance is manager territory
     public Response putPreferences(@PathParam("id") long id, String body) {
         JsonObject request = readObject(body);
         if (request == null) return badRequest("body must be a JSON object");

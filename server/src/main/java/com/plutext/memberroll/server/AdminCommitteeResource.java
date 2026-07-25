@@ -58,7 +58,7 @@ import java.util.Optional;
  * routing addresses, and the current secretary specifically.
  */
 @Path("admin/committee")
-@RolesAllowed("admin")
+@RolesAllowed({"admin", "manager"})   // CR-024: manager territory (committee register)
 public class AdminCommitteeResource {
 
     private final Jdbi jdbi = Db.jdbi();

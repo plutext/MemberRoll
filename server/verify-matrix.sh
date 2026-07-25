@@ -56,6 +56,7 @@ ADMIN=$(tok testadmin test-cli)
 USER=$(tok testuser test-cli)
 VIEWER=$(tok testviewer test-cli)
 NOAUD=$(tok testuser test-cli-noaud)
+MANAGER=$(tok testmanager test-cli)   # CR-024: day-to-day operations role
 
 # --- auth basics -----------------------------------------------------------
 check "1  health guest 200"            "200" "$(code $API/health)"
@@ -99,6 +100,14 @@ check "30 admin correct claim 200"     "200" "$(code -X PUT "$API/admin/users/$V
 check "30b claim now other"            "other" "$(body | jsq "j['claimed_role']")"
 check "30c verified reset"             "false" "$(body | jsq "str(j['verified']).lower()")"
 check "30d manager survives claim sync" "true" "$(body | jsq "str('manager' in j['roles']).lower()")"
+# CR-024: testviewer is the role-less negative-test identity (rows 36/37 assert
+# it 403s on /admin/people). Row 29 granted it manager to prove the grant
+# survives a claim sync; revoke it now so a RE-RUN's fresh $VIEWER token is
+# role-less again. Before CR-024 a lingering manager grant was harmless (manager
+# had no API surface); now /admin/people is manager-accessible, so leaving it
+# granted would make the re-run's viewer-403 rows see 200.
+check "30e revoke manager (re-run hygiene)" "200" "$(code -X PUT "$API/admin/users/$VIEWER_SUB/manager" -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{"granted":false}')"
+check "30f manager now gone"            "false" "$(body | jsq "str('manager' in j['roles']).lower()")"
 check "31 users unknown id 404"        "404" "$(code -X PUT "$API/admin/users/00000000-0000-0000-0000-000000000000/verified" -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{"verified":true}')"
 
 # --- register: people + households (CR-001) ---------------------------------
@@ -2284,6 +2293,155 @@ check "CR23-07 member 403"              "403" "$(code -X PUT $API/admin/periods/
 check "CR23-08 guest 403"               "403" "$(code -X PUT $API/admin/periods/selected -H 'Content-Type: application/json' -d "{\"periodId\":$P23}")"
 check "CR23-09 noaud 401"               "401" "$(code -X PUT $API/admin/periods/selected -H "Authorization: Bearer $NOAUD" -H 'Content-Type: application/json' -d "{\"periodId\":$P23}")"
 check "CR23-10 selection survived rows" "$P23" "$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "j['selectedPeriodId']")"
+
+# --- CR-024: manager role access + Admin sub-menu -------------------------------
+# The `manager` realm role (testmanager) is granted a DEFINED SUBSET of the admin
+# API; everything else stays admin-only. Two halves, both first-class:
+#   (a) OPENED — a manager gets the same 2xx an admin does on day-to-day work;
+#   (b) STILL-CLOSED SWEEP — a manager 403s on EVERY admin-only endpoint. This
+#       is the safety net: if an annotation split regresses, a closed endpoint
+#       silently opens, so the sweep must stay exhaustive.
+# Re-runnable: the opened-write rows use a unique family name and reverse the
+# payment they record; the sandbox rows set then clear the blob (→ ENV resting
+# state, like CR21-10 which already ran above).
+MGET()  { code "$1" -H "Authorization: Bearer $MANAGER"; }
+MPOST() { code -X POST "$1" -H "Authorization: Bearer $MANAGER" -H 'Content-Type: application/json' -d "$2"; }
+MPUT()  { code -X PUT  "$1" -H "Authorization: Bearer $MANAGER" -H 'Content-Type: application/json' -d "$2"; }
+MDEL()  { code -X DELETE "$1" -H "Authorization: Bearer $MANAGER"; }
+
+check "CR24-00 whoami manager 200"      "200" "$(code $API/whoami -H "Authorization: Bearer $MANAGER")"
+check "CR24-00b manager role present"   "true" "$(body | jsq "str('manager' in j['roles']).lower()")"
+check "CR24-00c not admin"              "false" "$(body | jsq "str('admin' in j['roles']).lower()")"
+
+# ---- (a) OPENED: manager 2xx on the day-to-day surface -------------------------
+FAMM="Mgr$$"
+P24=$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "next(p['id'] for p in j['periods'] if p['name']=='2025-2026')")
+T24=$(curl -s $API/admin/periods -H "Authorization: Bearer $ADMIN" | jsq "next(pr['typeId'] for p in j['periods'] if p['name']=='2025-2026' for pr in p['prices'] if pr['type']=='SINGLE' and pr['amountCents']>0)")
+
+# register (people + households): wholesale-open resources
+check "CR24-01 people list manager 200"  "200" "$(MGET $API/admin/people)"
+check "CR24-02 create person manager 201" "201" "$(MPOST $API/admin/people "{\"givenName\":\"Morgan\",\"familyName\":\"$FAMM\"}")"
+PM=$(body | jsq "j['id']")
+check "CR24-03 GET person manager 200"    "200" "$(MGET $API/admin/people/$PM)"
+check "CR24-04 PUT person manager 200"    "200" "$(MPUT $API/admin/people/$PM "{\"givenName\":\"Morgan\",\"familyName\":\"$FAMM\",\"emails\":[{\"email\":\"morgan.$$@example.com\",\"isPrimary\":true}]}")"
+check "CR24-05 person prefs manager 200"  "200" "$(MGET $API/admin/people/$PM/preferences)"
+check "CR24-06 households list manager 200" "200" "$(MGET $API/admin/households)"
+check "CR24-07 create household manager 201" "201" "$(MPOST $API/admin/households "{\"householdName\":\"$FAMM household\",\"primaryContactPersonId\":$PM}")"
+HM=$(body | jsq "j['id']")
+check "CR24-08 household prefs manager 200" "200" "$(MGET $API/admin/households/$HM/preferences)"
+
+# new member → membership (create + manage), then record & reverse a payment
+check "CR24-09 new-member manager 201"    "201" "$(MPOST $API/admin/new-member "{\"person\":{\"givenName\":\"Ned\",\"familyName\":\"${FAMM}N\"},\"membershipPeriodId\":$P24,\"membershipTypeId\":$T24}")"
+MEMM=$(body | jsq "j['membershipId']")
+PMN=$(body | jsq "j['personIds'][0]")
+check "CR24-10 GET membership manager 200" "200" "$(MGET $API/admin/memberships/$MEMM)"
+check "CR24-11 record payment manager 201" "201" "$(MPOST $API/admin/payments "{\"receivedDate\":\"2026-08-01\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MEMM,\"amountCents\":4500}]}")"
+PAYM=$(body | jsq "j['id']")
+check "CR24-12 membership now ACTIVE"     "ACTIVE" "$(MGET $API/admin/memberships/$MEMM >/dev/null; body | jsq "j['status']")"
+check "CR24-13 payment list manager 200"  "200" "$(MGET "$API/admin/payments?membershipId=$MEMM")"
+check "CR24-14 receipt GET manager 200"   "200" "$(MGET $API/admin/payments/$PAYM/receipt)"
+check "CR24-15 admin card info manager 200" "200" "$(MGET $API/admin/memberships/$MEMM/card/$PMN/info)"
+check "CR24-16 reverse payment manager 201" "201" "$(MPOST $API/admin/payments "{\"receivedDate\":\"2026-08-02\",\"amountCents\":-4500,\"method\":\"CASH\",\"notes\":\"CR24 reversal\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MEMM,\"amountCents\":-4500}]}")"
+
+# periods GET (carries CR-023 selectedPeriodId) + statusView + one period export
+check "CR24-17 periods GET manager 200"   "200" "$(MGET $API/admin/periods)"
+check "CR24-17b carries selectedPeriodId" "true" "$(body | jsq "str('selectedPeriodId' in j).lower()")"
+check "CR24-18 statusView manager 200"    "200" "$(MGET "$API/admin/periods/$P24/memberships")"
+check "CR24-19 agm-register export manager 200" "200" "$(MGET $API/admin/periods/$P24/export/agm-register.csv)"
+check "CR24-19b mailing-labels export manager 200" "200" "$(MGET $API/admin/periods/$P24/export/mailing-labels.csv)"
+check "CR24-19c financial export manager 200" "200" "$(MGET $API/admin/periods/$P24/export/financial.csv)"
+
+# committee register + reports (wholesale-open)
+check "CR24-20 committee list manager 200" "200" "$(MGET $API/admin/committee)"
+check "CR24-20b committee contacts manager 200" "200" "$(MGET $API/admin/committee/contacts)"
+check "CR24-21 register report manager 200" "200" "$(MGET $API/admin/export/register-of-members.csv)"
+check "CR24-21b donations report manager 200" "200" "$(MGET "$API/admin/export/donations.csv?from=2020-01-01&to=2020-01-02")"
+
+# segment email (wholesale-open): template save + preview + test-send matches admin
+check "CR24-22 email templates manager 200" "200" "$(MGET $API/admin/email/templates)"
+check "CR24-23 email template save manager 201" "201" "$(MPOST $API/admin/email/templates "{\"name\":\"CR24 $$\",\"subject\":\"Hi {{givenName}}\",\"body\":\"Balance {{balance}} — pay {{payLink}}\"}")"
+TPLM=$(body | jsq "j['id']")
+check "CR24-24 email preview manager 200"  "200" "$(MPOST $API/admin/email/preview "{\"templateId\":$TPLM,\"periodId\":$P24,\"statusFilter\":\"PENDING_PAYMENT\",\"communicationType\":\"RENEWAL\"}")"
+# test-send outcome depends on mail state (ENV here); the manager must get the
+# SAME status an admin gets — that is the "opened, not 403" claim, mail-agnostic
+CR24AS=$(code -X POST $API/admin/email/templates/$TPLM/test -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d "{\"to\":\"cr24mgr.$$@example.com\"}")
+check "CR24-25 test-send manager==admin ($CR24AS)" "$CR24AS" "$(code -X POST $API/admin/email/templates/$TPLM/test -H "Authorization: Bearer $MANAGER" -H 'Content-Type: application/json' -d "{\"to\":\"cr24mgr.$$@example.com\"}")"
+check "CR24-26 email template delete manager 200" "200" "$(MDEL $API/admin/email/templates/$TPLM)"
+
+# applications: the queue reads + decisions are open (settings stay closed, below).
+# Reachability of approve/reject is proven by a non-403 result: a manager gets the
+# SAME status an admin does on a bogus id (503 if mail is down, else 404) — the
+# "opened, not forbidden" claim, mail-agnostic. delete has no mail gate → 404.
+check "CR24-27 applications list manager 200" "200" "$(MGET $API/admin/applications)"
+CR24AP=$(code -X POST $API/admin/applications/99999999/approve -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{"decisionDate":"2026-08-01"}')
+check "CR24-28 approve manager==admin ($CR24AP)" "$CR24AP" "$(MPOST $API/admin/applications/99999999/approve '{"decisionDate":"2026-08-01"}')"
+CR24RJ=$(code -X POST $API/admin/applications/99999999/reject -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{"decisionDate":"2026-08-01"}')
+check "CR24-29 reject manager==admin ($CR24RJ)" "$CR24RJ" "$(MPOST $API/admin/applications/99999999/reject '{"decisionDate":"2026-08-01"}')"
+check "CR24-30 delete reachable (404 not 403)"  "404" "$(MDEL $API/admin/applications/99999999)"
+
+# ---- (b) STILL-CLOSED SWEEP: manager 403 on EVERY admin-only endpoint ----------
+# Users (identity administration) — including the manager grant itself: a manager
+# must never be able to mint managers.
+check "CR24-40 users list manager 403"    "403" "$(MGET $API/admin/users)"
+check "CR24-41 users claim manager 403"   "403" "$(MPUT $API/admin/users/$VIEWER_SUB/claim '{"role":"other"}')"
+check "CR24-42 users verified manager 403" "403" "$(MPUT $API/admin/users/$VIEWER_SUB/verified '{"verified":true}')"
+check "CR24-43 users manager-grant 403"   "403" "$(MPUT $API/admin/users/$VIEWER_SUB/manager '{"granted":true}')"
+# Import (bulk load)
+check "CR24-44 import preview manager 403" "403" "$(code -X POST $API/admin/import/preview -H "Authorization: Bearer $MANAGER" -H 'Content-Type: text/csv' --data-binary $'household,givenName,familyName\nX,Y,Z')"
+check "CR24-45 import apply manager 403"   "403" "$(code -X POST $API/admin/import -H "Authorization: Bearer $MANAGER" -H 'Content-Type: text/csv' --data-binary $'household,givenName,familyName\nX,Y,Z')"
+# Self-serve provisioning (identity plumbing)
+check "CR24-46 self-serve preview manager 403" "403" "$(MPOST $API/admin/self-serve/preview '{}')"
+check "CR24-47 self-serve provision manager 403" "403" "$(MPOST $API/admin/self-serve/provision '{}')"
+# Mail settings (relay config) — the full GET/PUT/DELETE/test stay closed
+check "CR24-48 mail-settings GET manager 403" "403" "$(MGET $MS)"
+check "CR24-49 mail-settings PUT manager 403" "403" "$(MPUT $MS "{\"host\":\"x\",\"port\":25,\"security\":\"NONE\",\"from\":\"a@b.c\"}")"
+check "CR24-50 mail-settings DELETE manager 403" "403" "$(MDEL $MS)"
+check "CR24-51 mail-settings test manager 403" "403" "$(MPOST $MS/test '{"to":"a@b.c","host":"x","port":25,"security":"NONE","from":"a@b.c"}')"
+# Periods: system config (create / reprice / rollover / lapse / working period)
+check "CR24-52 period create manager 403" "403" "$(MPOST $API/admin/periods '{"name":"nope"}')"
+check "CR24-53 period update manager 403" "403" "$(MPUT $API/admin/periods/$P24 '{"name":"2025-2026"}')"
+check "CR24-54 rollover preview manager 403" "403" "$(MPOST $API/admin/periods/$P24/rollover/preview '')"
+check "CR24-55 rollover apply manager 403" "403" "$(MPOST $API/admin/periods/$P24/rollover '')"
+check "CR24-56 lapse-unpaid manager 403"  "403" "$(MPOST $API/admin/periods/$P24/lapse-unpaid '')"
+check "CR24-57 PUT selected manager 403"  "403" "$(MPUT $API/admin/periods/selected "{\"periodId\":$P24}")"
+# Reconciliation + Xero (treasurer/system territory)
+check "CR24-58 reconciliation.csv manager 403" "403" "$(MGET $API/admin/payments/export/reconciliation.csv)"
+check "CR24-59 reconciliation JSON manager 403" "403" "$(MGET $API/admin/payments/export/reconciliation)"
+check "CR24-60 xero-journal.csv manager 403" "403" "$(MGET $API/admin/payments/export/xero-journal.csv)"
+check "CR24-61 xero mapping GET manager 403" "403" "$(MGET $API/admin/payments/xero-account-mapping)"
+check "CR24-62 xero mapping PUT manager 403" "403" "$(MPUT $API/admin/payments/xero-account-mapping '{}')"
+check "CR24-63 reconcile manager 403"     "403" "$(MPOST $API/admin/payments/reconcile '{}')"
+# People Keycloak-link (identity plumbing)
+check "CR24-64 keycloak-link GET manager 403" "403" "$(MGET $API/admin/people/$PM/keycloak-link)"
+check "CR24-65 keycloak-link DELETE manager 403" "403" "$(MDEL $API/admin/people/$PM/keycloak-link)"
+# Application settings (form go-live + alert mailbox = system config)
+check "CR24-66 app settings GET manager 403" "403" "$(MGET $API/admin/applications/settings)"
+check "CR24-67 app settings PUT manager 403" "403" "$(MPUT $API/admin/applications/settings '{"formEnabled":true}')"
+# Fail-closed class spot check: an unannotated admin resource stays admin-only
+check "CR24-68 admin/ping manager 403"    "403" "$(MGET $API/admin/ping)"
+
+# ---- (c) sandbox visibility endpoint (CR-024) ----------------------------------
+# GET /admin/mail-settings/sandbox is the ONE mail read open to managers, so the
+# CR-021 ambient banner works for them. It returns ONLY {redirectTo} — no relay
+# host/username/passwordSet leak.
+SB=$MS/sandbox
+check "CR24-70 sandbox guest 403"         "403" "$(code $SB)"
+check "CR24-71 sandbox member 403"        "403" "$(code $SB -H "Authorization: Bearer $USER")"
+check "CR24-72 sandbox noaud 401"         "401" "$(code $SB -H "Authorization: Bearer $NOAUD")"
+check "CR24-73 sandbox manager 200"       "200" "$(MGET $SB)"
+check "CR24-73b absent row → null"        "None" "$(body | jsq "j['redirectTo']")"
+check "CR24-73c ONLY redirectTo key"      '["redirectTo"]' "$(body | jsq "json.dumps(sorted(j.keys()))")"
+check "CR24-74 sandbox admin 200"         "200" "$(code $SB -H "Authorization: Bearer $ADMIN")"
+check "CR24-74b admin same body"          '["redirectTo"]' "$(body | jsq "json.dumps(sorted(j.keys()))")"
+# with a redirect saved (admin sets it), the manager's sandbox read reflects it
+SBX24="cr24sandbox.$$@example.com"
+JPUT $MS "{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"cr24.$$@memberroll.dev\",\"redirectTo\":\"$SBX24\"}" >/dev/null
+check "CR24-75 manager sees saved redirect" "$SBX24" "$(MGET $SB >/dev/null; body | jsq "j['redirectTo']")"
+check "CR24-75b still ONLY redirectTo key" '["redirectTo"]' "$(body | jsq "json.dumps(sorted(j.keys()))")"
+check "CR24-75c no host/password leak"    "true" "$(body | jsq "str('host' not in j and 'passwordSet' not in j and 'username' not in j).lower()")"
+# clear it — restore the ENV resting state every later/other mail row relies on
+code -X DELETE $MS -H "Authorization: Bearer $ADMIN" >/dev/null
+check "CR24-76 cleared → manager null"    "None" "$(MGET $SB >/dev/null; body | jsq "j['redirectTo']")"
 
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"

@@ -26,6 +26,7 @@
 const statusBox = document.getElementById("status");
 const message = document.getElementById("message");
 let adminEmail = ""; // best-effort default for the test-send prompt (whoami has no email today)
+let isAdmin = false; // CR-024: true for admin, false for a manager — gates the Admin ▾ menu and [data-admin-only] elements
 
 Auth.onFresh401 = (text) => {
     statusBox.textContent = text;
@@ -76,10 +77,13 @@ async function showIdentity() {
     const response = await Auth.api("/whoami");
     if (!response) return false; // redirected to login, or mismatch shown
     const who = await response.json();
-    if (!who.roles.includes("admin")) {
-        // Bearer auth means the server can't role-gate this static page
-        // (writes already 403 there); gate here instead — non-admins go
-        // to the user webapp rather than a panel that can't work.
+    // CR-024: managers reach the panel too. Bearer auth means the server can't
+    // role-gate this static page (writes already 403 there); gate here instead —
+    // anyone who is neither admin nor manager goes to the user webapp rather
+    // than a panel that can't work. `isAdmin` then drives the Admin ▾ menu and
+    // the [data-admin-only] elements on manager-visible pages.
+    isAdmin = who.roles.includes("admin");
+    if (!isAdmin && !who.roles.includes("manager")) {
         location.replace("../web/");
         return false;
     }
@@ -307,9 +311,11 @@ function openPersonForm(person) {
         if (person) renderPreferences("pfPrefs", "people", person.id);
         else document.getElementById("pfPrefs").innerHTML = "";
     }
-    // self-serve link status (CR-006): also editing-only
+    // self-serve link status (CR-006): also editing-only. CR-024: identity
+    // plumbing is admin-only — a manager never reveals it (and never fires the
+    // admin-only keycloak-link GET); the block also carries data-admin-only.
     const linkWrap = document.getElementById("pfLinkWrap");
-    if (linkWrap) {
+    if (linkWrap && isAdmin) {
         linkWrap.hidden = !person;
         if (person) renderPersonLink(person.id);
     }
@@ -2995,6 +3001,9 @@ function wireApplications() {
 
 // the admin panel is split across pages that share this script; each page
 // carries only its own sections, and the boot wires whatever is present
+// CR-024: adminOnly entries move under the Admin ▾ sub-menu and are the pages a
+// manager may not open (the boot bounces a manager who deep-links one). System
+// stays last, the CR-022 settings-corner ordering, now inside the sub-menu.
 const MENU = [
     {href: "index.html", label: "Renewals"},
     {href: "people.html", label: "People"},
@@ -3004,10 +3013,10 @@ const MENU = [
     {href: "email.html", label: "Email"},
     {href: "committee.html", label: "Committee"},
     {href: "reports.html", label: "Reports"},
-    {href: "import.html", label: "Import members"},
-    {href: "users.html", label: "Users"},
-    {href: "mail-settings.html", label: "Mail settings"},
-    {href: "system.html", label: "System"},
+    {href: "import.html", label: "Import members", adminOnly: true},
+    {href: "users.html", label: "Users", adminOnly: true},
+    {href: "mail-settings.html", label: "Mail settings", adminOnly: true},
+    {href: "system.html", label: "System", adminOnly: true},
 ];
 
 // CR-021: the ambient sandbox banner — every admin page shows it in the shared
@@ -3025,11 +3034,14 @@ function renderSandboxBanner(redirectTo) {
     el.textContent = "⚠ SANDBOX — all outgoing mail is redirected to " + redirectTo;
 }
 
-// one admin-gated GET per page load; failures stay silent — the banner is
-// advisory, and every page already surfaces real API errors through its own calls
+// one gated GET per page load; failures stay silent — the banner is advisory,
+// and every page already surfaces real API errors through its own calls.
+// CR-024: reads the manager-visible /sandbox endpoint (not the admin-only full
+// settings GET) so a manager gets the banner too — without it they would send
+// segment mail to real addresses with no warning, defeating the banner's point.
 async function refreshSandboxBanner() {
     try {
-        const response = await Auth.api("/admin/mail-settings");
+        const response = await Auth.api("/admin/mail-settings/sandbox");
         if (!response || !response.ok) return;
         renderSandboxBanner((await response.json()).redirectTo);
     } catch (e) { /* advisory only */ }
@@ -3041,12 +3053,47 @@ function renderMenu() {
     const here = location.pathname.split("/").pop() || "index.html"; // "" at /admin/ → index
     nav.innerHTML = "";
     for (const item of MENU) {
+        if (item.adminOnly) continue; // handled by the Admin ▾ group below
         const a = document.createElement("a");
         a.href = item.href;
         a.textContent = item.label;
         if (item.href === here) a.className = "active";
         nav.appendChild(a);
     }
+    // CR-024: the admin-only pages live in a hand-rolled <details> dropdown,
+    // rendered for admins only — a manager never sees a link that would 403.
+    // <details> (not a hover menu) so it works on touch without hover hacks.
+    if (!isAdmin) return;
+    const adminItems = MENU.filter(item => item.adminOnly);
+    const details = document.createElement("details");
+    details.className = "admin-menu";
+    const summary = document.createElement("summary");
+    summary.textContent = "Admin ▾";
+    if (adminItems.some(item => item.href === here)) summary.className = "active";
+    details.appendChild(summary);
+    const panel = document.createElement("div");
+    panel.className = "admin-menu-panel";
+    for (const item of adminItems) {
+        const a = document.createElement("a");
+        a.href = item.href;
+        a.textContent = item.label;
+        if (item.href === here) a.className = "active";
+        panel.appendChild(a);
+    }
+    details.appendChild(panel);
+    nav.appendChild(details);
+    // clicking an item or anywhere off the open menu collapses it
+    document.addEventListener("click", (e) => {
+        if (details.open && !details.contains(e.target)) details.open = false;
+    });
+}
+
+// CR-024: on a manager-visible page carrying an admin-only card/block (marked
+// data-admin-only in markup), hide it for a manager. The reconciliation card's
+// wiring is already gated on its own section (CR-022), so hiding is enough.
+function applyAdminOnlyVisibility() {
+    if (isAdmin) return;
+    for (const el of document.querySelectorAll("[data-admin-only]")) el.hidden = true;
 }
 
 async function wireUsers() {
@@ -3064,7 +3111,18 @@ async function wireUsers() {
         await Auth.completeLoginIfReturning();
         if (!Auth.hasToken()) return await Auth.login(); // await: reach the catch below
         if (await showIdentity()) {
+            // CR-024: a manager who deep-links (or holds a stale bookmark to) an
+            // admin-only page is bounced to the panel landing — a panel user
+            // belongs in the panel, not ../web/. The client bounce is UX; the
+            // page's write APIs already 403 for a manager regardless.
+            const here = location.pathname.split("/").pop() || "index.html";
+            const entry = MENU.find(item => item.href === here);
+            if (!isAdmin && entry && entry.adminOnly) {
+                location.replace("index.html");
+                return;
+            }
             renderMenu();
+            applyAdminOnlyVisibility();
             refreshSandboxBanner(); // not awaited — ambient, must not delay the page
             if (document.getElementById("usersSection")) await wireUsers();
             if (document.getElementById("importSection")) { wireImport(); await loadPeriods(); }
@@ -3090,13 +3148,15 @@ async function wireUsers() {
                 wireReports();
                 document.getElementById("reportsSection").hidden = false;
             }
-            if (document.getElementById("reconciliationSection")) {
+            if (isAdmin && document.getElementById("reconciliationSection")) {
+                // CR-024: treasurer/system territory — a manager never wires it,
+                // so it stays hidden (data-admin-only also covers the markup)
                 wireReconciliation(); // CR-022: also on reports.html; periodsCache already loaded above
             }
             if (document.getElementById("applicationsSection")) {
                 wireApplications();
                 await loadPeriods(); // fills periodsCache for the approve dialog
-                await loadAppSettings();
+                if (isAdmin) await loadAppSettings(); // CR-024: settings are admin-only (card hidden for managers)
                 await renderApplications();
             }
             if (document.getElementById("mailSettingsSection")) {

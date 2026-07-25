@@ -57,7 +57,8 @@ server/deploy/push-war.sh <user@host>
 ```
 
 Test identities: `testuser` (member), `testviewer` (no roles),
-`testadmin` (admin) — password = username. `test-cli-noaud` mints
+`testadmin` (admin), `testmanager` (manager, CR-024) — password =
+username. `test-cli-noaud` mints
 tokens without the server audience for negative tests.
 
 There is no test suite. The verification convention: scripted curl
@@ -530,6 +531,40 @@ period at a time), while creating a period still reselects it locally
 without hijacking anyone, and the Renewals `?period=` deep link overrides
 locally only (`renderPeriodSummary` labels it "Viewing period" vs
 "Working period").
+
+CR-024 opened a DEFINED SUBSET of the admin API to the `manager` role
+(day-to-day membership operations; the register, renewals, new members,
+applications, segment email, committee, reports) while `admin` keeps
+system config + identity administration (import, users/claims/manager
+grants, self-serve, mail settings, period admin, reconciliation). The
+server split is annotation-only and **fail-closed**: a straddling
+resource KEEPS its class `@RolesAllowed("admin")` and adds method-level
+`@RolesAllowed({"admin", "manager"})` on the opened methods only (method
+overrides class under `RolesAllowedDynamicFeature`), so an unannotated
+new method defaults to admin-only instead of inheriting a widened class
+annotation — the safety net the matrix guards with a **still-closed
+sweep** (a manager 403s on EVERY admin-only endpoint, the manager grant
+itself included: a manager cannot mint managers). Six resources opened
+wholesale (class annotation `{"admin", "manager"}`); five split at the
+method level. One new endpoint, `GET /api/admin/mail-settings/sandbox`
+(`{"admin", "manager"}`, returns ONLY `{redirectTo}` — no relay/username/
+passwordSet leak), exists so the CR-021 ambient sandbox banner works for
+a manager (else they'd send segment mail to real addresses with no
+warning); `refreshSandboxBanner` reads it for every role. Static pages
+can't be role-gated server-side (the standing bite), so `admin.js` gates
+client-side: `showIdentity` accepts `admin` OR `manager` and records
+`isAdmin`; the four admin-only pages (Import members · Users · Mail
+settings · System) move under a hand-rolled **Admin ▾** `<details>`
+dropdown rendered for admins only (a manager never sees a link that
+403s); a manager deep-linking an admin-only page bounces to
+`index.html` (a panel user belongs in the panel); and the three
+manager-visible pages carrying an admin-only card mark it
+`[data-admin-only]` (Applications form-settings, Reports reconciliation,
+the person dialog's Keycloak-link block) which the boot hides — the
+reconciliation wiring and the applications-settings load are additionally
+gated on `isAdmin` so they never fire the admin-only GET. Dev realm gains
+`testmanager` (manager); no prod realm change (the role already exists,
+prod strips test users).
 
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):

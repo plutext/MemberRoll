@@ -63,6 +63,24 @@ public class AdminMailSettingsResource {
         return Response.ok(effectiveJson(Mail.resolve()).toString()).build();
     }
 
+    /**
+     * CR-024: sandbox visibility for managers. The CR-021 ambient banner reads
+     * mail settings and is silent on a 403 — a manager would then send segment
+     * email to real addresses with NO sandbox banner, defeating the banner's
+     * whole purpose. This is the ONE mail-settings read open to managers, and
+     * it returns ONLY {@code redirectTo} (no host/username/passwordSet leak).
+     * {@code redirectTo} is PAGE-only, so an absent row is honestly {@code null}.
+     */
+    @GET
+    @Path("sandbox")
+    @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})
+    public Response sandbox() {
+        JsonObjectBuilder b = Json.createObjectBuilder();
+        addNullable(b, "redirectTo", Mail.resolve().redirectTo());
+        return Response.ok(b.build().toString()).build();
+    }
+
     @PUT
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)

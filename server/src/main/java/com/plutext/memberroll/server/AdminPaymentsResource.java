@@ -74,6 +74,7 @@ public class AdminPaymentsResource {
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: managers record AND reverse payments (recorded_by names the actor)
     public Response create(String body, @Context SecurityContext security) {
         JsonObject request = Payloads.read(body);
         if (request == null) return badRequest("body must be a JSON object");
@@ -138,6 +139,7 @@ public class AdminPaymentsResource {
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: payment list is manager territory
     public Response list(@QueryParam("membershipId") Long membershipId,
                          @QueryParam("householdId") Long householdId,
                          @QueryParam("periodId") Long periodId,
@@ -163,6 +165,7 @@ public class AdminPaymentsResource {
     @GET
     @Path("{id}/receipt")
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: receipts are manager territory (CR-012 dialog)
     public Response receipt(@PathParam("id") long id) {
         return jdbi.withHandle(handle -> {
             PaymentStore.Payment p = PaymentStore.find(handle, id).orElse(null);
@@ -183,6 +186,7 @@ public class AdminPaymentsResource {
     @Path("{id}/receipt")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: receipts are manager territory (CR-012 dialog)
     public Response emailReceipt(@PathParam("id") long id, String body) {
         JsonObject request = body == null || body.isBlank()
                 ? JsonValue.EMPTY_JSON_OBJECT : Payloads.read(body);

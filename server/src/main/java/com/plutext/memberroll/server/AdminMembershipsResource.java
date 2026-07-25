@@ -47,7 +47,7 @@ import java.util.Set;
  * history, not money — CR-018's reverse-then-retype path) or on CEASED.
  */
 @Path("admin/memberships")
-@RolesAllowed("admin")
+@RolesAllowed({"admin", "manager"})   // CR-024: manager territory (day-to-day membership ops)
 public class AdminMembershipsResource {
 
     private static final Set<String> CESSATION_REASONS = Set.of("RESIGNED", "DECEASED", "OTHER");

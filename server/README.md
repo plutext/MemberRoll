@@ -205,6 +205,7 @@ permanent, put it in the JSON (or ask Claude to).
 | `testuser` | `testuser` | member |
 | `testviewer` | `testviewer` | *(none)* |
 | `testadmin` | `testadmin` | admin |
+| `testmanager` | `testmanager` | manager |
 
 `test-cli` is a dev-only client with the password grant enabled so
 scripts can mint tokens:

@@ -70,6 +70,7 @@ public class AdminApplicationsResource {
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: application processing is manager territory (settings stay admin-only)
     public Response list(@QueryParam("status") String status) {
         if (status != null && !STATUSES.contains(status)) {
             return badRequest("status must be one of " + STATUSES);
@@ -88,6 +89,7 @@ public class AdminApplicationsResource {
     @GET
     @Path("{id}")
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: application processing is manager territory
     public Response get(@PathParam("id") long id) {
         return applications.get(id)
                 .map(a -> Response.ok(jdbi.withHandle(handle ->
@@ -101,6 +103,7 @@ public class AdminApplicationsResource {
     @Path("{id}/approve")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: application processing is manager territory
     public Response approve(@PathParam("id") long id, String body, @Context SecurityContext security) {
         if (!Mail.enabled()) return mailDown();
         JsonObject request = Payloads.read(body);
@@ -275,6 +278,7 @@ public class AdminApplicationsResource {
     @Path("{id}/reject")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: application processing is manager territory
     public Response reject(@PathParam("id") long id, String body, @Context SecurityContext security) {
         if (!Mail.enabled()) return mailDown();
         JsonObject request = Payloads.read(body);
@@ -343,6 +347,7 @@ public class AdminApplicationsResource {
 
     @DELETE
     @Path("{id}")
+    @RolesAllowed({"admin", "manager"})   // CR-024: junk removal (RECEIVED/CONFIRMED only) is manager territory
     public Response delete(@PathParam("id") long id) {
         try {
             jdbi.useTransaction(handle -> {

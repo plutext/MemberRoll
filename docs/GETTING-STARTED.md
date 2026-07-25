@@ -84,7 +84,8 @@ Browse:
 
 Test identities (dev realm only — `deploy.sh` strips them from
 production): `testuser`/`testuser` (member), `testviewer`/`testviewer`
-(no roles), `testadmin`/`testadmin` (admin). `test-cli` enables the
+(no roles), `testadmin`/`testadmin` (admin), `testmanager`/`testmanager`
+(manager — CR-024's day-to-day operations role). `test-cli` enables the
 password grant for scripts; `test-cli-noaud` mints tokens *without* the
 server audience so you can prove the server rejects them.
 

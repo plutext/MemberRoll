@@ -45,7 +45,7 @@ import java.util.List;
  * parameter is a 400 with a JSON error, never an empty CSV.
  */
 @Path("admin/export")
-@RolesAllowed("admin")
+@RolesAllowed({"admin", "manager"})   // CR-024: manager territory (reports); reconciliation exports live on AdminPaymentsResource (admin-only)
 public class AdminReportsResource {
 
     private final Jdbi jdbi = Db.jdbi();

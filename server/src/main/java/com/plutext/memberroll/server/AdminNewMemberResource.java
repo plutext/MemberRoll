@@ -42,7 +42,7 @@ import java.util.Set;
  * would let JDBI commit a half-created member instead of rolling it back.
  */
 @Path("admin/new-member")
-@RolesAllowed("admin")
+@RolesAllowed({"admin", "manager"})   // CR-024: manager territory (new members)
 public class AdminNewMemberResource {
 
     private static final Set<String> RELATIONSHIP_TYPES =

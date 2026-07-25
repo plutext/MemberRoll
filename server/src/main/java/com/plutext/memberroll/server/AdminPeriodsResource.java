@@ -69,6 +69,7 @@ public class AdminPeriodsResource {
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: read-only; carries CR-023 selectedPeriodId so a manager's pages learn the working period
     public Response list() {
         List<PeriodStore.Period> all = periods.list();
         JsonArrayBuilder out = Json.createArrayBuilder();
@@ -224,6 +225,7 @@ public class AdminPeriodsResource {
     @GET
     @Path("{id}/memberships")
     @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"admin", "manager"})   // CR-024: the Renewals status view — manager territory
     public Response statusView(@PathParam("id") long id,
                                @QueryParam("status") String status,
                                @QueryParam("type") String type,
@@ -247,6 +249,7 @@ public class AdminPeriodsResource {
     @GET
     @Path("{id}/export/agm-register.csv")
     @Produces("text/csv")
+    @RolesAllowed({"admin", "manager"})   // CR-024: period exports are manager territory
     public Response exportAgm(@PathParam("id") long id) {
         if (periods.get(id).isEmpty()) return notFound();
         StringWriter sw = new StringWriter();
@@ -264,6 +267,7 @@ public class AdminPeriodsResource {
     @GET
     @Path("{id}/export/mailing-labels.csv")
     @Produces("text/csv")
+    @RolesAllowed({"admin", "manager"})   // CR-024: period exports are manager territory
     public Response exportMailingLabels(@PathParam("id") long id) {
         if (periods.get(id).isEmpty()) return notFound();
         StringWriter sw = new StringWriter();
@@ -281,6 +285,7 @@ public class AdminPeriodsResource {
     @GET
     @Path("{id}/export/financial.csv")
     @Produces("text/csv")
+    @RolesAllowed({"admin", "manager"})   // CR-024: period exports are manager territory
     public Response exportFinancial(@PathParam("id") long id) {
         if (periods.get(id).isEmpty()) return notFound();
         StringWriter sw = new StringWriter();

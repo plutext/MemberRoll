@@ -1,6 +1,6 @@
 # CR 024: Manager role access + Admin sub-menu
 
-Status: PROPOSED (2026-07-25)
+Status: IMPLEMENTED + VERIFIED (2026-07-25); auth-diff review passed same day
 
 ## Problem
 
@@ -183,4 +183,98 @@ Browser walkthrough (Playwright, both identities):
 
 ## Results
 
-(to be recorded at implementation)
+Implemented + verified 2026-07-25 (Opus 4.8). The agreed pre-merge review
+pass over the auth diff (Fable 5, same day) confirmed: class-level
+`@RolesAllowed("admin")` survives on all five split resources, the diff's
+only annotation removals are the six class-level widenings, the opened
+method set matches this doc exactly, the sandbox endpoint's body carries
+only `redirectTo`, and no other resource lost or gained an auth annotation.
+
+### What was built
+
+- **Server, wholesale-open** (class `@RolesAllowed("admin")` →
+  `{"admin", "manager"}`): `AdminMembershipsResource`, `AdminHouseholdsResource`,
+  `AdminNewMemberResource`, `AdminEmailResource`, `AdminCommitteeResource`,
+  `AdminReportsResource`.
+- **Server, method-level splits** (class stays `admin`, opened methods get
+  `@RolesAllowed({"admin", "manager"})` — fail-closed for any unannotated new
+  method): `AdminPeriodsResource` (list + statusView + the three period
+  exports), `AdminPaymentsResource` (record, list, receipt GET/POST),
+  `AdminPeopleResource` (list/create/get/put + preferences; keycloak-link
+  stays admin), `AdminApplicationsResource` (list/get/approve/reject/delete;
+  settings stay admin).
+- **New endpoint** `GET /api/admin/mail-settings/sandbox`
+  (`{"admin", "manager"}`) returning only `{redirectTo}` — no relay
+  host/username/passwordSet leak. `refreshSandboxBanner` switched to it for
+  every role.
+- **Client** (`admin.js`): `isAdmin` module var; `showIdentity` accepts
+  `manager`; `MENU` gained `adminOnly` flags; boot bounces a manager who
+  deep-links an admin-only page to `index.html`; `renderMenu` renders the 8
+  flat items and, for admins only, a hand-rolled **Admin ▾** `<details>`
+  dropdown (`Import members · Users · Mail settings · System`); a new
+  `applyAdminOnlyVisibility` sets `hidden` on `[data-admin-only]` for managers;
+  the reconciliation wiring and the applications-settings load are gated on
+  `isAdmin`; the person dialog's Keycloak-link toggle is gated on `isAdmin`.
+- **CSS** (`admin.css`): the Admin ▾ dropdown (absolutely-positioned panel,
+  touch-safe, no library).
+- **Markup**: `data-admin-only` on the Applications form-settings card, the
+  Reports reconciliation section, and the person dialog's `#pfLinkWrap`.
+- **Fixtures/docs**: `testmanager` (realmRoles `["manager"]`, password =
+  username) added to the dev realm JSON (no prod realm change — `manager`
+  already exists, prod strips test users); CLAUDE.md / GETTING-STARTED /
+  server README test-identity lines updated.
+
+### curl matrix (`server/verify-matrix.sh`, +79 CR24-* rows + 2 hygiene rows 30e/30f)
+
+Against the dev stack (fresh realm import so `testmanager` exists):
+
+| Run | Result | Notes |
+|---|---|---|
+| 1 | **PASS=940 FAIL=0** | fully green |
+| 2 (immediate re-run) | PASS=939 FAIL=1 | the 1 = the pre-existing **row 27b Keycloak user-listing flake** (recorded in CR-023's results), unrelated to CR-024 |
+
+**79/79 CR24-* rows green on both runs.** They split three ways, all
+first-class:
+
+- **(a) Opened** — a manager gets the same 2xx an admin does across the
+  register, new-member, record+reverse a payment, receipt GET, admin card
+  info, periods GET (carrying `selectedPeriodId`), statusView, the three
+  period exports, committee list/contacts, two report CSVs, email
+  template save + preview + test-send-matches-admin; approve/reject proven
+  reachable by `manager == admin` on a bogus id (mail-state-agnostic).
+- **(b) Still-closed sweep** — the safety net: manager **403 on every
+  admin-only endpoint** (CR24-40…68), including the manager grant itself
+  (a manager cannot mint managers), import preview/apply, self-serve
+  preview/provision, mail-settings GET/PUT/DELETE/test, period
+  create/update/rollover×2/lapse-unpaid/`PUT selected`, reconciliation
+  csv+JSON+xero-journal+mapping GET/PUT+reconcile, people keycloak-link
+  GET/DELETE, application settings GET/PUT, and the class-level fail-closed
+  spot check on `/admin/ping`.
+- **(c) Sandbox endpoint** — manager 200 reflecting the saved blob
+  (set → value, cleared/absent → null), body carries ONLY `redirectTo`
+  (no-leak asserted twice), guest/member 403, noaud 401, admin 200 same body.
+
+**Re-run hazard found + fixed (newly exposed by CR-024):** the matrix's
+row 29 grants `testviewer` the `manager` role and never revoked it. Harmless
+before this CR (manager had no API surface), but now `/admin/people` is
+manager-accessible, so a re-run's role-less `$VIEWER` negative tests (rows
+36/37) saw 200. Added rows **30e/30f** to revoke the grant after the
+survival assertion, restoring re-run hygiene; both runs above are with the
+fix in place.
+
+### Browser walkthrough (`tmp/cr024-fixtures/cr024-walkthrough.js`, Playwright)
+
+**PASS=26 FAIL=0**, zero JS errors on every page.
+
+- **testmanager**: menu is exactly the 8 flat items with **no Admin ▾**;
+  Renewals shows the working-period line and rows; the membership dialog +
+  Receipt dialog open (receipt number shown); the Applications form-settings
+  card, the Reports reconciliation card and the person dialog's Keycloak-link
+  block are all hidden; `system.html` and `users.html` both bounce to
+  `index.html`; with a sandbox redirect saved (admin, via API) the manager's
+  page shows the SANDBOX banner via the new endpoint.
+- **testadmin**: the Admin ▾ item appears, opens to the four items, and
+  navigates to System; the sandbox banner still renders via the new endpoint.
+
+Screenshots: `cr24-mgr-renewals.png`, `cr24-mgr-sandbox.png`,
+`cr24-admin-menu.png` in the session scratchpad.

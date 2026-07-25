@@ -262,6 +262,24 @@
       ]
     },
     {
+      "username": "testmanager",
+      "enabled": true,
+      "firstName": "Test",
+      "lastName": "Manager",
+      "email": "testmanager@example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "testmanager",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "manager"
+      ]
+    },
+    {
       "username": "service-account-server-service",
       "enabled": true,
       "serviceAccountClientId": "server-service",
