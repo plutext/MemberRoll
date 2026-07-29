@@ -62,11 +62,14 @@ final class PersonStore {
 
     Page search(String q, int limit, int offset) {
         boolean filtered = q != null && !q.isBlank();
-        // matches name fields, or any of the person's email addresses
-        // (stored lowercase, so the email side compares lowercased)
+        // matches name fields, full "given family" names (CR-025 — what an
+        // admin naturally types into a picker), or any of the person's email
+        // addresses (stored lowercase, so the email side compares lowercased)
         String where = filtered
                 ? " WHERE given_name ILIKE :pat OR family_name ILIKE :pat"
                   + " OR preferred_name ILIKE :pat"
+                  + " OR given_name || ' ' || family_name ILIKE :pat"
+                  + " OR preferred_name || ' ' || family_name ILIKE :pat"
                   + " OR EXISTS (SELECT 1 FROM email_address e WHERE e.person_id = person.person_id"
                   + "            AND e.email LIKE :emailPat)"
                 : "";

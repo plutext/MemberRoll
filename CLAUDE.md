@@ -566,6 +566,30 @@ gated on `isAdmin` so they never fire the admin-only GET. Dev realm gains
 `testmanager` (manager); no prod realm change (the role already exists,
 prod strips test users).
 
+CR-025 fixed the person pickers (the "can't re-add someone who left a
+household" report — rejoin itself had worked since V1: a fresh
+`household_person` row with a new joined date, only a *current* member
+refused). Three compounding usability defects: the picker selected on
+`click` while `blur`'s 150 ms `setTimeout(clear)` emptied the list
+mid-press, so any press-to-release slower than the timer lost the pick
+silently — selection now happens on **`mousedown` with
+`preventDefault()`** (input never blurs; no timing window; the blur
+delay remains only for click-away close); dependent buttons gave no hint
+a pick was missing — `wirePersonPicker` gains an optional gated-button
+id (stored as `data-gates` on the input, re-synced by `syncPickerGate`
+from wire/edit/`resetPicker`), disabling `hdAdd`/`householdSave`/
+`apptSave` until a person is captured (the AGM slate's pickers stay
+ungated — its offices are optional by design); and `PersonStore.search`
+matched each name field only as a whole pattern, so typing a full
+"Given Family" name found nobody — two concat clauses
+(`given_name || ' ' || family_name`, `preferred_name || ' ' ||
+family_name`) fix every picker plus the People page search. A ≥2-char
+query matching nobody now shows a muted non-clickable "No matches" row
+instead of a silently hidden list. When testing pick interactions with
+Playwright, drive the slow case explicitly (`mouse.down()`, wait 400 ms,
+`mouse.up()`) — synthetic clicks are near-instant and sail through races
+a human trackpad click loses.
+
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
 `MembershipStore.insertMembershipPerson` sets

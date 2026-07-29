@@ -2443,6 +2443,22 @@ check "CR24-75c no host/password leak"    "true" "$(body | jsq "str('host' not i
 code -X DELETE $MS -H "Authorization: Bearer $ADMIN" >/dev/null
 check "CR24-76 cleared → manager null"    "None" "$(MGET $SB >/dev/null; body | jsq "j['redirectTo']")"
 
+# --- CR-025: person search matches full "given family" names ---------------------
+# The pickers' natural input is a full name; before this CR each name field was
+# matched only as a whole pattern, so "Given Family" returned nothing. Fixture
+# person: run-unique family name; preferred name set to prove that variant.
+FN25="Pickr$$"
+JPOST $API/admin/people "{\"givenName\":\"Quentin\",\"familyName\":\"$FN25\",\"preferredName\":\"Quin\"}" >/dev/null
+psearch() { code "$API/admin/people?q=$1" -H "Authorization: Bearer $ADMIN"; }
+check "CR25-01 full name matches"        "1" "$(psearch "Quentin%20$FN25" >/dev/null; body | jsq "j['total']")"
+check "CR25-02 substring across space"   "1" "$(psearch "uentin%20$FN25" >/dev/null; body | jsq "j['total']")"
+check "CR25-03 preferred+family matches" "1" "$(psearch "Quin%20$FN25" >/dev/null; body | jsq "j['total']")"
+check "CR25-04 family alone still works" "1" "$(psearch "$FN25" >/dev/null; body | jsq "j['total']")"
+check "CR25-05 wrong full name is empty" "0" "$(psearch "Zebedee%20$FN25" >/dev/null; body | jsq "j['total']")"
+# the % the pattern is wrapped in must stay the ONLY wildcard (escapeLike guard)
+check "CR25-06 literal % finds nothing"  "0" "$(psearch "Quentin%25$FN25" >/dev/null; body | jsq "j['total']")"
+check "CR25-07 manager search 200"       "200" "$(code "$API/admin/people?q=Quentin%20$FN25" -H "Authorization: Bearer $MANAGER")"
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"

@@ -390,13 +390,18 @@ let openHouseholdId = null;
 // email, hit GET /api/admin/people?q=, pick a match. The chosen id rides on the
 // input's dataset; editing the text clears it so a stale pick can't be
 // submitted. Each picker needs an <input id> and a sibling <ul id="{id}Results">.
-function wirePersonPicker(inputId) {
+// gateButtonId (CR-025, optional): a button kept disabled until a pick is
+// captured — recorded on the input so resetPicker re-syncs it too.
+function wirePersonPicker(inputId, gateButtonId) {
     const input = document.getElementById(inputId);
     const list = document.getElementById(inputId + "Results");
+    if (gateButtonId) input.dataset.gates = gateButtonId;
+    syncPickerGate(input);
     let timer = null;
     const clear = () => { list.innerHTML = ""; list.hidden = true; };
     input.oninput = () => {
         delete input.dataset.personId; // text changed → any prior pick is stale
+        syncPickerGate(input);
         const q = input.value.trim();
         clearTimeout(timer);
         if (q.length < 2) { clear(); return; }
@@ -410,18 +415,34 @@ function wirePersonPicker(inputId) {
                 const email = p.emails.find(e => e.isPrimary) || p.emails[0];
                 const li = document.createElement("li");
                 li.textContent = `${name} (#${p.id})` + (email ? ` · ${email.email}` : "");
-                li.onclick = () => {
+                // mousedown, not click (CR-025): preventDefault keeps the input
+                // focused, so the pick can never race blur's list-close timer
+                // (a press-to-release slower than the timer used to lose it)
+                li.onmousedown = (event) => {
+                    event.preventDefault();
                     input.value = name;
                     input.dataset.personId = p.id;
                     clear();
+                    syncPickerGate(input);
                 };
                 list.appendChild(li);
             }
-            list.hidden = people.length === 0;
+            if (people.length === 0) {
+                const li = document.createElement("li");
+                li.className = "picker-empty";
+                li.textContent = "No matches — try part of one name, or an email";
+                list.appendChild(li);
+            }
+            list.hidden = false;
         }, 200);
     };
-    // a click on a result fires before blur closes the list; the delay lets it
+    // close the list when clicking elsewhere (a pick keeps focus, see above)
     input.onblur = () => setTimeout(clear, 150);
+}
+// disable a picker's gated button unless a person is captured (CR-025)
+function syncPickerGate(input) {
+    if (!input.dataset.gates) return;
+    document.getElementById(input.dataset.gates).disabled = !input.dataset.personId;
 }
 function pickedPersonId(inputId) {
     const v = document.getElementById(inputId).dataset.personId;
@@ -431,6 +452,7 @@ function resetPicker(inputId) {
     const input = document.getElementById(inputId);
     input.value = "";
     delete input.dataset.personId;
+    syncPickerGate(input);
     const list = document.getElementById(inputId + "Results");
     list.innerHTML = "";
     list.hidden = true;
@@ -1634,8 +1656,8 @@ function wireHouseholds() {
     // CR-022: hmCreate lives in the household detail dialog (this page) — it was
     // historically wired in wireRenewals, harmless while both shared index.html.
     on("hmCreate", createHouseholdMembership);
-    wirePersonPicker("hfContact");   // household primary-contact search
-    wirePersonPicker("hdPersonId");  // household add-member search
+    wirePersonPicker("hfContact", "householdSave");  // household primary-contact search
+    wirePersonPicker("hdPersonId", "hdAdd");         // household add-member search
     document.getElementById("householdsSection").hidden = false;
 }
 
@@ -2516,7 +2538,7 @@ function wireCommittee() {
     document.getElementById("apptOpen").onclick = openApptForm;
     document.getElementById("apptCancel").onclick = () => closeDialog("apptForm");
     document.getElementById("apptSave").onclick = saveAppointment;
-    wirePersonPicker("apptPerson");
+    wirePersonPicker("apptPerson", "apptSave");
     document.getElementById("historyToggle").onclick = toggleHistory;
     document.getElementById("committeeSection").hidden = false;
 }

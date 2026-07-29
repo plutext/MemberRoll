@@ -86,7 +86,9 @@ button.badge:disabled { opacity: .5; cursor: not-allowed; }
     border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius);
     max-height: 12rem; overflow-y: auto; }
 .picker-results li { padding: .35rem .6rem; cursor: pointer; }
-.picker-results li:hover { background: var(--pico-secondary-background); color: var(--pico-secondary-inverse); }
+.picker-results li:not(.picker-empty):hover { background: var(--pico-secondary-background); color: var(--pico-secondary-inverse); }
+/* the CR-025 "no matches" hint row — informational, never a pick */
+.picker-results li.picker-empty { cursor: default; color: var(--pico-muted-color); font-style: italic; }
 
 /* the new-member page's advisory duplicate-match list (CR-010) — informational
    only, unlike .picker-results it is never clickable */
