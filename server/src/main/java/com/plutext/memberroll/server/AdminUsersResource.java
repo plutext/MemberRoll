@@ -98,6 +98,24 @@ public class AdminUsersResource {
         }
     }
 
+    /**
+     * CR-027: total matching users, for the paged list's "of N" label.
+     * Keycloak's /users/count excludes client service accounts exactly as
+     * /users does, so this already matches the rows the paged list shows.
+     */
+    @GET
+    @Path("count")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response count(@QueryParam("search") String search) {
+        KeycloakAdmin keycloak = KeycloakAdmin.instance();
+        try {
+            return Response.ok(Json.createObjectBuilder()
+                    .add("count", keycloak.countUsers(search)).build().toString()).build();
+        } catch (IOException e) {
+            return keycloakError(e);
+        }
+    }
+
     /** Correct a user's claim (and optionally verify it in the same call). */
     @PUT
     @Path("{id}/claim")

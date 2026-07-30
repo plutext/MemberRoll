@@ -18,6 +18,7 @@ package com.plutext.memberroll.server;
 
 import jakarta.json.Json;
 import jakarta.json.JsonArray;
+import jakarta.json.JsonNumber;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
 import jakarta.json.JsonValue;
@@ -209,6 +210,17 @@ final class KeycloakAdmin {
         String query = "?briefRepresentation=false&first=" + first + "&max=" + max
                 + (search == null || search.isBlank() ? "" : "&search=" + encode(search));
         return request("GET", "/users" + query, null).asJsonArray();
+    }
+
+    /**
+     * Total users matching search (CR-027 paging). Keycloak's /users/count
+     * returns a bare integer and, like /users, already excludes client
+     * service-account users — so it matches the universe the paged list draws
+     * from, no correction needed.
+     */
+    int countUsers(String search) throws IOException {
+        String query = search == null || search.isBlank() ? "" : "?search=" + encode(search);
+        return ((JsonNumber) request("GET", "/users/count" + query, null)).intValue();
     }
 
     /** Exact-email lookup (CR-006 provisioning); empty array when nobody carries it. */

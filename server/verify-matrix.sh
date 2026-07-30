@@ -89,8 +89,30 @@ check "25c unverified after claim"     "false" "$(curl -s $API/whoami -H "Author
 # --- admin users section -------------------------------------------------------
 check "26 users list user 403"         "403" "$(code "$API/admin/users" -H "Authorization: Bearer $USER")"
 check "27 users list admin 200"        "200" "$(code "$API/admin/users" -H "Authorization: Bearer $ADMIN")"
-check "27b list has testuser"          "true" "$(body | jsq "str(any(u['username']=='testuser' for u in j)).lower()")"
+# search, not the first page: on an accumulated realm testuser sorts past the
+# default 50-row window — the long-miscategorised "27b flake" was really this
+# (CR-027 diagnosed it while adding paging to this very endpoint)
+check "27b list has testuser"          "true" "$(curl -s "$API/admin/users?search=testuser" -H "Authorization: Bearer $ADMIN" | jsq "str(any(u['username']=='testuser' for u in j)).lower()")"
 check "27c no service account"         "false" "$(body | jsq "str(any(u['username'].startswith('service-account') for u in j)).lower()")"
+# CR-027: /admin/users/count backs the paged list's "of N" label. Admin-only.
+# Keycloak's count (like /users) already excludes client service accounts, so it
+# matches the universe the paged list draws from — no correction needed.
+UCOUNT=$API/admin/users/count
+ULIST=$API/admin/users
+LISTLEN=$(curl -s "$ULIST?max=200" -H "Authorization: Bearer $ADMIN" | jsq "len(j)")
+check "CR27-01 count guest 403"        "403" "$(code $UCOUNT)"
+check "CR27-02 count member 403"       "403" "$(code $UCOUNT -H "Authorization: Bearer $USER")"
+check "CR27-03 count manager 403"      "403" "$(code $UCOUNT -H "Authorization: Bearer $MANAGER")"
+check "CR27-04 count noaud 401"        "401" "$(code $UCOUNT -H "Authorization: Bearer $NOAUD")"
+check "CR27-05 count admin 200"        "200" "$(code $UCOUNT -H "Authorization: Bearer $ADMIN")"
+check "CR27-05b count is a non-neg int" "true" "$(body | jsq "str(isinstance(j['count'], int) and j['count'] >= 0).lower()")"
+# no service account leaks into either list or count (Keycloak excludes them)
+check "CR27-06 no svc acct in list"    "false" "$(curl -s "$ULIST?max=200" -H "Authorization: Bearer $ADMIN" | jsq "str(any(u['username'].startswith('service-account') for u in j)).lower()")"
+# blank count == rows shown when the realm fits under the 200 list cap (exact on
+# a fresh realm; relaxed once accumulated users exceed the cap the list applies)
+check "CR27-06b count matches list universe" "true" "$(curl -s $UCOUNT -H "Authorization: Bearer $ADMIN" | jsq "str(j['count'] == $LISTLEN or $LISTLEN == 200).lower()")"
+check "CR27-07 search matches at least its user" "true" "$(curl -s "$UCOUNT?search=testuser" -H "Authorization: Bearer $ADMIN" | jsq "str(j['count'] >= 1).lower()")"
+check "CR27-08 nonsense search 0"      "0" "$(curl -s "$UCOUNT?search=zzznobody$$" -H "Authorization: Bearer $ADMIN" | jsq "j['count']")"
 check "28 verify viewer claim 200"     "200" "$(code -X PUT "$API/admin/users/$VIEWER_SUB/verified" -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{"verified":true}')"
 VIEWER3=$(tok testviewer test-cli)
 check "28b verified now true"          "true" "$(curl -s $API/whoami -H "Authorization: Bearer $VIEWER3" | jsq "str(j['verified']).lower()")"

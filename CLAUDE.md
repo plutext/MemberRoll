@@ -614,6 +614,28 @@ fresh at call time into ONE query — so live search composes with the
 filters for free (and changing a filter re-applies the current search
 text). Client-only, no API/matrix delta (matrix byte-identical).
 
+CR-027 added Prev/Next offset pagination to the three register tables
+(People/Households/Users), which had silently capped at 50 while showing
+the true total (or, on Users, no total at all). Shared `renderPager` +
+`wirePager` + per-table offset vars; a new search resets offset to 0,
+Prev/Next keep it, a paged-past-the-end table clamps back. People and
+households already returned `total` and took `limit`/`offset`; Users
+gained `GET /api/admin/users/count` (`KeycloakAdmin.countUsers`, admin-
+only) since Keycloak's list carries no total, fetched alongside the list
+via `Promise.all`. **Keycloak 26 excludes client service-account users
+from BOTH `/users` and `/users/count`** (verified live — a 209-user realm
+lists 209 with zero `service-account-*` and counts 209), so the count
+already matches the list's universe and needs no correction;
+`AdminUsersResource.list`'s `startsWith("service-account-")` skip is
+defensive code that never fires. This also diagnosed the long-standing
+"27b Keycloak flake" (recorded across CRs 013–026): it was never flaky —
+row 27b fetched the list at the default 50-row limit and asserted
+`testuser` present, but on an accumulated dev realm testuser sorts past
+the first 50; 27b now searches instead, and the whole matrix goes 957/0
+(first fully-green dev run in many CRs). Note the dev realm has
+accumulated ~209 Keycloak users from repeated CR-006 self-serve
+provisioning across the long-lived stack.
+
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
 `MembershipStore.insertMembershipPerson` sets

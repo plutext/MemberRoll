@@ -87,6 +87,10 @@ button.badge:disabled { opacity: .5; cursor: not-allowed; }
     max-height: 12rem; overflow-y: auto; }
 .picker-results li { padding: .35rem .6rem; cursor: pointer; }
 .picker-results li:not(.picker-empty):not(.picker-unpickable):hover { background: var(--pico-secondary-background); color: var(--pico-secondary-inverse); }
+/* the CR-027 table pager: Prev · "Showing X–Y of N" · Next */
+.pager { display: flex; align-items: center; gap: .75rem; margin: var(--pico-spacing) 0; }
+.pager button { width: auto; margin: 0; padding: .25rem .75rem; }
+
 /* the CR-025 "no matches" hint row — informational, never a pick */
 .picker-results li.picker-empty { cursor: default; color: var(--pico-muted-color); font-style: italic; }
 /* a result that must not be picked (already in the household) — visible, muted */

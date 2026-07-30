@@ -118,13 +118,24 @@ async function userAction(path, body) {
 
 async function renderUsers() {
     const search = document.getElementById("userSearch").value.trim();
-    const params = new URLSearchParams({max: "50"});
-    if (search) params.set("search", search);
+    const listParams = new URLSearchParams({max: String(PAGE_SIZE), first: String(usersOffset)});
+    if (search) listParams.set("search", search);
+    const countParams = new URLSearchParams();
+    if (search) countParams.set("search", search);
     const current = renderGuard("users");
-    const response = await Auth.api(`/admin/users?${params}`);
-    if (!response || !response.ok) return;
-    const users = await response.json();
+    // count rides alongside the list (Keycloak's list carries no total, CR-027)
+    const [listResp, countResp] = await Promise.all([
+        Auth.api(`/admin/users?${listParams}`),
+        Auth.api(`/admin/users/count?${countParams}`),
+    ]);
+    if (!listResp || !listResp.ok || !countResp || !countResp.ok) return;
+    const users = await listResp.json();
+    const total = (await countResp.json()).count;
     if (!current()) return; // a newer keystroke superseded this fetch
+    if (usersOffset > 0 && users.length === 0 && total > 0) {
+        usersOffset = Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE; // stepped past the end
+        return renderUsers();
+    }
     const body = document.querySelector("#users tbody");
     body.innerHTML = "";
     for (const u of users) {
@@ -191,6 +202,7 @@ async function renderUsers() {
 
         row.insertCell().textContent = u.roles.join(", ") || "—";
     }
+    renderPager("users", usersOffset, total);
     document.getElementById("usersSection").hidden = false;
 }
 
@@ -294,16 +306,48 @@ function renderGuard(key) {
     return () => renderTokens[key] === token;
 }
 
+// CR-027: offset paging for the register tables. Each table's offset lives in a
+// module var moved only by its Prev/Next handlers; a new search resets it to 0.
+const PAGE_SIZE = 50;
+let peopleOffset = 0, householdsOffset = 0, usersOffset = 0;
+
+// shared pager: "Showing X–Y of N" into #{prefix}Total, Prev/Next disabled at
+// the ends. All elements are optional so it no-ops where a page lacks them.
+function renderPager(prefix, offset, total) {
+    const label = document.getElementById(prefix + "Total");
+    if (label) {
+        label.textContent = total === 0 ? "No matches"
+            : `Showing ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`;
+    }
+    const prev = document.getElementById(prefix + "Prev");
+    const next = document.getElementById(prefix + "Next");
+    if (prev) prev.disabled = offset === 0;
+    if (next) next.disabled = offset + PAGE_SIZE >= total;
+}
+
+// wire a table's Prev/Next buttons: step the offset by a page and re-render
+// (no offset reset — that is the search's job). Missing buttons are a no-op.
+function wirePager(prefix, getOffset, setOffset, render) {
+    const prev = document.getElementById(prefix + "Prev");
+    const next = document.getElementById(prefix + "Next");
+    if (prev) prev.onclick = () => { setOffset(Math.max(0, getOffset() - PAGE_SIZE)); render(); };
+    if (next) next.onclick = () => { setOffset(getOffset() + PAGE_SIZE); render(); };
+}
+
 async function renderPeople() {
     if (!document.getElementById("people")) return; // People-page-only table (CR-022)
     const q = document.getElementById("personSearch").value.trim();
-    const params = new URLSearchParams({limit: "50"});
+    const params = new URLSearchParams({limit: String(PAGE_SIZE), offset: String(peopleOffset)});
     if (q) params.set("q", q);
     const current = renderGuard("people");
     const response = await registerCall(`/admin/people?${params}`);
     if (!response) return;
     const page = await response.json();
     if (!current()) return; // a newer keystroke superseded this fetch
+    if (peopleOffset > 0 && page.people.length === 0 && page.total > 0) {
+        peopleOffset = Math.floor((page.total - 1) / PAGE_SIZE) * PAGE_SIZE; // rows deleted under us
+        return renderPeople();
+    }
     const body = document.querySelector("#people tbody");
     body.innerHTML = "";
     for (const p of page.people) {
@@ -322,7 +366,7 @@ async function renderPeople() {
         edit.onclick = () => openPersonForm(p);
         row.insertCell().appendChild(edit);
     }
-    document.getElementById("peopleTotal").textContent = `${page.total} match(es)`;
+    renderPager("people", peopleOffset, page.total);
 }
 
 function openPersonForm(person) {
@@ -514,13 +558,17 @@ function personName(p) {
 async function renderHouseholds() {
     if (!document.getElementById("households")) return; // Households-page-only table (CR-022)
     const q = document.getElementById("householdSearch").value.trim();
-    const params = new URLSearchParams({limit: "50"});
+    const params = new URLSearchParams({limit: String(PAGE_SIZE), offset: String(householdsOffset)});
     if (q) params.set("q", q);
     const current = renderGuard("households");
     const response = await registerCall(`/admin/households?${params}`);
     if (!response) return;
     const page = await response.json();
     if (!current()) return; // a newer keystroke superseded this fetch
+    if (householdsOffset > 0 && page.households.length === 0 && page.total > 0) {
+        householdsOffset = Math.floor((page.total - 1) / PAGE_SIZE) * PAGE_SIZE; // rows deleted under us
+        return renderHouseholds();
+    }
     const body = document.querySelector("#households tbody");
     body.innerHTML = "";
     for (const h of page.households) {
@@ -535,7 +583,7 @@ async function renderHouseholds() {
         open.onclick = () => openHousehold(h.id);
         row.insertCell().appendChild(open);
     }
-    document.getElementById("householdsTotal").textContent = `${page.total} match(es)`;
+    renderPager("households", householdsOffset, page.total);
 }
 
 async function openHousehold(id) {
@@ -1684,7 +1732,10 @@ function wireImport() {
 // its own section id like every other page.
 function wirePeople() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
-    wireLiveSearch("personSearch", "personSearchGo", renderPeople); // CR-026
+    // a new search returns to page 1 (CR-027); Prev/Next keep their offset
+    const searchPeople = () => { peopleOffset = 0; return renderPeople(); };
+    wireLiveSearch("personSearch", "personSearchGo", searchPeople); // CR-026
+    wirePager("people", () => peopleOffset, v => peopleOffset = v, renderPeople); // CR-027
     on("personNew", () => openPersonForm(null));
     on("personSave", savePerson);
     on("personCancel", () => closeDialog("personForm"));
@@ -1693,7 +1744,9 @@ function wirePeople() {
 
 function wireHouseholds() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
-    wireLiveSearch("householdSearch", "householdSearchGo", renderHouseholds); // CR-026
+    const searchHouseholds = () => { householdsOffset = 0; return renderHouseholds(); }; // CR-027
+    wireLiveSearch("householdSearch", "householdSearchGo", searchHouseholds); // CR-026
+    wirePager("households", () => householdsOffset, v => householdsOffset = v, renderHouseholds); // CR-027
     on("householdNew", () => {
         document.getElementById("hfName").value = "";
         resetPicker("hfContact");
@@ -3170,7 +3223,9 @@ function applyAdminOnlyVisibility() {
 }
 
 async function wireUsers() {
-    wireLiveSearch("userSearch", "userSearchGo", renderUsers); // CR-026
+    const searchUsers = () => { usersOffset = 0; return renderUsers(); }; // CR-027
+    wireLiveSearch("userSearch", "userSearchGo", searchUsers); // CR-026
+    wirePager("users", () => usersOffset, v => usersOffset = v, renderUsers); // CR-027
     if (document.getElementById("ssPreview")) wireSelfServe();
     await renderUsers();
 }
