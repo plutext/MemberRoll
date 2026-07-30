@@ -120,9 +120,11 @@ async function renderUsers() {
     const search = document.getElementById("userSearch").value.trim();
     const params = new URLSearchParams({max: "50"});
     if (search) params.set("search", search);
+    const current = renderGuard("users");
     const response = await Auth.api(`/admin/users?${params}`);
     if (!response || !response.ok) return;
     const users = await response.json();
+    if (!current()) return; // a newer keystroke superseded this fetch
     const body = document.querySelector("#users tbody");
     body.innerHTML = "";
     for (const u of users) {
@@ -266,14 +268,42 @@ async function registerCall(path, options) {
     return response;
 }
 
+// CR-026: live table search. A debounced input re-runs the render on top of the
+// existing Go button + Enter (kept for muscle memory; Enter fires immediately,
+// cancelling a pending debounce). The render reads its own box, so nothing is
+// passed. Each box is page-specific, so a missing input is a no-op.
+function wireLiveSearch(inputId, buttonId, render) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    const button = buttonId && document.getElementById(buttonId);
+    if (button) button.onclick = render;
+    let timer = null;
+    input.oninput = () => { clearTimeout(timer); timer = setTimeout(render, 200); };
+    input.onkeydown = (e) => { if (e.key === "Enter") { clearTimeout(timer); render(); } };
+}
+
+// Stale-response guard for the live searches: a render bumps its key's token
+// before fetching and, after the awaits, checks it's still the latest — so a
+// slow "sm" response can't clobber the newer "smith" table (CR-026). Renders are
+// called from several places (button, Enter, filter onchange, import refresh),
+// so the guard lives in the render, not the wiring.
+const renderTokens = {};
+function renderGuard(key) {
+    const token = (renderTokens[key] || 0) + 1;
+    renderTokens[key] = token;
+    return () => renderTokens[key] === token;
+}
+
 async function renderPeople() {
     if (!document.getElementById("people")) return; // People-page-only table (CR-022)
     const q = document.getElementById("personSearch").value.trim();
     const params = new URLSearchParams({limit: "50"});
     if (q) params.set("q", q);
+    const current = renderGuard("people");
     const response = await registerCall(`/admin/people?${params}`);
     if (!response) return;
     const page = await response.json();
+    if (!current()) return; // a newer keystroke superseded this fetch
     const body = document.querySelector("#people tbody");
     body.innerHTML = "";
     for (const p of page.people) {
@@ -486,9 +516,11 @@ async function renderHouseholds() {
     const q = document.getElementById("householdSearch").value.trim();
     const params = new URLSearchParams({limit: "50"});
     if (q) params.set("q", q);
+    const current = renderGuard("households");
     const response = await registerCall(`/admin/households?${params}`);
     if (!response) return;
     const page = await response.json();
+    if (!current()) return; // a newer keystroke superseded this fetch
     const body = document.querySelector("#households tbody");
     body.innerHTML = "";
     for (const h of page.households) {
@@ -877,9 +909,11 @@ async function renderMemberships() {
     if (q) params.set("q", q);
     if (status) params.set("status", status);
     if (type) params.set("type", type);
+    const current = renderGuard("memberships");
     const response = await registerCall(`/admin/periods/${periodId}/memberships?${params}`);
     if (!response) return;
     const page = await response.json();
+    if (!current()) return; // a newer keystroke superseded this fetch
     const tbody = document.querySelector("#memberships tbody");
     tbody.innerHTML = "";
     for (const r of page.rows) {
@@ -1574,8 +1608,7 @@ async function createHouseholdMembership() {
 // journal price, rollover) lives on the System page, reconciliation on Reports.
 function wireRenewals() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
-    on("memberSearchGo", renderMemberships);
-    document.getElementById("memberSearch").onkeydown = (e) => { if (e.key === "Enter") renderMemberships(); };
+    wireLiveSearch("memberSearch", "memberSearchGo", renderMemberships); // CR-026
     document.getElementById("statusFilter").onchange = renderMemberships;
     document.getElementById("typeFilter").onchange = renderMemberships;
     on("lapseAll", lapseAll);
@@ -1651,9 +1684,7 @@ function wireImport() {
 // its own section id like every other page.
 function wirePeople() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
-    const enter = (id, handler) =>
-        { document.getElementById(id).onkeydown = (e) => { if (e.key === "Enter") handler(); }; };
-    on("personSearchGo", renderPeople);      enter("personSearch", renderPeople);
+    wireLiveSearch("personSearch", "personSearchGo", renderPeople); // CR-026
     on("personNew", () => openPersonForm(null));
     on("personSave", savePerson);
     on("personCancel", () => closeDialog("personForm"));
@@ -1662,9 +1693,7 @@ function wirePeople() {
 
 function wireHouseholds() {
     const on = (id, handler) => { document.getElementById(id).onclick = handler; };
-    const enter = (id, handler) =>
-        { document.getElementById(id).onkeydown = (e) => { if (e.key === "Enter") handler(); }; };
-    on("householdSearchGo", renderHouseholds); enter("householdSearch", renderHouseholds);
+    wireLiveSearch("householdSearch", "householdSearchGo", renderHouseholds); // CR-026
     on("householdNew", () => {
         document.getElementById("hfName").value = "";
         resetPicker("hfContact");
@@ -3141,9 +3170,7 @@ function applyAdminOnlyVisibility() {
 }
 
 async function wireUsers() {
-    document.getElementById("userSearchGo").onclick = renderUsers;
-    document.getElementById("userSearch").onkeydown =
-        (e) => { if (e.key === "Enter") renderUsers(); };
+    wireLiveSearch("userSearch", "userSearchGo", renderUsers); // CR-026
     if (document.getElementById("ssPreview")) wireSelfServe();
     await renderUsers();
 }

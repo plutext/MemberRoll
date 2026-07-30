@@ -598,6 +598,22 @@ render an already-current member muted ("— already in this household",
 no mousedown, gate stays disabled) instead of offering a dead end — the
 409 alert stays as the backstop for a stale results list.
 
+CR-026 made the four admin *table* search boxes (Renewals `memberSearch`,
+People, Households, Users) live/type-ahead, matching the CR-025 pickers —
+they had kept the CR-001-era Go-button/Enter-only shape for no design
+reason. One shared `wireLiveSearch(inputId, buttonId, render)` (200 ms
+debounced `input` on top of the retained button + Enter) replaces the
+four bespoke wirings. Two things a table search needs that a picker
+doesn't: a **stale-response guard** (`renderGuard(key)` — bump a per-key
+token before the fetch, bail after the awaits if a newer call
+superseded it, so a slow "sm" response can't clobber the newer "smith"
+table; added to all four render functions, since each is also called
+from filter `onchange`/import refresh), and the fact that Renewals'
+`renderMemberships` already reads the search box + status + type filters
+fresh at call time into ONE query — so live search composes with the
+filters for free (and changing a filter re-applies the current search
+text). Client-only, no API/matrix delta (matrix byte-identical).
+
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
 `MembershipStore.insertMembershipPerson` sets
