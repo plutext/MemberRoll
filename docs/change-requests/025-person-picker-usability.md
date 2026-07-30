@@ -134,3 +134,37 @@ Walkthrough gotcha (the standing UTC bite, browser flavour): assert
 "today" with `new Date().toLocaleDateString("sv")`, not
 `toISOString().slice(0,10)` — the app stamps `current_date` in the JVM's
 AEST zone and the ISO string is UTC, which disagrees for hours every day.
+
+## Amendment (2026-07-30): refusals alert; current members unpickable
+
+Field report after the prod push: the picker happily selects someone who
+is already a current member of the household, "Add member" enables, and
+the server's correct 409 lands in the `say()` strip — which, even
+dialog-mirrored, sits at the top of the dialog article while the button
+the admin pressed is below the members table. Easily read as "nothing
+happened".
+
+Two changes, both client-only (no API/matrix delta):
+
+1. **Refusals are now a blocking `alert()`** (in `registerCall`, after
+   `say()` so the text stays on the page after OK). A refusal is rare
+   and always user-initiated, so a modal the admin must acknowledge is
+   the right weight — and native `alert` matches the panel's existing
+   native-`confirm` usage. Deliberate scope: only the non-2xx branch;
+   `Auth.api`'s own null returns (auth expiry handling) stay as they
+   were.
+2. **The add-member picker won't offer the dead end**: `wirePersonPicker`
+   gains an optional `unpickable(person) → reason` hook; the household
+   dialog passes the open household's current (not-left) member ids, so
+   such a result renders muted with "— already in this household", takes
+   no mousedown, and the gate stays disabled. The 409 alert remains the
+   backstop for a stale list (someone else added the person after the
+   results were fetched) — proven in the walkthrough by forcing exactly
+   that state.
+
+Verification: walkthrough extended to **PASS=21 FAIL=0** (muted row +
+reason text; clicking it selects nothing; gate stays disabled; the
+forced stale-pick 409 raises an alert containing "already a current
+member"). Full matrix after the change: **946/1** (the 1 = the standing
+27b Keycloak listing flake; the two UTC "today" rows passed this run —
+the earlier runs sat inside the AEST/UTC disagreement window).

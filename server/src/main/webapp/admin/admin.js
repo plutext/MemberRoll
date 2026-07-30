@@ -254,7 +254,13 @@ async function registerCall(path, options) {
     if (!response) return null;
     if (!response.ok) {
         const detail = await response.text();
-        say(`Refused (HTTP ${response.status}): ${detail}`, true);
+        const text = `Refused (HTTP ${response.status}): ${detail}`;
+        say(text, true);
+        // CR-025 amendment: a refusal is rare and always user-initiated, and
+        // the say() strip (even dialog-mirrored) sits away from the button the
+        // admin just pressed — make it unmissable. say() first, so the text
+        // is still on the page after OK.
+        alert(text);
         return null;
     }
     return response;
@@ -385,6 +391,9 @@ async function savePerson() {
 // ---- register: households ---------------------------------------------------
 
 let openHouseholdId = null;
+// current (not-left) members of the open household detail dialog — feeds the
+// add-member picker's "already in this household" exclusion (CR-025 amendment)
+let openHouseholdCurrentIds = new Set();
 
 // Person type-ahead. Replaces the raw person-id number inputs: type a name or
 // email, hit GET /api/admin/people?q=, pick a match. The chosen id rides on the
@@ -392,7 +401,10 @@ let openHouseholdId = null;
 // submitted. Each picker needs an <input id> and a sibling <ul id="{id}Results">.
 // gateButtonId (CR-025, optional): a button kept disabled until a pick is
 // captured — recorded on the input so resetPicker re-syncs it too.
-function wirePersonPicker(inputId, gateButtonId) {
+// unpickable (CR-025 amendment, optional): person → reason string when a
+// result must render muted and unselectable (e.g. already in the household);
+// the server-side refusal stays as the backstop for a stale list.
+function wirePersonPicker(inputId, gateButtonId, unpickable) {
     const input = document.getElementById(inputId);
     const list = document.getElementById(inputId + "Results");
     if (gateButtonId) input.dataset.gates = gateButtonId;
@@ -415,16 +427,23 @@ function wirePersonPicker(inputId, gateButtonId) {
                 const email = p.emails.find(e => e.isPrimary) || p.emails[0];
                 const li = document.createElement("li");
                 li.textContent = `${name} (#${p.id})` + (email ? ` · ${email.email}` : "");
-                // mousedown, not click (CR-025): preventDefault keeps the input
-                // focused, so the pick can never race blur's list-close timer
-                // (a press-to-release slower than the timer used to lose it)
-                li.onmousedown = (event) => {
-                    event.preventDefault();
-                    input.value = name;
-                    input.dataset.personId = p.id;
-                    clear();
-                    syncPickerGate(input);
-                };
+                const reason = unpickable ? unpickable(p) : null;
+                if (reason) {
+                    li.classList.add("picker-unpickable");
+                    li.textContent += ` — ${reason}`;
+                } else {
+                    // mousedown, not click (CR-025): preventDefault keeps the
+                    // input focused, so the pick can never race blur's
+                    // list-close timer (a press-to-release slower than the
+                    // timer used to lose it)
+                    li.onmousedown = (event) => {
+                        event.preventDefault();
+                        input.value = name;
+                        input.dataset.personId = p.id;
+                        clear();
+                        syncPickerGate(input);
+                    };
+                }
                 list.appendChild(li);
             }
             if (people.length === 0) {
@@ -492,6 +511,8 @@ async function openHousehold(id) {
     if (!response) return;
     const household = await response.json();
     openHouseholdId = id;
+    openHouseholdCurrentIds = new Set(
+        household.members.filter(m => !m.leftDate).map(m => m.personId));
     document.getElementById("householdDetailTitle").textContent =
         `Household #${id}: ${household.householdName || "(unnamed)"}`;
     const body = document.querySelector("#householdMembers tbody");
@@ -1657,7 +1678,8 @@ function wireHouseholds() {
     // historically wired in wireRenewals, harmless while both shared index.html.
     on("hmCreate", createHouseholdMembership);
     wirePersonPicker("hfContact", "householdSave");  // household primary-contact search
-    wirePersonPicker("hdPersonId", "hdAdd");         // household add-member search
+    wirePersonPicker("hdPersonId", "hdAdd",          // household add-member search
+        p => openHouseholdCurrentIds.has(p.id) ? "already in this household" : null);
     document.getElementById("householdsSection").hidden = false;
 }
 

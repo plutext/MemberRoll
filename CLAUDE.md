@@ -588,7 +588,15 @@ query matching nobody now shows a muted non-clickable "No matches" row
 instead of a silently hidden list. When testing pick interactions with
 Playwright, drive the slow case explicitly (`mouse.down()`, wait 400 ms,
 `mouse.up()`) — synthetic clicks are near-instant and sail through races
-a human trackpad click loses.
+a human trackpad click loses. The same-day amendment: every
+`registerCall` refusal is now ALSO a blocking `alert()` (after `say()`,
+whose dialog-mirror prepends at the top of the article — far from the
+button the admin pressed; native alert matches the panel's existing
+native-confirm usage), and `wirePersonPicker`'s third arg
+`unpickable(person) → reason` lets the household add-member picker
+render an already-current member muted ("— already in this household",
+no mousedown, gate stays disabled) instead of offering a dead end — the
+409 alert stays as the backstop for a stale results list.
 
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
