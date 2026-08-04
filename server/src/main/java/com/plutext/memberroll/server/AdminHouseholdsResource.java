@@ -18,10 +18,12 @@ package com.plutext.memberroll.server;
 
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.json.Json;
+import jakarta.json.JsonArray;
 import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonObjectBuilder;
 import jakarta.json.JsonReader;
+import jakarta.json.JsonValue;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.DefaultValue;
@@ -54,6 +56,7 @@ public class AdminHouseholdsResource {
 
     private static final Set<String> RELATIONSHIP_TYPES =
             Set.of("MEMBER", "PARTNER", "DEPENDANT", "OTHER");
+    private static final Set<String> ADDRESS_TYPES = Set.of("POSTAL", "RESIDENTIAL");
 
     private final Jdbi jdbi = Db.jdbi();
     private final HouseholdStore store = new HouseholdStore(jdbi);
@@ -162,6 +165,59 @@ public class AdminHouseholdsResource {
         };
     }
 
+    // ---- addresses (CR-028) --------------------------------------------
+
+    /**
+     * Wholesale-replace the household's postal/residential addresses (the
+     * emails/phones idiom). Each row needs a valid type and a non-blank
+     * line1; a bad row is a 400 with nothing written (one transaction). An
+     * empty array clears every address.
+     */
+    @PUT
+    @Path("{id}/addresses")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response putAddresses(@PathParam("id") long id, String body) {
+        JsonObject request = readObject(body);
+        if (request == null) return badRequest("body must be a JSON object");
+        JsonArray array = request.containsKey("addresses") && !request.isNull("addresses")
+                ? request.getJsonArray("addresses") : JsonValue.EMPTY_JSON_ARRAY;
+        java.util.List<HouseholdStore.Address> addresses = new java.util.ArrayList<>();
+        try {
+            for (JsonValue v : array) {
+                if (v.getValueType() != JsonValue.ValueType.OBJECT) {
+                    return badRequest("addresses[] must be objects");
+                }
+                JsonObject a = v.asJsonObject();
+                String type = a.getString("type", "").trim().toUpperCase(Locale.ROOT);
+                if (!ADDRESS_TYPES.contains(type)) {
+                    return badRequest("addresses[].type must be one of " + ADDRESS_TYPES);
+                }
+                String line1 = a.getString("line1", "").trim();
+                if (line1.isEmpty()) return badRequest("addresses[].line1 is required");
+                addresses.add(new HouseholdStore.Address(type, line1,
+                        optField(a, "line2"), optField(a, "locality"), optField(a, "state"),
+                        optField(a, "postcode"), optField(a, "country"),
+                        a.getBoolean("preferred", false)));
+            }
+        } catch (Exception e) {
+            return badRequest("could not parse addresses[]");
+        }
+        return store.replaceAddresses(id, addresses)
+                .map(h -> Response.ok(toJson(h).toString()).build())
+                .orElseGet(AdminHouseholdsResource::notFound);
+    }
+
+    private static String optField(JsonObject o, String key) {
+        if (!o.containsKey(key) || o.isNull(key)) return null;
+        try {
+            String v = o.getString(key).trim();
+            return v.isEmpty() ? null : v;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     // ---- communication preferences (CR-005) ----------------------------
 
     @GET
@@ -244,7 +300,19 @@ public class AdminHouseholdsResource {
                     member.leftDate() == null ? null : member.leftDate().toString());
             members.add(m);
         }
-        return b.add("members", members).build();
+        b.add("members", members);
+        JsonArrayBuilder addresses = Json.createArrayBuilder();
+        for (HouseholdStore.Address address : household.addresses()) {
+            JsonObjectBuilder a = Json.createObjectBuilder().add("type", address.type());
+            AdminPeopleResource.addNullable(a, "line1", address.line1());
+            AdminPeopleResource.addNullable(a, "line2", address.line2());
+            AdminPeopleResource.addNullable(a, "locality", address.locality());
+            AdminPeopleResource.addNullable(a, "state", address.state());
+            AdminPeopleResource.addNullable(a, "postcode", address.postcode());
+            AdminPeopleResource.addNullable(a, "country", address.country());
+            addresses.add(a.add("preferred", address.preferred()));
+        }
+        return b.add("addresses", addresses).build();
     }
 
     private static Response badRequest(String message) {

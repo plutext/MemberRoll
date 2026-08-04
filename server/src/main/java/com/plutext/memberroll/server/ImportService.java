@@ -439,10 +439,12 @@ final class ImportService {
 
     private void insertAddress(Handle handle, long householdId, Row row) {
         if (row.line1 == null) return; // line_1 is NOT NULL — no address without it
+        // CR-028: imported addresses are members' home addresses, marked
+        // preferred (the register/card pick preferred-else-newest, type-blind).
         handle.createUpdate(
                 "INSERT INTO household_address (household_id, address_type, line_1, line_2,"
                 + " locality, state, postcode, valid_from, is_preferred)"
-                + " VALUES (:hh, 'POSTAL', :l1, :l2, :loc, :st, :pc, current_date, true)")
+                + " VALUES (:hh, 'RESIDENTIAL', :l1, :l2, :loc, :st, :pc, current_date, true)")
                 .bind("hh", householdId).bind("l1", row.line1).bind("l2", row.line2)
                 .bind("loc", row.locality).bind("st", row.state).bind("pc", row.postcode).execute();
     }

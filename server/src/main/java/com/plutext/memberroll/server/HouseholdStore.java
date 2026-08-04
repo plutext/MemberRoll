@@ -34,8 +34,13 @@ final class HouseholdStore {
 
     record Member(long personId, String givenName, String familyName,
                   String relationshipType, LocalDate joinedDate, LocalDate leftDate) {}
+    // CR-028: a household's postal/residential addresses. Wholesale-replaced
+    // on save (like a person's emails/phones); valid_from/valid_to history is
+    // deliberately not retained yet.
+    record Address(String type, String line1, String line2, String locality,
+                   String state, String postcode, String country, boolean preferred) {}
     record Household(long id, String name, long primaryContactPersonId,
-                     String status, List<Member> members) {}
+                     String status, List<Member> members, List<Address> addresses) {}
     record Summary(long id, String name, long primaryContactPersonId,
                    String primaryContactName, String status, int currentMembers) {}
     record Page(List<Summary> households, int total) {}
@@ -195,7 +200,7 @@ final class HouseholdStore {
                 .bind("id", id)
                 .map((rs, ctx) -> new Household(rs.getLong("household_id"),
                         rs.getString("household_name"), rs.getLong("primary_contact_person_id"),
-                        rs.getString("status"), List.<Member>of()))
+                        rs.getString("status"), List.<Member>of(), List.<Address>of()))
                 .findOne()
                 .map(h -> new Household(h.id(), h.name(), h.primaryContactPersonId(), h.status(),
                         handle.createQuery(
@@ -211,7 +216,58 @@ final class HouseholdStore {
                                         rs.getDate("joined_household_date").toLocalDate(),
                                         rs.getDate("left_household_date") == null
                                                 ? null : rs.getDate("left_household_date").toLocalDate()))
-                                .list()));
+                                .list(),
+                        addresses(handle, h.id())));
+    }
+
+    /** A household's addresses, preferred first (the order the readers pick from). */
+    private static List<Address> addresses(Handle handle, long householdId) {
+        return handle.createQuery(
+                "SELECT address_type, line_1, line_2, locality, state, postcode, country, is_preferred"
+                + " FROM household_address WHERE household_id = :id"
+                + " ORDER BY is_preferred DESC, household_address_id")
+                .bind("id", householdId)
+                .map((rs, ctx) -> new Address(rs.getString("address_type"),
+                        rs.getString("line_1"), rs.getString("line_2"), rs.getString("locality"),
+                        rs.getString("state"), rs.getString("postcode"), rs.getString("country"),
+                        rs.getBoolean("is_preferred")))
+                .list();
+    }
+
+    /**
+     * Wholesale-replace a household's addresses (CR-028), like a person's
+     * emails/phones: delete the set and reinsert. Preferred is normalised to
+     * exactly one row when any exist (the first flagged, else the first), so
+     * the type-blind readers always have a deterministic pick. An empty list
+     * clears every address. Empty if no such household — nothing written.
+     */
+    Optional<Household> replaceAddresses(long id, List<Address> addresses) {
+        return jdbi.inTransaction(handle -> {
+            if (handle.createQuery("SELECT count(*) FROM household WHERE household_id = :id")
+                    .bind("id", id).mapTo(Integer.class).one() == 0) {
+                return Optional.<Household>empty();
+            }
+            handle.createUpdate("DELETE FROM household_address WHERE household_id = :id")
+                    .bind("id", id).execute();
+            int preferredIndex = -1;
+            for (int i = 0; i < addresses.size(); i++) {
+                if (addresses.get(i).preferred()) { preferredIndex = i; break; }
+            }
+            if (preferredIndex < 0 && !addresses.isEmpty()) preferredIndex = 0;
+            for (int i = 0; i < addresses.size(); i++) {
+                Address a = addresses.get(i);
+                handle.createUpdate("INSERT INTO household_address (household_id, address_type,"
+                        + " line_1, line_2, locality, state, postcode, country, valid_from, is_preferred)"
+                        + " VALUES (:hh, :type, :l1, :l2, :loc, :st, :pc, :country, current_date, :pref)")
+                        .bind("hh", id).bind("type", a.type())
+                        .bind("l1", a.line1()).bind("l2", a.line2())
+                        .bind("loc", a.locality()).bind("st", a.state())
+                        .bind("pc", a.postcode()).bind("country", a.country())
+                        .bind("pref", i == preferredIndex)
+                        .execute();
+            }
+            return get(handle, id);
+        });
     }
 
     private static boolean personExists(Handle handle, long personId) {

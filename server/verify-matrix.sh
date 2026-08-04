@@ -2481,6 +2481,44 @@ check "CR25-05 wrong full name is empty" "0" "$(psearch "Zebedee%20$FN25" >/dev/
 check "CR25-06 literal % finds nothing"  "0" "$(psearch "Quentin%25$FN25" >/dev/null; body | jsq "j['total']")"
 check "CR25-07 manager search 200"       "200" "$(code "$API/admin/people?q=Quentin%20$FN25" -H "Authorization: Bearer $MANAGER")"
 
+# --- CR-028: household address editing -------------------------------------------
+# Wholesale-replace addresses on a throwaway household. addresses[] rides the
+# household GET; PUT .../addresses replaces the set (preferred normalised to one).
+# Manager territory (register maintenance), so testmanager gets 200.
+FN28="Addr$$"
+JPOST $API/admin/people "{\"givenName\":\"Ada\",\"familyName\":\"$FN28\"}" >/dev/null
+A28=$(body | jsq "j['id']")
+JPOST $API/admin/households "{\"householdName\":\"$FN28 HH\",\"primaryContactPersonId\":$A28}" >/dev/null
+AHH28=$(body | jsq "j['id']")
+addr() { code "$API/admin/households/$AHH28" -H "Authorization: Bearer $ADMIN"; }
+check "CR28-01 fresh household addresses empty" "0" "$(addr >/dev/null; body | jsq "len(j['addresses'])")"
+check "CR28-02 PUT one POSTAL 200" "200" "$(JPUT $API/admin/households/$AHH28/addresses '{"addresses":[{"type":"POSTAL","line1":"1 First St","locality":"Yass","state":"NSW","postcode":"2582"}]}')"
+check "CR28-02b it is preferred"   "true" "$(body | jsq "str(j['addresses'][0]['preferred']).lower()")"
+check "CR28-02c GET reflects it"   "1 First St" "$(addr >/dev/null; body | jsq "j['addresses'][0]['line1']")"
+# two rows, RESIDENTIAL flagged preferred → it sorts first (preferred DESC)
+check "CR28-03 PUT two, RESIDENTIAL preferred 200" "200" "$(JPUT $API/admin/households/$AHH28/addresses '{"addresses":[{"type":"POSTAL","line1":"1 First St","locality":"Yass"},{"type":"RESIDENTIAL","line1":"2 Home Rd","locality":"Yass","preferred":true}]}')"
+check "CR28-03b two addresses"     "2" "$(body | jsq "len(j['addresses'])")"
+check "CR28-03c preferred is RESIDENTIAL" "RESIDENTIAL" "$(body | jsq "j['addresses'][0]['type']")"
+check "CR28-03d preferred is 2 Home Rd"   "2 Home Rd"   "$(body | jsq "j['addresses'][0]['line1']")"
+# normalisation: no row flagged → first becomes preferred
+check "CR28-04 PUT none-preferred 200" "200" "$(JPUT $API/admin/households/$AHH28/addresses '{"addresses":[{"type":"POSTAL","line1":"3 Only St"}]}')"
+check "CR28-04b first normalised to preferred" "true" "$(body | jsq "str(j['addresses'][0]['preferred']).lower()")"
+check "CR28-05 PUT bad type 400"   "400" "$(JPUT $API/admin/households/$AHH28/addresses '{"addresses":[{"type":"WORK","line1":"x"}]}')"
+check "CR28-06 PUT blank line1 400" "400" "$(JPUT $API/admin/households/$AHH28/addresses '{"addresses":[{"type":"POSTAL","line1":"  "}]}')"
+check "CR28-06b nothing written (still 3 Only St)" "3 Only St" "$(addr >/dev/null; body | jsq "j['addresses'][0]['line1']")"
+check "CR28-07 PUT empty clears 200" "200" "$(JPUT $API/admin/households/$AHH28/addresses '{"addresses":[]}')"
+check "CR28-07b cleared"           "0" "$(addr >/dev/null; body | jsq "len(j['addresses'])")"
+check "CR28-08 unknown household 404" "404" "$(JPUT $API/admin/households/999999/addresses '{"addresses":[]}')"
+check "CR28-09 guest 403"          "403" "$(code -X PUT $API/admin/households/$AHH28/addresses -H 'Content-Type: application/json' -d '{"addresses":[]}')"
+check "CR28-09b viewer 403"        "403" "$(code -X PUT $API/admin/households/$AHH28/addresses -H "Authorization: Bearer $VIEWER" -H 'Content-Type: application/json' -d '{"addresses":[]}')"
+check "CR28-09c manager 200"       "200" "$(code -X PUT $API/admin/households/$AHH28/addresses -H "Authorization: Bearer $MANAGER" -H 'Content-Type: application/json' -d '{"addresses":[{"type":"POSTAL","line1":"4 Mgr St"}]}')"
+# importer writes RESIDENTIAL preferred (was POSTAL before this CR)
+if [ "$PSQL_OK" = 1 ]; then
+  check "CR28-10 import address is RESIDENTIAL" "RESIDENTIAL|true" "$(psqlq "SELECT address_type||'|'||is_preferred FROM household_address ha JOIN household h ON h.household_id=ha.household_id WHERE h.household_name='AlphaHH$$'")"
+else
+  echo "SKIP CR28-10 (import address type needs psql)"
+fi
+
 # --- static pages ---------------------------------------------------------------
 check "CR4-25 pay page served"         "200" "$(code $ORIGIN/server/web/pay.html)"
 check "CR4-25b pay.js served"          "200" "$(code $ORIGIN/server/web/pay.js)"

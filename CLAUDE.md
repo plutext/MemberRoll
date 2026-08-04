@@ -636,6 +636,31 @@ the first 50; 27b now searches instead, and the whole matrix goes 957/0
 accumulated ~209 Keycloak users from repeated CR-006 self-serve
 provisioning across the long-lived stack.
 
+CR-028 added household address editing — `household_address` (V1) had been
+**write-once**: written only by CR-007 approval (`addPostalAddress`) and the
+CR-002 importer (`insertAddress`), read type-blind (`is_preferred DESC,
+household_address_id DESC LIMIT 1`) by the CR-019 register and CR-017/012
+card/receipt, with no GET/edit/delete and no UI — so a wizard/imported
+household could never gain or correct an address. `HouseholdStore` gains an
+`Address` record + `addresses` on `Household` (loaded preferred-first) and
+`replaceAddresses` — **wholesale-replace like a person's emails/phones**
+(delete-all + reinsert in one transaction; churning `household_address_id`
+is safe because nothing has an FK **to** the table), with **preferred
+normalised server-side to exactly one** row when any exist (first flagged,
+else first) so the type-blind readers always have a deterministic pick; an
+empty list clears. `PUT /api/admin/households/{id}/addresses`
+(`{"admin","manager"}` — register maintenance; a bad row is a 400 with
+nothing written) and the `addresses` array on the household GET back an
+Addresses sub-section in the household detail dialog (`households.html` /
+`admin.js` `renderAddresses`/`saveAddresses`). The importer now writes
+**RESIDENTIAL** preferred (imported addresses are home addresses) — a
+one-word change; the `valid_from`/`valid_to` history the schema allows is
+deliberately **not** retained yet (editing replaces the set). Readers are
+unchanged: an imported household's register/card shows its residential
+address, a CR-007-approved one its postal, and the admin's preferred flag
+is the control. **No migration** (the table already existed). Matrix +20
+CR28-\* rows (self-cleaning), Playwright 13/0.
+
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
 `MembershipStore.insertMembershipPerson` sets

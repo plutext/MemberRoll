@@ -579,7 +579,7 @@ async function renderHouseholds() {
         row.insertCell().textContent = h.status;
         row.insertCell().textContent = h.currentMembers;
         const open = document.createElement("button");
-        open.textContent = "Members";
+        open.textContent = "Manage";
         open.onclick = () => openHousehold(h.id);
         row.insertCell().appendChild(open);
     }
@@ -622,6 +622,7 @@ async function openHousehold(id) {
     }
     fillPeriodTypeSelects(); // the household's "New membership" period/type pickers
     resetPicker("hdPersonId");
+    renderAddresses(household.addresses || []); // CR-028 postal/residential addresses
     renderPreferences("hdPrefs", "households", id); // CR-005 household-level defaults
     openDialog("householdDetail");
 }
@@ -656,6 +657,95 @@ async function addHouseholdMember() {
         openHousehold(openHouseholdId);
         renderHouseholds();
     }
+}
+
+// ---- household addresses (CR-028) -------------------------------------------
+// Wholesale-replace, like a person's emails/phones: what is on screen at Save
+// becomes the new set. The preferred radio (one group) marks which address the
+// register/card use; the server normalises to exactly one if none is chosen.
+
+const ADDRESS_FIELDS = [
+    ["line1", "Line 1"], ["line2", "Line 2"], ["locality", "Suburb / town"],
+    ["state", "State"], ["postcode", "Postcode"], ["country", "Country"],
+];
+
+function renderAddresses(addresses) {
+    const box = document.getElementById("hdAddresses");
+    if (!box) return; // Households-page-only markup (CR-022 presence gate)
+    box.innerHTML = "";
+    for (const a of addresses) addAddressRow(a);
+}
+
+function addAddressRow(data) {
+    const box = document.getElementById("hdAddresses");
+    if (!box) return;
+    const a = data || {};
+    const row = document.createElement("fieldset");
+    row.className = "address-row";
+
+    const type = document.createElement("select");
+    for (const t of ["POSTAL", "RESIDENTIAL"]) {
+        const opt = document.createElement("option");
+        opt.value = opt.textContent = t;
+        if (a.type === t) opt.selected = true;
+        type.appendChild(opt);
+    }
+    const typeLabel = document.createElement("label");
+    typeLabel.textContent = "Type";
+    typeLabel.appendChild(type);
+    row.appendChild(typeLabel);
+
+    for (const [key, text] of ADDRESS_FIELDS) {
+        const input = document.createElement("input");
+        input.dataset.field = key;
+        input.value = a[key] || "";
+        const label = document.createElement("label");
+        label.textContent = text + (key === "line1" ? " *" : "");
+        label.appendChild(input);
+        row.appendChild(label);
+    }
+
+    const pref = document.createElement("input");
+    pref.type = "radio";
+    pref.name = "hdPreferredAddress"; // one preferred across all rows
+    pref.checked = !!a.preferred;
+    const prefLabel = document.createElement("label");
+    prefLabel.appendChild(pref);
+    prefLabel.append(" Preferred (shown on register & cards)");
+    row.appendChild(prefLabel);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "secondary outline";
+    remove.textContent = "Remove address";
+    remove.onclick = () => row.remove();
+    row.appendChild(remove);
+
+    box.appendChild(row);
+}
+
+async function saveAddresses() {
+    if (openHouseholdId === null) return;
+    const rows = document.querySelectorAll("#hdAddresses .address-row");
+    const addresses = [];
+    for (const row of rows) {
+        const address = {type: row.querySelector("select").value,
+                         preferred: row.querySelector('input[type="radio"]').checked};
+        for (const input of row.querySelectorAll("input[data-field]")) {
+            address[input.dataset.field] = input.value.trim() || null;
+        }
+        if (!address.line1) return say("Every address needs a Line 1 (or remove it).", true);
+        addresses.push(address);
+    }
+    const response = await registerCall(`/admin/households/${openHouseholdId}/addresses`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({addresses}),
+    });
+    if (!response) return; // registerCall already surfaced the 400 verbatim
+    const household = await response.json();
+    say(`Saved ${household.addresses.length} address(es) for household #${openHouseholdId}.`);
+    renderAddresses(household.addresses);
 }
 
 // ---- register: CSV import ---------------------------------------------------
@@ -1755,6 +1845,8 @@ function wireHouseholds() {
     on("householdSave", saveHousehold);
     on("householdCancel", () => closeDialog("householdForm"));
     on("hdAdd", addHouseholdMember);
+    on("hdAddressAdd", () => addAddressRow()); // CR-028
+    on("hdAddressesSave", saveAddresses);      // CR-028
     on("hdClose", () => closeDialog("householdDetail"));
     // CR-022: hmCreate lives in the household detail dialog (this page) — it was
     // historically wired in wireRenewals, harmless while both shared index.html.
