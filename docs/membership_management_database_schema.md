@@ -1,5 +1,13 @@
 # Membership Management System Database Schema
 
+> **Entity-relationship diagram:** [`schema-erd.pdf`](schema-erd.pdf) (A3
+> landscape) — all 22 tables, colour-grouped by domain, with every foreign
+> key and an `[Vn]` badge on each column added after the V1 core. It is
+> generated from a model in [`schema-erd.gen.py`](schema-erd.gen.py) (not
+> parsed from the SQL); when a new Flyway migration lands, update that script
+> and regenerate per the recipe in its header docstring. (The build produces
+> an intermediate `schema-erd.svg` en route to the PDF; it is gitignored.)
+
 ## Recommendation
 
 Use separate tables for:

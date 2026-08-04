@@ -12,3 +12,5 @@ tmp/
 
 # real society data (member lists, import files) — never in the repo
 ydhs/
+# Regenerated intermediate on the way to schema-erd.pdf (CR: schema ERD)
+docs/schema-erd.svg
