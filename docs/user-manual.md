@@ -484,3 +484,98 @@ pay only: members can't edit their details online.
   membership; provisioning can re-link later. Members who leave are
   handled automatically — the page always checks the current register,
   so someone removed from a household simply stops seeing it.
+
+## Customisation
+
+Most of what a society needs to tailor is editable **in the admin panel**,
+takes effect immediately, and needs no developer. A few things — mainly the
+wording on the public payment page and on the receipt — are built into the
+app and change only with a new release. This section is the map.
+
+### What you can change yourself (in the panel, effective immediately)
+
+- **Prices and the membership year** — System → *New period* sets each
+  type's price, the journal add-on, and the year's dates (start, end,
+  renewal-opens, late-joining cutoff). The **working period** everyone sees
+  is the System selector.
+- **Broadcast (segment) emails and the email footer** — the Email area.
+  These use **merge fields** you insert yourself, and the footer is saved as
+  the default for every send.
+- **Mail relay and the testing sandbox** — Mail settings (host, mailbox,
+  password, and the sandbox redirect).
+- **Xero account codes and the tax rate** — Reports, on the reconciliation
+  card.
+- **Member details** — numbers, addresses, communication preferences,
+  household composition — throughout the register.
+
+### What needs a new release (no panel screen)
+
+These are fixed wording or behaviour that whoever maintains your deployment
+changes in the source and redeploys:
+
+- The **society name** shown across the app and in emails — set once at
+  install (`MEMBERROLL_SOCIETY_NAME`); changing it is a server config change.
+- The **payment page** wording ("pay now" and "thank you") and the
+  **receipt** wording — the inventory below.
+- Adding a new **membership type** (e.g. a concession rate).
+- The **membership card** logo and layout.
+
+To change any wording below, send the maintainer the item **code** and your
+new text; they edit and redeploy. Text in `{curly braces}` fills in
+automatically (member name, amount, year, …) — keep it, though it can be
+moved or dropped. You can also **add** lines (a standing thank-you, an ABN, a
+"not a tax-deductible receipt" note) or **remove** any — just say what and
+where.
+
+#### Payment page — summary rows
+
+| Code | Current text | |
+|------|--------------|--|
+| A1 | *(heading)* `{society}` | set via `MEMBERROLL_SOCIETY_NAME` |
+| A2 | `Household / member` → `{member}` | row label |
+| A3 | `Membership year` → `{year}` | row label |
+| A4 | `Membership type` → `{type}` | row label |
+| A5 | `Amount due` → `{amount}` | row label |
+| A6 | `Paid so far` → `{amount}` | row label |
+| A7 | `Balance` → `{amount}` | row label |
+
+#### Payment page — the "pay now" form
+
+| Code | Current text |
+|------|--------------|
+| B1 | `Add the journal ({journal price})` |
+| B2 | `Optional donation: $` |
+| B3 | `Pay now` *(button)* |
+| B4 | `You'll be taken to our payment provider (Stripe) to pay securely by card.` |
+
+#### Payment page — thank-you and status messages
+
+| Code | Current text |
+|------|--------------|
+| C1 | `Thank you — this membership is paid up and you are financial for {year}.` *(already paid, on arrival)* |
+| C2 | `Payment received — thank you! You are financial for {year}.` *(back from the payment provider, confirmed)* |
+| C3 | `Payment received — still processing. You'll receive a receipt by email shortly.` *(the confirmation is still catching up)* |
+| C4 | `Payment received — confirming with our records…` *(brief, right after returning)* |
+| C5 | `This membership has ceased. Please contact the society.` |
+| C6 | `That link wasn't recognised — it may have expired.` |
+| C7 | `Enter the email address the society holds for you and we'll send a fresh link:` |
+| C8 | `Email me my link` *(button)* |
+| C9 | `If that address matches a member, we've emailed the link.` |
+
+#### Receipt — subject and body
+
+The receipt is one document: the email body, the printed copy, and the
+on-screen copy are identical.
+
+| Code | Current text |
+|------|--------------|
+| R0 | *(subject)* `{society} — payment receipt` — or `{society} — refund record` for a refund |
+| R1 | *(first line)* `{society}` |
+| R2 | `Receipt #{number}` — or `Refund record #{number}` |
+| R3 | `Received: {date}` |
+| R4 | `Method: {method}` — with ` (ref {reference})` appended when there is one |
+| R5 | `Recorded by: {recorded-by}` — this is the treasurer's login name (or the payment source); say if you'd rather relabel or drop it |
+| R6 | *(one per line item)* `{label}: {amount}`, where `{label}` is `Membership {year} ({type})`, `Journal add-on`, `Donation`, or `Other` |
+| R7 | `Total: {amount}` |
+| R8 | `Your membership is now active — you are financial for {year}.` *(only when a payment makes a membership active)* |
+| R9 | *(last line)* `{society}` |
