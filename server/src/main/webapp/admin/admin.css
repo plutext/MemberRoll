@@ -128,3 +128,9 @@ select.muted { opacity: .55; }
    the person picker input beside its remove button */
 .agm-ordinary-row { margin-bottom: var(--pico-spacing); }
 .agm-ordinary-row input[type=search] { margin-bottom: .25rem; }
+
+/* System page: the working-period detail table (start/end/prices) */
+.period-detail { max-width: 34rem; margin: 0 0 1rem; }
+.period-detail caption { text-align: left; font-weight: 600; padding-bottom: .35rem; }
+.period-detail th[scope="row"] { width: 12rem; text-align: left; font-weight: 600; }
+.period-detail td, .period-detail th { padding: .3rem .5rem; }

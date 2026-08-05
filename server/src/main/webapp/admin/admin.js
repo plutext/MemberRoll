@@ -1005,8 +1005,9 @@ function fillTypeFilter() {
 }
 
 function renderPeriodSummary() {
+    renderPeriodDetail(); // System page's period table + journal-price input (no-op elsewhere)
     const el = document.getElementById("periodSummary");
-    if (!el) return; // pages without a period summary line (CR-022)
+    if (!el) return; // pages without a period summary line (CR-022; e.g. System uses the table)
     const p = selectedPeriod();
     if (!p) { el.textContent = "No period. Create one on the System page to begin."; return; }
     const prices = p.prices.map(pr => `${pr.type} ${dollars(pr.amountCents)}`).join(", ");
@@ -1017,9 +1018,49 @@ function renderPeriodSummary() {
         : (p.id === storedWorkingPeriodId ? "Working period " : "Viewing period ");
     el.textContent = `${prefix}${p.name}: ${p.startDate} → ${p.endDate}. Prices: ${prices || "—"}.`
         + (p.journalPriceCents != null ? ` Journal add-on ${dollars(p.journalPriceCents)}.` : "");
-    // CR-022: the journalPrice input lives only on the System page
+}
+
+// The System page shows the working period as a detail table (start/end/renewal/
+// cutoff + prices) instead of the Renewals one-line summary, and owns the journal-
+// price input fill (both live only on system.html). Built with DOM/textContent —
+// admin-entered names never go through innerHTML.
+function renderPeriodDetail() {
+    const table = document.getElementById("periodDetail");
     const jp = document.getElementById("journalPrice");
-    if (jp) jp.value = p.journalPriceCents != null ? (p.journalPriceCents / 100).toFixed(2) : "";
+    if (!table && !jp) return; // System-page-only markup
+    const p = selectedPeriod();
+    if (jp) jp.value = p && p.journalPriceCents != null ? (p.journalPriceCents / 100).toFixed(2) : "";
+    if (!table) return;
+    table.innerHTML = "";
+    const cap = table.createCaption();
+    if (!p) { cap.className = "muted"; cap.textContent = "No period yet — create one below to begin."; return; }
+    cap.textContent = `Working period: ${p.name}`;
+    const body = table.createTBody();
+    const addRow = (label, value) => {
+        const tr = body.insertRow();
+        const th = document.createElement("th");
+        th.scope = "row";
+        th.textContent = label;
+        tr.appendChild(th);
+        const td = tr.insertCell();
+        if (value instanceof Node) td.appendChild(value); else td.textContent = value;
+    };
+    addRow("Start", p.startDate);
+    addRow("End", p.endDate);
+    addRow("Renewal opens", p.renewalOpenDate || "—");
+    addRow("Late-joining cutoff", p.lateJoiningCutoff || "—");
+    const priceList = document.createElement("div");
+    if (p.prices.length) {
+        for (const pr of p.prices) {
+            const line = document.createElement("div");
+            line.textContent = `${pr.type} — ${dollars(pr.amountCents)}`;
+            priceList.appendChild(line);
+        }
+    } else {
+        priceList.textContent = "—";
+    }
+    addRow("Prices", priceList);
+    addRow("Journal add-on", p.journalPriceCents != null ? dollars(p.journalPriceCents) : "not offered");
 }
 
 async function saveJournalPrice() {
