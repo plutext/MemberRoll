@@ -271,6 +271,8 @@ public class PayResource {
                 .add("societyName", Mail.societyName())
                 .add("displayName", v.displayName())
                 .add("periodName", v.periodName())
+                .add("periodStartDate", v.periodStartDate().toString())
+                .add("periodEndDate", v.periodEndDate().toString())
                 .add("typeName", v.typeName())
                 .add("status", v.status())
                 .add("dueCents", v.amountDueCents())

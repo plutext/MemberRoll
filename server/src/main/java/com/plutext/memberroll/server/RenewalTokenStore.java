@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -47,7 +48,8 @@ final class RenewalTokenStore {
 
     /** Everything the public pay page shows, resolved from a live token in one query. */
     record PayView(long tokenId, long membershipId, String status, String displayName,
-                   String periodName, String typeName, int amountDueCents, int amountPaidCents,
+                   String periodName, LocalDate periodStartDate, LocalDate periodEndDate,
+                   String typeName, int amountDueCents, int amountPaidCents,
                    Integer journalPriceCents, boolean journalBought) {}
 
     /** A membership the lost-link email should carry a link for. */
@@ -85,7 +87,8 @@ final class RenewalTokenStore {
                 "SELECT rt.renewal_token_id, m.membership_id, m.status,"
                 + " COALESCE(NULLIF(trim(h.household_name), ''),"
                 + "          trim(pc.given_name || ' ' || pc.family_name)) AS display_name,"
-                + " per.name AS period_name, per.journal_price_cents, mt.name AS type_name,"
+                + " per.name AS period_name, per.start_date AS period_start,"
+                + " per.end_date AS period_end, per.journal_price_cents, mt.name AS type_name,"
                 + " m.amount_due_cents,"
                 + " " + MembershipStore.PAID_SQL + " AS paid,"
                 // SUM, not EXISTS: a refunded journal (negative correction, the
@@ -103,6 +106,7 @@ final class RenewalTokenStore {
                 .bind("hash", sha256Hex(token))
                 .map((rs, ctx) -> new PayView(rs.getLong("renewal_token_id"), rs.getLong("membership_id"),
                         rs.getString("status"), rs.getString("display_name"), rs.getString("period_name"),
+                        rs.getObject("period_start", LocalDate.class), rs.getObject("period_end", LocalDate.class),
                         rs.getString("type_name"), rs.getInt("amount_due_cents"), rs.getInt("paid"),
                         (Integer) rs.getObject("journal_price_cents"), rs.getBoolean("journal_bought")))
                 .findOne();

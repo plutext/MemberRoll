@@ -42,6 +42,16 @@ function dollars(cents) {
     return "$" + (cents / 100).toFixed(2);
 }
 
+// "2025-09-01" -> "1 September 2025". Parses the parts directly (no Date
+// object) to avoid the timezone-shift pitfall on YYYY-MM-DD strings.
+const MONTHS = ["January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"];
+function fmtDate(iso) {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-").map(Number);
+    return d + " " + MONTHS[m - 1] + " " + y;
+}
+
 function renderSummary(data) {
     document.title = data.societyName + " — membership payment";
     el("society").textContent = data.societyName;
@@ -59,7 +69,8 @@ function renderState(data) {
         show("summary", "ceased");
     } else if (data.balanceCents <= 0) {
         el("paidUpText").textContent = "Thank you — this membership is paid up and you are "
-            + "financial for " + data.periodName + ".";
+            + "financial for the 12 months from " + fmtDate(data.periodStartDate)
+            + " to " + fmtDate(data.periodEndDate) + ".";
         show("summary", "paidUp");
     } else {
         // LAPSED still shows the form: paying reactivates (CR-003 recompute)
@@ -116,7 +127,8 @@ async function pollAfterPayment() {
             data = await fetchState();
             if (data && data.balanceCents <= 0 && data.status !== "CEASED") {
                 el("paidUpText").textContent = "Payment received — thank you! You are financial for "
-                    + data.periodName + ".";
+                    + "the 12 months from " + fmtDate(data.periodStartDate)
+                    + " to " + fmtDate(data.periodEndDate) + ".";
                 renderSummary(data);
                 show("summary", "paidUp");
                 return;

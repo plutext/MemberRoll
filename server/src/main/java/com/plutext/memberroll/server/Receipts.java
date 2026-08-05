@@ -24,8 +24,10 @@ import jakarta.json.JsonObjectBuilder;
 import org.jdbi.v3.core.Handle;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -81,7 +83,6 @@ final class Receipts {
                 sb.append("\nYour membership is now active — you are financial for ")
                         .append(period).append(".\n");
             }
-            sb.append('\n').append(societyName).append('\n');
             return sb.toString();
         }
     }
@@ -90,6 +91,24 @@ final class Receipts {
      * Compose the receipt for an already-fetched payment. Pure over the row plus
      * a per-MEMBERSHIP lookup for the period/type label and current status.
      */
+    private static final DateTimeFormatter LONG_DATE =
+            DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.ENGLISH);
+
+    /** Member-facing date, e.g. "1 September 2025". */
+    private static String longDate(LocalDate d) {
+        return d.format(LONG_DATE);
+    }
+
+    /** The period's own [start, end] — the membership year the receipt names. */
+    private static LocalDate[] periodDates(Handle handle, long periodId) {
+        return handle.createQuery(
+                "SELECT start_date, end_date FROM membership_period WHERE membership_period_id = :id")
+                .bind("id", periodId)
+                .map((rs, ctx) -> new LocalDate[]{rs.getObject("start_date", LocalDate.class),
+                        rs.getObject("end_date", LocalDate.class)})
+                .one();
+    }
+
     static Receipt render(Handle handle, PaymentStore.Payment p) {
         boolean refund = p.amountCents() < 0;
         List<Line> lines = new ArrayList<>();
@@ -101,8 +120,14 @@ final class Receipts {
                     MembershipStore.Detail d = a.membershipId() == null ? null
                             : MembershipStore.get(handle, a.membershipId()).orElse(null);
                     if (d != null) {
-                        label = "Membership " + d.periodName() + " (" + d.typeName() + ")";
-                        if ("ACTIVE".equals(d.status())) financialPeriods.add(d.periodName());
+                        // the PERIOD's dates (the membership year) — a mid-year
+                        // join's own start_date is not the period start
+                        LocalDate[] period = periodDates(handle, d.periodId());
+                        label = "Membership to " + longDate(period[1]) + " (" + d.typeName() + ")";
+                        if ("ACTIVE".equals(d.status())) {
+                            financialPeriods.add("the 12 months from " + longDate(period[0])
+                                    + " to " + longDate(period[1]));
+                        }
                     } else {
                         label = "Membership";
                     }

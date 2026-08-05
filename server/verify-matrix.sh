@@ -611,7 +611,7 @@ if [ "$PSQL_OK" = 1 ]; then
     # receipt email (best-effort, but the dev stack has Mailpit)
     if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
       RECEIPT=$(mailpit_text "receipt.$$@example.com")
-      check "CR4-19 receipt in Mailpit"  "true" "$(python3 -c "import sys;print(str('financial for 2025-2026' in sys.argv[1]).lower())" "${RECEIPT:-none}")"
+      check "CR4-19 receipt in Mailpit"  "true" "$(python3 -c "import sys;print(str('financial for the 12 months from' in sys.argv[1]).lower())" "${RECEIPT:-none}")"
     else
       echo "SKIP CR4-19 receipt row (Mailpit not reachable at $MAILPIT)"
     fi
@@ -1193,12 +1193,12 @@ if [ "$PSQL_OK" = 1 ]; then
   RTEXT=$(echo "$RGET" | jsq "j['text']")
   check "CR12-03 text has receipt no"    "true" "$(python3 -c "import sys;print(str('Receipt #$RCP' in sys.argv[1]).lower())" "$RTEXT")"
   check "CR12-03b text has method"       "true" "$(python3 -c "import sys;print(str('BANK_TRANSFER' in sys.argv[1]).lower())" "$RTEXT")"
-  check "CR12-03c text membership line"  "true" "$(python3 -c "import sys;print(str('Membership 2025-2026 (SINGLE): \$45.00' in sys.argv[1]).lower())" "$RTEXT")"
+  check "CR12-03c text membership line"  "true" "$(python3 -c "import sys;print(str('(SINGLE): \$45.00' in sys.argv[1] and 'Membership to ' in sys.argv[1]).lower())" "$RTEXT")"
   check "CR12-03d text donation line"    "true" "$(python3 -c "import sys;print(str('Donation: \$5.00' in sys.argv[1]).lower())" "$RTEXT")"
   check "CR12-03e text total"            "true" "$(python3 -c "import sys;print(str('Total: \$50.00' in sys.argv[1]).lower())" "$RTEXT")"
   check "CR12-03f defaultTo is payer"    "cr12payer.$$@example.com" "$(echo "$RGET" | jsq "j['defaultTo']")"
   check "CR12-03g not a refund"          "False" "$(echo "$RGET" | jsq "j['refund']")"
-  check "CR12-11 financial-for line"     "true" "$(python3 -c "import sys;print(str('financial for 2025-2026' in sys.argv[1]).lower())" "$RTEXT")"
+  check "CR12-11 financial-for line"     "true" "$(python3 -c "import sys;print(str('financial for the 12 months from' in sys.argv[1]).lower())" "$RTEXT")"
 
   # row 4: membership-only payment, payer unset → default = household attributed address
   JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":100,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$RCMEM,\"amountCents\":100}]}" >/dev/null; RCP4=$(body | jsq "j['id']")
