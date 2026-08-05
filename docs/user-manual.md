@@ -515,6 +515,8 @@ changes in the source and redeploys:
 
 - The **society name** shown across the app and in emails — set once at
   install (`MEMBERROLL_SOCIETY_NAME`); changing it is a server config change.
+  An optional short **acronym** (`MEMBERROLL_SOCIETY_ACRONYM`, e.g. `YDHS`) is
+  used in email subject lines; unset, subjects use the full name.
 - The **payment page** wording ("pay now" and "thank you") and the
   **receipt** wording — the inventory below.
 - Adding a new **membership type** (e.g. a concession rate).
@@ -569,7 +571,7 @@ on-screen copy are identical.
 
 | Code | Current text |
 |------|--------------|
-| R0 | *(subject)* `{society} — payment receipt` — or `{society} — refund record` for a refund |
+| R0 | *(subject)* `{society-acronym} — payment receipt` — or `{society-acronym} — refund record` for a refund. `{society-acronym}` is `MEMBERROLL_SOCIETY_ACRONYM` (e.g. `YDHS`), falling back to the full society name when unset. |
 | R1 | *(first line)* `{society}` |
 | R2 | `Receipt #{number}` — or `Refund record #{number}` |
 | R3 | `Received: {date}` |

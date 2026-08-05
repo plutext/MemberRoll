@@ -177,9 +177,9 @@ final class Receipts {
                 .bind("hh", householdId).mapTo(String.class).findOne();
     }
 
-    /** The email subject line for a receipt send (per-tenant branded). */
+    /** The email subject line for a receipt send — the short acronym, per-tenant branded. */
     static String subject(Receipt r) {
-        return r.societyName() + (r.refund() ? " — refund record" : " — payment receipt");
+        return Mail.societyAcronym() + (r.refund() ? " — refund record" : " — payment receipt");
     }
 
     /** The receipt as JSON: the structured header/line/total fields, the canonical text, and the default address. */

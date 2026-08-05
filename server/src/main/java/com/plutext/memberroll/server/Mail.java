@@ -219,6 +219,15 @@ final class Mail {
         return name != null ? name : "memberroll dev";
     }
 
+    /**
+     * A short label for email subjects (e.g. "YDHS"). Optional — falls back to
+     * the full society name when unset, so subjects work with no extra config.
+     */
+    static String societyAcronym() {
+        String acronym = env("MEMBERROLL_SOCIETY_ACRONYM");
+        return acronym != null ? acronym : societyName();
+    }
+
     /** Queue a plain-text mail off the calling thread; always returns immediately. */
     static void sendAsync(String to, String subject, String body) {
         SENDER.submit(() -> send(to, subject, body, null));
