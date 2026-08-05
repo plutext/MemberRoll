@@ -75,6 +75,8 @@ const Auth = (() => {
         }
         const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
         sessionStorage.setItem("pkce_verifier", verifier);
+        const state = base64url(crypto.getRandomValues(new Uint8Array(16)));
+        sessionStorage.setItem("oauth_state", state); // CSRF: matched on the callback
         // crypto.subtle is secure-context-gated: present on https/localhost,
         // absent on http://<LAN-IP> (the phone dev loop). Fall back to the
         // plain-JS SHA-256 (../shared/sha256.js, loaded before this file)
@@ -87,6 +89,7 @@ const Auth = (() => {
         const params = new URLSearchParams({
             client_id: CLIENT_ID, redirect_uri: REDIRECT, response_type: "code",
             scope: "openid", code_challenge: challenge, code_challenge_method: "S256",
+            state,
         });
         location.href = `${ISSUER}/protocol/openid-connect/auth?${params}`;
     }
@@ -118,15 +121,30 @@ const Auth = (() => {
     }
 
     async function completeLoginIfReturning() {
-        const code = new URLSearchParams(location.search).get("code");
+        const params = new URLSearchParams(location.search);
+        const code = params.get("code");
         if (!code) return;
+        // Strip ?code=... from the URL BEFORE the exchange so a reload, the back
+        // button, or a re-opened callback tab can't replay the single-use code
+        // (Keycloak 400s a spent code — the tokens from the first exchange are
+        // already stored, so the session works but the replay surfaced an error).
+        // The verifier is single-use too: consume it, and if it's already gone
+        // this is a replayed/foreign callback — skip the exchange and let the boot
+        // fall through to hasToken()/login() instead of failing.
+        history.replaceState(null, "", REDIRECT);
+        const verifier = sessionStorage.getItem("pkce_verifier");
+        const expectedState = sessionStorage.getItem("oauth_state");
+        sessionStorage.removeItem("pkce_verifier");
+        sessionStorage.removeItem("oauth_state");
+        if (!verifier) return; // no verifier => nothing this tab can legitimately exchange
+        if (params.get("state") !== expectedState) {
+            throw new Error("login state mismatch — please try signing in again");
+        }
         await tokenRequest({
             grant_type: "authorization_code", client_id: CLIENT_ID, code,
-            redirect_uri: REDIRECT,
-            code_verifier: sessionStorage.getItem("pkce_verifier"),
+            redirect_uri: REDIRECT, code_verifier: verifier,
         });
         sessionStorage.setItem("just_logged_in", "1"); // arms the 401 loop-breaker
-        history.replaceState(null, "", REDIRECT); // drop ?code=... from the URL
     }
 
     async function refresh() {
