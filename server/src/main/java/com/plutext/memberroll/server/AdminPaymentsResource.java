@@ -63,7 +63,10 @@ import java.util.Set;
 @RolesAllowed("admin")
 public class AdminPaymentsResource {
 
-    private static final Set<String> METHODS = Set.of("CASH", "CHEQUE", "BANK_TRANSFER", "STRIPE", "OTHER");
+    // SQUARE (CR-029) is a plain hand-entered method like CASH/BANK_TRANSFER —
+    // it gets none of STRIPE's positive-only-via-webhook gating below.
+    private static final Set<String> METHODS =
+            Set.of("CASH", "CHEQUE", "BANK_TRANSFER", "STRIPE", "SQUARE", "OTHER");
     private static final Set<String> ALLOCATION_TYPES = Set.of("MEMBERSHIP", "JOURNAL", "DONATION", "OTHER");
 
     private final Jdbi jdbi = Db.jdbi();

@@ -366,6 +366,16 @@ if [ "$PSQL_OK" = 1 ]; then
   check "CR3-16c membership-paid 6500"   "6500" "$(psqlq "SELECT COALESCE(SUM(amount_cents),0) FROM payment_allocation WHERE membership_id=$MA AND allocation_type='MEMBERSHIP'")"
   check "CR3-16d donation not counted"   "6500" "$(curl -s $API/admin/memberships/$MA -H "Authorization: Bearer $ADMIN" | jsq "j['amountPaidCents']")"
 
+  # CR29: SQUARE is a plain hand-entered method (positives allowed, unlike STRIPE).
+  # +$10 then reverse -$10 keeps $MA's net at 6500 (self-cleaning; CR3-17 below still sees 6500).
+  check "CR29-01 SQUARE positive 201"    "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-05-10\",\"amountCents\":1000,\"method\":\"SQUARE\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA,\"amountCents\":1000}]}")"
+  SQPAY=$(body | jsq "j['id']")
+  check "CR29-01b method persisted SQUARE" "SQUARE" "$(psqlq "SELECT payment_method FROM payment WHERE payment_id=$SQPAY")"
+  check "CR29-02 SQUARE reversal 201"    "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-05-10\",\"amountCents\":-1000,\"method\":\"SQUARE\",\"notes\":\"reversal\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA,\"amountCents\":-1000}]}")"
+  check "CR29-02b back to 6500"          "6500" "$(psqlq "SELECT COALESCE(SUM(amount_cents),0) FROM payment_allocation WHERE membership_id=$MA AND allocation_type='MEMBERSHIP'")"
+  check "CR29-03 invalid method 400"     "400" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-05-10\",\"amountCents\":1000,\"method\":\"SQUAREX\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA,\"amountCents\":1000}]}")"
+  check "CR29-04 positive STRIPE still 400" "400" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-05-10\",\"amountCents\":1000,\"method\":\"STRIPE\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$MA,\"amountCents\":1000}]}")"
+
   # CR3-17: financial status view row
   check "CR3-17 status view ACTIVE 200"  "200" "$(JADMIN "$API/admin/periods/$P2526/memberships?status=ACTIVE&q=$R")"
   check "CR3-17b row due 6500"           "6500" "$(body | jsq "next(r['amountDueCents'] for r in j['rows'] if r['membershipId']==$MA)")"

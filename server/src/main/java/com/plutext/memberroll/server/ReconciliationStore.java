@@ -47,7 +47,8 @@ import java.util.Map;
 final class ReconciliationStore {
 
     /** Canonical order for the per-method summary breakout (only present methods emitted). */
-    static final List<String> METHOD_ORDER = List.of("CASH", "CHEQUE", "BANK_TRANSFER", "STRIPE", "OTHER");
+    static final List<String> METHOD_ORDER =
+            List.of("CASH", "CHEQUE", "BANK_TRANSFER", "STRIPE", "SQUARE", "OTHER");
 
     /** The export/mark window. A null field means "no bound on this dimension". */
     record Filter(LocalDate from, LocalDate to, String method, boolean unreconciledOnly) {
