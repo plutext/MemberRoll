@@ -2412,8 +2412,10 @@ async function doSend() {
         return say("Preview these exact parameters before sending.", true);
     }
     // attachCard is not part of the preview signature (the recipient set is
-    // identical either way) — it is added to the send body only, here
-    const attachCard = document.getElementById("emAttachCard").checked;
+    // identical either way) — it is added to the send body only, here.
+    // Null-guarded for the same stale-HTML reason as its wiring in wireEmail.
+    const attachEl = document.getElementById("emAttachCard");
+    const attachCard = attachEl ? attachEl.checked : false;
     const prompt = document.getElementById("emSend").textContent
         + (attachCard ? ", each with their membership card attached" : "") + "?";
     if (!confirm(prompt)) return;
@@ -2550,10 +2552,16 @@ function wireEmail() {
         document.getElementById(id).addEventListener("input", invalidatePreview);
     }
     // attachCard doesn't change the segment (not an invalidatePreview trigger); it
-    // only shows the ACTIVE-only hint
-    document.getElementById("emAttachCard").addEventListener("change", (e) => {
-        document.getElementById("emAttachCardHint").hidden = !e.target.checked;
-    });
+    // only shows the ACTIVE-only hint. Null-guarded so a deploy that serves a
+    // stale email.html (cached) against this newer admin.js can't throw and break
+    // the whole boot ("Login failed") — the CR-022 presence-gating idiom.
+    const attachCard = document.getElementById("emAttachCard");
+    if (attachCard) {
+        attachCard.addEventListener("change", (e) => {
+            const hint = document.getElementById("emAttachCardHint");
+            if (hint) hint.hidden = !e.target.checked;
+        });
+    }
     document.getElementById("emailSection").hidden = false;
 }
 
