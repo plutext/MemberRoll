@@ -101,6 +101,11 @@ button.badge:disabled { opacity: .5; cursor: not-allowed; }
 .dup-results { list-style: none; margin: -.5rem 0 var(--pico-spacing); padding: 0;
     font-size: .9rem; color: var(--pico-muted-color); }
 
+/* a wide table (e.g. the membership dialog's payments list) scrolls inside its
+   own box so it doesn't force a horizontal scrollbar onto the fixed-width
+   <article> that contains it */
+.table-scroll { overflow-x: auto; }
+
 /* a payment allocation line: type select + amount, laid out in a row */
 .allocLine { display: flex; gap: .5rem; align-items: center; margin: .3rem 0; }
 .allocLine input { max-width: 8rem; }

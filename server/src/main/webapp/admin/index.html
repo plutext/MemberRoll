@@ -76,12 +76,16 @@
                 <button id="mdTypeChange" class="secondary">Change type</button>
             </div>
             <button id="mdRecordPayment">Record payment</button>
-            <table id="mdPayments">
-                <thead>
-                <tr><th>Date</th><th>Amount</th><th>Method</th><th>Allocations</th><th>By</th><th></th></tr>
-                </thead>
-                <tbody></tbody>
-            </table>
+            <!-- the payments table is wider than the dialog article; let it scroll
+                 inside its own box so the whole <article> doesn't get a scrollbar -->
+            <div class="table-scroll">
+                <table id="mdPayments">
+                    <thead>
+                    <tr><th>Date</th><th>Amount</th><th>Method</th><th>Allocations</th><th>By</th><th></th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
             <footer>
                 <button id="mdClose" type="button" class="secondary">Close</button>
             </footer>
