@@ -86,6 +86,10 @@
     <label>Footer (appended to every email; editable per send)
         <textarea id="emFooter" rows="4"></textarea></label>
     <label><input type="checkbox" id="emFooterSave"> Save this as the default footer</label>
+    <label><input type="checkbox" id="emAttachCard"> Attach each recipient's membership card</label>
+    <p class="muted" id="emAttachCardHint" hidden>Cards attach only for ACTIVE memberships; a
+        couple sharing an address gets one email with both members' cards. Recipients with no
+        card (e.g. a non-ACTIVE segment) are logged and not sent.</p>
     <div>
         <button id="emPreview">Preview</button>
         <button id="emSend" disabled>Send</button>

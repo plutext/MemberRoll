@@ -2411,7 +2411,12 @@ async function doSend() {
     if (emPreviewSig !== JSON.stringify(params)) {
         return say("Preview these exact parameters before sending.", true);
     }
-    if (!confirm(document.getElementById("emSend").textContent + "?")) return;
+    // attachCard is not part of the preview signature (the recipient set is
+    // identical either way) — it is added to the send body only, here
+    const attachCard = document.getElementById("emAttachCard").checked;
+    const prompt = document.getElementById("emSend").textContent
+        + (attachCard ? ", each with their membership card attached" : "") + "?";
+    if (!confirm(prompt)) return;
     // "save as default footer" is a separate PUT, not a send parameter
     if (document.getElementById("emFooterSave").checked) {
         await registerCall("/admin/email/footer", {
@@ -2420,7 +2425,8 @@ async function doSend() {
         });
     }
     const response = await registerCall("/admin/email/sends", {
-        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(params),
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({...params, attachCard}),
     });
     if (!response) return;
     const {id} = await response.json();
@@ -2458,7 +2464,7 @@ function emCountsText(counts) {
 
 const EM_STATUS_LABELS = {
     SENT: "sent", FAILED: "failed", PENDING: "pending",
-    SKIPPED_POST: "post", SKIPPED_NONE: "opted out", NO_EMAIL: "no email",
+    SKIPPED_POST: "post", SKIPPED_NONE: "opted out", NO_EMAIL: "no email", NO_CARD: "no card",
 };
 const emStatusLabel = (s) => EM_STATUS_LABELS[s] || s;
 
@@ -2543,6 +2549,11 @@ function wireEmail() {
     for (const id of ["emTemplate", "emPeriod", "emStatus", "emType", "emCommType", "emFooter"]) {
         document.getElementById(id).addEventListener("input", invalidatePreview);
     }
+    // attachCard doesn't change the segment (not an invalidatePreview trigger); it
+    // only shows the ACTIVE-only hint
+    document.getElementById("emAttachCard").addEventListener("change", (e) => {
+        document.getElementById("emAttachCardHint").hidden = !e.target.checked;
+    });
     document.getElementById("emailSection").hidden = false;
 }
 

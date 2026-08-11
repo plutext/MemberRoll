@@ -254,14 +254,14 @@ final class EmailStore {
      */
     static long createSend(Handle handle, Long templateId, String subjectSnapshot, String bodySnapshot,
                            long periodId, String statusFilter, Long typeFilterId,
-                           String communicationType, String createdBy, Segment segment) {
+                           String communicationType, boolean attachCard, String createdBy, Segment segment) {
         long sendId = handle.createUpdate(
                 "INSERT INTO email_send (email_template_id, subject, body, membership_period_id,"
-                + " status_filter, type_filter, communication_type, created_by)"
-                + " VALUES (:tpl, :subject, :body, :period, :status, :type, :ct, :by)")
+                + " status_filter, type_filter, communication_type, attach_card, created_by)"
+                + " VALUES (:tpl, :subject, :body, :period, :status, :type, :ct, :attachCard, :by)")
                 .bind("tpl", templateId).bind("subject", subjectSnapshot).bind("body", bodySnapshot)
                 .bind("period", periodId).bind("status", statusFilter).bind("type", typeFilterId)
-                .bind("ct", communicationType).bind("by", createdBy)
+                .bind("ct", communicationType).bind("attachCard", attachCard).bind("by", createdBy)
                 .executeAndReturnGeneratedKeys("email_send_id").mapTo(Long.class).one();
         var insert = handle.prepareBatch(
                 "INSERT INTO email_send_recipient (email_send_id, membership_id, person_id, email, status)"
@@ -379,14 +379,15 @@ final class EmailStore {
         });
     }
 
-    private record Snapshot(String subject, String body) {}
-    private record Pending(long recipientId, long membershipId, Long personId, String email) {}
+    private record Snapshot(String subject, String body, String communicationType, boolean attachCard) {}
+    private record Pending(long recipientId, long membershipId, long householdId, Long personId, String email) {}
     private record Prepared(String subject, String body) {}
 
     private static void process(Jdbi jdbi, long sendId) {
         Snapshot snap = jdbi.withHandle(h -> h.createQuery(
-                "SELECT subject, body FROM email_send WHERE email_send_id = :id")
-                .bind("id", sendId).map((rs, ctx) -> new Snapshot(rs.getString("subject"), rs.getString("body")))
+                "SELECT subject, body, communication_type, attach_card FROM email_send WHERE email_send_id = :id")
+                .bind("id", sendId).map((rs, ctx) -> new Snapshot(rs.getString("subject"), rs.getString("body"),
+                        rs.getString("communication_type"), rs.getBoolean("attach_card")))
                 .one());
         int consecutiveFailures = 0;
         // CR-005 amendment: the pause left BETWEEN messages so a large send stays
@@ -399,12 +400,14 @@ final class EmailStore {
         boolean firstMessage = true;
         while (true) {
             Pending next = jdbi.withHandle(h -> h.createQuery(
-                    "SELECT email_send_recipient_id, membership_id, person_id, email"
-                    + " FROM email_send_recipient WHERE email_send_id = :id AND status = 'PENDING'"
-                    + " ORDER BY email_send_recipient_id LIMIT 1")
+                    "SELECT r.email_send_recipient_id, r.membership_id, m.household_id, r.person_id, r.email"
+                    + " FROM email_send_recipient r JOIN membership m ON m.membership_id = r.membership_id"
+                    + " WHERE r.email_send_id = :id AND r.status = 'PENDING'"
+                    + " ORDER BY r.email_send_recipient_id LIMIT 1")
                     .bind("id", sendId)
                     .map((rs, ctx) -> new Pending(rs.getLong("email_send_recipient_id"),
-                            rs.getLong("membership_id"), (Long) rs.getObject("person_id"), rs.getString("email")))
+                            rs.getLong("membership_id"), rs.getLong("household_id"),
+                            (Long) rs.getObject("person_id"), rs.getString("email")))
                     .findOne().orElse(null));
             if (next == null) {
                 jdbi.useHandle(h -> setFinished(h, sendId, "COMPLETE"));
@@ -451,7 +454,23 @@ final class EmailStore {
                 }
                 continue;
             }
-            boolean ok = Mail.send(next.email(), prepared.subject(), prepared.body());
+            // CR-031: on an attach-card send, gather the MEMBER cards for the
+            // EMAIL recipients sharing this address (a HOUSEHOLD couple → both
+            // cards on their one message). No composable card (e.g. the segment
+            // was not ACTIVE — Cards.compose is ACTIVE-only) → NO_CARD, not sent:
+            // never a "here is your card" email with nothing attached. An empty
+            // list makes Mail.send take the byte-for-byte no-attachment path, so
+            // a non-attach send is unchanged.
+            List<Mail.Attachment> cards = List.of();
+            if (snap.attachCard()) {
+                Pending r = next;
+                cards = jdbi.withHandle(h -> gatherCards(h, r, snap.communicationType()));
+                if (cards.isEmpty()) {
+                    jdbi.useHandle(h -> markStatus(h, r.recipientId(), "NO_CARD"));
+                    continue; // a skip, not a relay failure — leave consecutiveFailures alone
+                }
+            }
+            boolean ok = Mail.send(next.email(), prepared.subject(), prepared.body(), cards);
             jdbi.useHandle(h -> markResult(h, next.recipientId(), ok, ok ? null : "mail send failed"));
             consecutiveFailures = ok ? 0 : consecutiveFailures + 1;
             if (consecutiveFailures >= ABORT_AFTER_CONSECUTIVE_FAILURES) {
@@ -460,6 +479,25 @@ final class EmailStore {
                 return;
             }
         }
+    }
+
+    /**
+     * The MEMBER cards attached to one recipient of an attach-card send (CR-031):
+     * every current MEMBER-relationship person of the (ACTIVE) membership whose
+     * preference resolves to EMAIL AND whose primary email is this recipient's
+     * address — i.e. exactly the people {@code resolveSegment} deduped into this
+     * address, so an opted-out (POST/NONE) sharer's card is not attached.
+     */
+    private static List<Mail.Attachment> gatherCards(Handle h, Pending r, String communicationType) {
+        List<Mail.Attachment> cards = new ArrayList<>();
+        for (long pid : Cards.memberPersonIds(h, r.membershipId())) {
+            if (r.email().equals(Cards.primaryEmail(h, pid).orElse(null))
+                    && "EMAIL".equals(CommunicationPreferenceStore.resolve(
+                            h, pid, r.householdId(), communicationType))) {
+                Cards.compose(h, r.membershipId(), pid).ifPresent(c -> cards.add(Cards.attachment(c)));
+            }
+        }
+        return cards;
     }
 
     /** The merge-field values for one recipient of one membership (never called for a NO_EMAIL row). */
@@ -514,6 +552,13 @@ final class EmailStore {
                 + " WHERE email_send_recipient_id = :id")
                 .bind("status", ok ? "SENT" : "FAILED").bind("error", error).bind("ok", ok)
                 .bind("id", recipientId).execute();
+    }
+
+    /** Set a recipient's terminal status directly (CR-031 NO_CARD — neither SENT nor a FAILED to retry). */
+    private static void markStatus(Handle handle, long recipientId, String status) {
+        handle.createUpdate("UPDATE email_send_recipient SET status = :status"
+                + " WHERE email_send_recipient_id = :id")
+                .bind("status", status).bind("id", recipientId).execute();
     }
 
     private static void setFinished(Handle handle, long sendId, String status) {

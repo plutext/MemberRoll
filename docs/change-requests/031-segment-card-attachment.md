@@ -193,6 +193,31 @@ Plus a Playwright walkthrough: compose form checkbox present, the ACTIVE-only
 hint shown, a real attach-card send to a small ACTIVE segment lands in Mailpit
 with the card attached.
 
+## Verification results
+
+Implemented and verified 2026-08-11 (Opus 4.8). V12 applied cleanly against the
+long-lived dev DB (`attach_card` default false; the recipient-status CHECK now
+admits `NO_CARD`).
+
+- **Matrix (`server/verify-matrix.sh`, +22 `CR31-*` rows, self-cleaning):
+  1023/1**, the one failure the pre-existing `CR4-01c` UTC-calendar flake
+  (unrelated to mail/cards). New rows reuse the CR-005 fixture — household A
+  (Ada+Bert, both MEMBER sharing `$SHARED`) paid into ACTIVE is the couple case,
+  household D (Dot) the single case, a new household E the NO_CARD case:
+  - attach-card ACTIVE send → 2 SENT, **couple's one message carries 2 card
+    attachments**, single carries 1, PARTNER (Cleo) not mailed (`CR31-01…06`);
+  - attach-card PENDING_PAYMENT send → 0 SENT, **1 NO_CARD**, E gets no mail
+    (`CR31-07…08c`);
+  - non-attach send → delivered with **0 attachments** (the byte-for-byte
+    no-attachment path regression, `CR31-09…11`);
+  - `attach_card` persisted on `email_send` (`CR31-01c`).
+  All prior mail rows (CR-004/005/012/017/030) stayed green — the single-part and
+  single-attachment paths are unchanged.
+- **Browser walkthrough (`tmp/cr031-fixtures/cr031-walkthrough.js`): 11/0** —
+  the checkbox and its ACTIVE-only hint toggle, the send POST carries
+  `attachCard:true`, the confirm names the card attachment, and an end-to-end UI
+  send delivers the couple's two cards on one message to the shared address.
+
 ## Rollout note
 
 For the immediate life-members job: turn on the CR-021 mail **sandbox** first

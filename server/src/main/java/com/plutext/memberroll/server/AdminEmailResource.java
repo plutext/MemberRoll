@@ -229,7 +229,7 @@ public class AdminEmailResource {
                         h, req.periodId, req.statusFilter, req.typeFilter, req.communicationType);
                 return EmailStore.createSend(h, req.templateId, req.subjectSnapshot, req.bodySnapshot,
                         req.periodId, req.statusFilter, req.typeFilter, req.communicationType,
-                        whom(security), segment);
+                        req.attachCard, whom(security), segment);
             });
         } catch (ConflictException e) {
             return conflict(e.getMessage());
@@ -287,6 +287,7 @@ public class AdminEmailResource {
         String statusFilter;
         Long typeFilter;
         String communicationType;
+        boolean attachCard;
         String subjectSnapshot;
         String bodySnapshot;
     }
@@ -301,6 +302,7 @@ public class AdminEmailResource {
         r.statusFilter = upper(Payloads.optString(request, "statusFilter"));
         r.typeFilter = Payloads.optLong(request, "typeFilter");
         r.communicationType = upper(Payloads.optString(request, "communicationType"));
+        r.attachCard = Payloads.optBool(request, "attachCard", false); // CR-031: attach each recipient's card
         if (r.communicationType == null
                 || !CommunicationPreferenceStore.COMMUNICATION_TYPES.contains(r.communicationType)) {
             throw new IllegalArgumentException("communicationType must be one of "

@@ -32,6 +32,7 @@ import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.util.ByteArrayDataSource;
 
 import java.io.StringReader;
+import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -258,12 +259,17 @@ final class Mail {
 
     /** Queue a plain-text mail off the calling thread; always returns immediately. */
     static void sendAsync(String to, String subject, String body) {
-        SENDER.submit(() -> send(to, subject, body, null));
+        SENDER.submit(() -> send(to, subject, body));
     }
 
     /** Queue a mail with a single attachment off the calling thread (CR-017). */
     static void sendAsync(String to, String subject, String body, Attachment attachment) {
         SENDER.submit(() -> send(to, subject, body, attachment));
+    }
+
+    /** Queue a mail with several attachments off the calling thread (CR-031). */
+    static void sendAsync(String to, String subject, String body, List<Attachment> attachments) {
+        SENDER.submit(() -> send(to, subject, body, attachments));
     }
 
     /** Run mail-adjacent work (lookup + compose + send) on the mail thread. */
@@ -277,18 +283,26 @@ final class Mail {
      * the password scrubbed out (best-effort, and the PAGE path stores one).
      */
     static boolean send(String to, String subject, String body) {
-        return send(to, subject, body, null);
+        return send(to, subject, body, (List<Attachment>) null);
     }
 
     /** As {@link #send(String, String, String)} but with a single attachment (CR-017). */
     static boolean send(String to, String subject, String body, Attachment attachment) {
+        return send(to, subject, body, attachment == null ? null : List.of(attachment));
+    }
+
+    /**
+     * As {@link #send(String, String, String)} but with any number of attachments
+     * (CR-031). A null/empty list is byte-for-byte the no-attachment message.
+     */
+    static boolean send(String to, String subject, String body, List<Attachment> attachments) {
         Settings settings = resolve();
         if (settings.source() == Source.NONE) {
             LOG.warning("mail disabled (no page settings, SMTP_HOST unset) — not sending \""
                     + subject + "\" to " + to);
             return false;
         }
-        String error = doSend(settings, to, subject, body, attachment);
+        String error = doSend(settings, to, subject, body, attachments);
         if (error != null) {
             LOG.warning("mail send failed: \"" + subject + "\" to " + to + " — " + scrub(error, settings));
         }
@@ -309,7 +323,7 @@ final class Mail {
 
     /** The actual send; returns null on success or a human-readable error string (unscrubbed). */
     private static String doSend(Settings settings, String to, String subject, String body,
-                                 Attachment attachment) {
+                                 List<Attachment> attachments) {
         // CR-021 sandbox: while redirectTo is set, every message — this is the
         // one choke point all sends funnel through, guest-triggered included —
         // is delivered there instead, the real recipient named in plain sight.
@@ -361,20 +375,24 @@ final class Mail {
             }
             message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(to));
             message.setSubject(subject, "UTF-8");
-            if (attachment == null) {
+            if (attachments == null || attachments.isEmpty()) {
                 // the no-attachment path stays byte-for-byte the CR-004/005/012
                 // single-part message — do NOT route it through multipart
                 message.setText(body, "UTF-8");
             } else {
+                // one text part plus one file part per attachment (CR-031); a
+                // single-element list is byte-for-byte the CR-017 one-card message
                 MimeBodyPart textPart = new MimeBodyPart();
                 textPart.setText(body, "UTF-8");
-                MimeBodyPart filePart = new MimeBodyPart();
-                filePart.setDataHandler(new DataHandler(
-                        new ByteArrayDataSource(attachment.bytes(), attachment.contentType())));
-                filePart.setFileName(attachment.filename());
                 MimeMultipart multipart = new MimeMultipart();
                 multipart.addBodyPart(textPart);
-                multipart.addBodyPart(filePart);
+                for (Attachment attachment : attachments) {
+                    MimeBodyPart filePart = new MimeBodyPart();
+                    filePart.setDataHandler(new DataHandler(
+                            new ByteArrayDataSource(attachment.bytes(), attachment.contentType())));
+                    filePart.setFileName(attachment.filename());
+                    multipart.addBodyPart(filePart);
+                }
                 message.setContent(multipart);
             }
             Transport.send(message);

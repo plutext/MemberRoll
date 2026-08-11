@@ -1072,6 +1072,65 @@ if [ "$PSQL_OK" = 1 ]; then
 
     # row 20: history lists the send with per-status counts
     check "CR5-20 history lists send"       "true" "$(curl -s $API/admin/email/sends -H "Authorization: Bearer $ADMIN" | jsq "str(any(s['id']==$EMSEND and s['counts'].get('SENT',0)==2 for s in j['sends'])).lower()")"
+
+    # --- CR-031: attach membership cards to a segment email ------------------
+    # Reuses the CR-005 period $EMPID: household A (Ada+Bert, both MEMBER sharing
+    # $SHARED, + PARTNER Cleo) and household D (Dot, RENEWAL=EMAIL). Cards compose
+    # only for ACTIVE memberships, so pay A (HOUSEHOLD 6500) and D (SINGLE 4500)
+    # into ACTIVE first. $EMTPL was deleted at CR5-19 — make fresh templates whose
+    # body markers distinguish these sends at the (re-used) shared address.
+    TODAY=$(date +%F)
+    check "CR31-00a pay household A 201"    "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"$TODAY\",\"amountCents\":6500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$EMMA,\"amountCents\":6500}]}")"
+    check "CR31-00b household A ACTIVE"     "ACTIVE" "$(curl -s $API/admin/memberships/$EMMA -H "Authorization: Bearer $ADMIN" | jsq "j['status']")"
+    check "CR31-00c pay household D 201"    "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"$TODAY\",\"amountCents\":4500,\"method\":\"CASH\",\"allocations\":[{\"type\":\"MEMBERSHIP\",\"membershipId\":$EMMD,\"amountCents\":4500}]}")"
+    check "CR31-00d household D ACTIVE"     "ACTIVE" "$(curl -s $API/admin/memberships/$EMMD -H "Authorization: Bearer $ADMIN" | jsq "j['status']")"
+
+    # household E: SINGLE, stays PENDING_PAYMENT, one MEMBER with an email — the
+    # NO_CARD case (an EMAIL recipient whose membership is not ACTIVE)
+    EMAILE="ellie.$$@em.test"
+    JPOST $API/admin/people "{\"givenName\":\"Ellie\",\"familyName\":\"$EM\",\"emails\":[{\"email\":\"$EMAILE\",\"isPrimary\":true}]}" >/dev/null; EME1=$(body | jsq "j['id']")
+    JPOST $API/admin/households "{\"householdName\":\"$EM E\",\"primaryContactPersonId\":$EME1}" >/dev/null; EMHE=$(body | jsq "j['id']")
+    JPOST $API/admin/memberships "{\"householdId\":$EMHE,\"membershipPeriodId\":$EMPID,\"membershipTypeId\":$T_SINGLE}" >/dev/null
+
+    JPOST $API/admin/email/templates "{\"name\":\"$EM card tpl\",\"subject\":\"$EM Card {{periodName}}\",\"body\":\"Dear {{givenName}}, CR31CARDMARK your card is enclosed.\"}" >/dev/null; EMCTPL=$(body | jsq "j['id']")
+    JPOST $API/admin/email/templates "{\"name\":\"$EM plain tpl\",\"subject\":\"$EM Plain {{periodName}}\",\"body\":\"Dear {{givenName}}, CR31PLAINMARK no card here.\"}" >/dev/null; EMPTPL=$(body | jsq "j['id']")
+
+    # attach-card send to the ACTIVE segment: A → $SHARED with BOTH members' cards, D → $DOT with one
+    check "CR31-01 attach-card send 201"    "201" "$(JPOST $API/admin/email/sends "{\"templateId\":$EMCTPL,\"periodId\":$EMPID,\"statusFilter\":\"ACTIVE\",\"communicationType\":\"RENEWAL\",\"attachCard\":true}")"
+    EMCSEND=$(body | jsq "j['id']")
+    check "CR31-01b send completes"         "COMPLETE" "$(poll_send_status $EMCSEND)"
+    check "CR31-01c attach_card persisted"  "t" "$(psqlq "SELECT attach_card FROM email_send WHERE email_send_id=$EMCSEND")"
+    CSJSON=$(curl -s $API/admin/email/sends/$EMCSEND -H "Authorization: Bearer $ADMIN")
+    check "CR31-02 two SENT"                "2" "$(echo "$CSJSON" | jsq "j['counts'].get('SENT',0)")"
+    check "CR31-02b no NO_CARD"             "0" "$(echo "$CSJSON" | jsq "j['counts'].get('NO_CARD',0)")"
+    # the couple: ONE message to the shared address carrying BOTH cards
+    BODY_A=$(mailpit_text_matching "$SHARED" "CR31CARDMARK")
+    check "CR31-03 couple msg delivered"    "true" "$(python3 -c "print(str('CR31CARDMARK' in '''$BODY_A''').lower())")"
+    check "CR31-04 couple msg has 2 cards"  "2" "$(mailpit_attach_ct "$SHARED" "CR31CARDMARK")"
+    # the single: one card
+    mailpit_text_matching "$DOT" "CR31CARDMARK" >/dev/null
+    check "CR31-05 single msg has 1 card"   "1" "$(mailpit_attach_ct "$DOT" "CR31CARDMARK")"
+    # PARTNER Cleo is not a card recipient and gets no message from this send
+    check "CR31-06 partner not mailed"      "0" "$(curl -s "$MAILPIT/api/v1/search?query=to:%22$CLEO%22" | jsq "j['messages_count']")"
+
+    # NO_CARD: attach-card send to the PENDING_PAYMENT segment — E is an EMAIL
+    # recipient but not ACTIVE, so no card composes and nothing is sent to it
+    check "CR31-07 attach PENDING send 201" "201" "$(JPOST $API/admin/email/sends "{\"templateId\":$EMCTPL,\"periodId\":$EMPID,\"statusFilter\":\"PENDING_PAYMENT\",\"communicationType\":\"RENEWAL\",\"attachCard\":true}")"
+    EMNSEND=$(body | jsq "j['id']")
+    check "CR31-07b send completes"         "COMPLETE" "$(poll_send_status $EMNSEND)"
+    NSJSON=$(curl -s $API/admin/email/sends/$EMNSEND -H "Authorization: Bearer $ADMIN")
+    check "CR31-08 no SENT"                 "0" "$(echo "$NSJSON" | jsq "j['counts'].get('SENT',0)")"
+    check "CR31-08b one NO_CARD"            "1" "$(echo "$NSJSON" | jsq "j['counts'].get('NO_CARD',0)")"
+    check "CR31-08c E got no mail"          "0" "$(curl -s "$MAILPIT/api/v1/search?query=to:%22$EMAILE%22" | jsq "j['messages_count']")"
+
+    # regression: a NON-attach send stays single-part (0 attachments) — the empty
+    # attachment list must hit Mail's byte-for-byte no-attachment path
+    check "CR31-09 plain send 201"          "201" "$(JPOST $API/admin/email/sends "{\"templateId\":$EMPTPL,\"periodId\":$EMPID,\"statusFilter\":\"ACTIVE\",\"communicationType\":\"RENEWAL\"}")"
+    EMPSEND=$(body | jsq "j['id']")
+    check "CR31-09b send completes"         "COMPLETE" "$(poll_send_status $EMPSEND)"
+    BODY_P=$(mailpit_text_matching "$SHARED" "CR31PLAINMARK")
+    check "CR31-10 plain msg delivered"     "true" "$(python3 -c "print(str('CR31PLAINMARK' in '''$BODY_P''').lower())")"
+    check "CR31-11 plain msg 0 attachments" "0" "$(mailpit_attach_ct "$SHARED" "CR31PLAINMARK")"
   else
     echo "SKIP CR5-10..20 send/delivery rows (Mailpit not reachable at $MAILPIT)"
   fi
