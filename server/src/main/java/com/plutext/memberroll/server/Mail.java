@@ -97,10 +97,14 @@ final class Mail {
      * the CR-021 sandbox: while set, {@link #doSend} delivers EVERY message
      * there instead of its real recipient (which is named in plain sight in the
      * subject and body). PAGE-only by design — the ENV path never carries one.
+     * {@code sendDelayMs} is the CR-005 amendment: the pause the SEGMENT sender
+     * leaves between messages to stay under a relay's per-minute rate limit
+     * (Office 365 SMTP client submission caps at 30/min); 0 = no pause, also
+     * PAGE-only (dev/ENV never paces — matrix/Mailpit stay fast).
      */
     record Settings(Source source, String host, int port, Security security,
                     String username, String password, String from, String replyTo,
-                    String redirectTo) {
+                    String redirectTo, int sendDelayMs) {
 
         boolean passwordSet() {
             return password != null && !password.isBlank();
@@ -108,7 +112,7 @@ final class Mail {
 
         /** A disabled configuration — nothing to send with. */
         static Settings none() {
-            return new Settings(Source.NONE, null, 0, Security.NONE, null, null, null, null, null);
+            return new Settings(Source.NONE, null, 0, Security.NONE, null, null, null, null, null, 0);
         }
     }
 
@@ -160,9 +164,19 @@ final class Mail {
             String from = str(o, "from");
             if (from == null) return null;
             Security security = parseSecurity(str(o, "security"));
+            int sendDelayMs = 0;
+            if (o.containsKey("sendDelayMs") && !o.isNull("sendDelayMs")) {
+                try {
+                    // clamp defensively: a garbled blob must never pin the sender
+                    // thread for minutes, nor go negative
+                    sendDelayMs = Math.max(0, Math.min(60000, o.getInt("sendDelayMs")));
+                } catch (Exception e) {
+                    sendDelayMs = 0;
+                }
+            }
             return new Settings(Source.PAGE, host, port, security,
                     str(o, "username"), str(o, "password"), from, str(o, "replyTo"),
-                    str(o, "redirectTo"));
+                    str(o, "redirectTo"), sendDelayMs);
         } catch (Exception e) {
             return null;
         }
@@ -183,7 +197,7 @@ final class Mail {
         String from = env("MAIL_FROM");
         return new Settings(Source.ENV, host, port, security,
                 env("SMTP_USERNAME"), env("SMTP_PASSWORD"),
-                from != null ? from : "noreply@localhost", env("MAIL_REPLY_TO"), null);
+                from != null ? from : "noreply@localhost", env("MAIL_REPLY_TO"), null, 0);
     }
 
     private static int parsePort(String s) {
@@ -210,6 +224,20 @@ final class Mail {
             return v.isBlank() ? null : v;
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /**
+     * The configured inter-message pause for SEGMENT sends (CR-005 amendment),
+     * in ms; 0 when unset (dev/ENV, or a PAGE blob without the key). Resolved
+     * per send like every other setting; a read failure is 0 — pacing must
+     * never itself block a send.
+     */
+    static int sendDelayMs() {
+        try {
+            return resolve().sendDelayMs();
+        } catch (Exception e) {
+            return 0;
         }
     }
 

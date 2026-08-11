@@ -389,6 +389,14 @@ final class EmailStore {
                 .bind("id", sendId).map((rs, ctx) -> new Snapshot(rs.getString("subject"), rs.getString("body")))
                 .one());
         int consecutiveFailures = 0;
+        // CR-005 amendment: the pause left BETWEEN messages so a large send stays
+        // under the relay's per-minute rate limit (Office 365 caps SMTP client
+        // submission at 30/min) instead of provoking temporary 4.x.x rejections
+        // — which here would count as failures and trip the 5-consecutive ABORT.
+        // Read once at send start (a change applies on the next send / Resume);
+        // 0 unless a PAGE relay configures it, so dev/ENV/Mailpit never pace.
+        final int delayMs = Mail.sendDelayMs();
+        boolean firstMessage = true;
         while (true) {
             Pending next = jdbi.withHandle(h -> h.createQuery(
                     "SELECT email_send_recipient_id, membership_id, person_id, email"
@@ -402,6 +410,21 @@ final class EmailStore {
                 jdbi.useHandle(h -> setFinished(h, sendId, "COMPLETE"));
                 return;
             }
+            // pace before every message except the first — placed past the null
+            // check so a completed send never sleeps a trailing interval, and
+            // guarded by delayMs > 0 so the no-pause path is unchanged
+            if (!firstMessage && delayMs > 0) {
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    // a shutdown/interrupt mid-send: leave the remaining rows
+                    // PENDING and stop cleanly so Resume can finish the send
+                    Thread.currentThread().interrupt();
+                    jdbi.useHandle(h -> setFinished(h, sendId, "ABORTED"));
+                    return;
+                }
+            }
+            firstMessage = false;
             Prepared prepared;
             try {
                 prepared = jdbi.inTransaction(h -> {

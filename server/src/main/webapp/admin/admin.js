@@ -2803,6 +2803,8 @@ async function loadMailSettings() {
     document.getElementById("msFrom").value = s.from || "";
     document.getElementById("msUsername").value = s.username || "";
     document.getElementById("msReplyTo").value = s.replyTo || "";
+    // CR-005 amendment: the segment-send pacing (ms); 0 shows as blank
+    document.getElementById("msSendDelay").value = s.sendDelayMs || "";
     // the password is never returned; placeholder signals a stored one, and an
     // empty field means "keep it" — clearing needs the explicit action below
     const pw = document.getElementById("msPassword");
@@ -2837,6 +2839,8 @@ function msFormBody(passwordOverride) {
         // live-vs-sandbox is never ambiguous (unlike the password's
         // absent-means-keep)
         redirectTo: document.getElementById("msRedirect").value.trim() || null,
+        // CR-005 amendment: segment-send pacing (ms); blank/0 → no pause
+        sendDelayMs: Number(document.getElementById("msSendDelay").value) || 0,
     };
     const typed = document.getElementById("msPassword").value;
     if (passwordOverride !== undefined) body.password = passwordOverride;

@@ -1552,6 +1552,29 @@ fi
 code -X DELETE $MS -H "Authorization: Bearer $ADMIN" >/dev/null
 check "CR14-12 settings cleared at end" "ENV" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
 
+# --- CR-005 amendment: segment-send pacing (sendDelayMs) --------------------
+# A PAGE-only inter-message pause so a large renewal send stays under the
+# relay's per-minute rate limit (Office 365 caps SMTP submission at ~30/min)
+# instead of provoking temporary rejections that would trip the 5-consecutive
+# ABORT. Config round-trip + validation here (deterministic); the actual timing
+# behaviour is a standalone timing check (recorded in the CR-005 doc). The block
+# starts and ends at ENV (row already cleared by CR14-12), so it never paces any
+# other mail row. Blob prefix (host/port/from make it parse as PAGE):
+MSA="{\"host\":\"$RELAY_HOST\",\"port\":$RELAY_PORT,\"security\":\"NONE\",\"from\":\"cr5a.$$@memberroll.dev\""
+check "CR5A-01 PUT sendDelayMs=2500 200"  "200"  "$(JPUT $MS "$MSA,\"sendDelayMs\":2500}")"
+check "CR5A-01b GET echoes 2500"          "2500" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j.get('sendDelayMs')")"
+check "CR5A-01c source PAGE"              "PAGE" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j['source']")"
+# absent field → 0 (the page always sends it; blank/0 = no pause)
+check "CR5A-02 re-PUT absent 200"         "200"  "$(JPUT $MS "$MSA}")"
+check "CR5A-02b GET sendDelayMs 0"        "0"    "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j.get('sendDelayMs')")"
+# out of range and negative both 400, writing nothing
+check "CR5A-03 PUT 999999 400"            "400"  "$(JPUT $MS "$MSA,\"sendDelayMs\":999999}")"
+check "CR5A-03b PUT negative 400"         "400"  "$(JPUT $MS "$MSA,\"sendDelayMs\":-1}")"
+check "CR5A-03c GET still 0 (400 wrote nothing)" "0" "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j.get('sendDelayMs')")"
+# ENV path never carries a pause: DELETE → source ENV, sendDelayMs 0
+code -X DELETE $MS -H "Authorization: Bearer $ADMIN" >/dev/null
+check "CR5A-04 ENV sendDelayMs 0"         "0"    "$(curl -s $MS -H "Authorization: Bearer $ADMIN" | jsq "j.get('sendDelayMs', 0)")"
+
 # --- CR-015: reconciliation export ------------------------------------------
 # Self-cleaning against an insert-only ledger: fixtures live in a 2099 date
 # window unique to this CR, every export/journal assertion passes

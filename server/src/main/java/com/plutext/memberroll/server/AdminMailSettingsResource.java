@@ -120,6 +120,19 @@ public class AdminMailSettingsResource {
             return badRequest("redirectTo must be a valid email address");
         }
 
+        // CR-005 amendment: inter-message pause for segment sends (ms). Absent/0
+        // → no pause (the field is always sent by the page, like redirectTo);
+        // clamped to a sane ceiling so a fat-fingered value can't pin the sender.
+        Integer sendDelayMs;
+        try {
+            sendDelayMs = Payloads.optInt(request, "sendDelayMs");
+        } catch (IllegalArgumentException e) {
+            return badRequest("sendDelayMs must be a whole number of milliseconds");
+        }
+        if (sendDelayMs != null && (sendDelayMs < 0 || sendDelayMs > 60000)) {
+            return badRequest("sendDelayMs must be between 0 and 60000");
+        }
+
         String username = Payloads.optString(request, "username");
 
         // password: absent → keep the stored one; "" → clear; otherwise → set.
@@ -144,6 +157,7 @@ public class AdminMailSettingsResource {
         if (password != null && !password.isEmpty()) value.add("password", password);
         if (replyTo != null) value.add("replyTo", replyTo);
         if (redirectTo != null) value.add("redirectTo", redirectTo);
+        if (sendDelayMs != null && sendDelayMs > 0) value.add("sendDelayMs", sendDelayMs);
         String json = value.build().toString();
 
         jdbi.useHandle(h -> h.createUpdate(
@@ -221,8 +235,9 @@ public class AdminMailSettingsResource {
         String password = passwordAction(request) == PasswordAction.KEEP
                 ? storedPassword().orElse(null)
                 : rawString(request, "password");
+        // the test is a single message — pacing is a segment-send concern, so 0
         return new Mail.Settings(Mail.Source.PAGE, host, port,
-                Mail.Security.valueOf(security), username, password, from, replyTo, redirectTo);
+                Mail.Security.valueOf(security), username, password, from, replyTo, redirectTo, 0);
     }
 
     /** The GET/PUT/DELETE response shape: effective settings + provenance, never the password. */
@@ -237,6 +252,7 @@ public class AdminMailSettingsResource {
         addNullable(b, "from", s.from());
         addNullable(b, "replyTo", s.replyTo());
         addNullable(b, "redirectTo", s.redirectTo());
+        b.add("sendDelayMs", s.sendDelayMs());
         return b.add("passwordSet", s.passwordSet()).build();
     }
 

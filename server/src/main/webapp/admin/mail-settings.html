@@ -69,6 +69,18 @@
     </div>
     <label>Reply-To (optional) <input id="msReplyTo" placeholder="treasurer@society.org.au"></label>
 
+    <label>Pause between segment emails (milliseconds)
+        <input id="msSendDelay" type="number" min="0" max="60000" step="100" placeholder="0">
+        <small class="muted">A gap left between messages when sending a segment
+            (renewal) email, so a large send stays under the relay's per-minute
+            rate limit rather than provoking temporary rejections.
+            <strong>Office 365 / Exchange Online caps SMTP submission at ~30
+            messages per minute</strong> — set <strong>2500</strong> (≈24/min) for
+            it. 0 = no pause (fine for a local relay or small sends). Applies only
+            to segment sends; one-off receipts, cards and notices are never
+            paced.</small>
+    </label>
+
     <div id="msSandboxWarn" class="warn-note" hidden></div>
     <label>Sandbox: redirect all outgoing mail to (leave blank for live mail)
         <input id="msRedirect" type="email" placeholder="tester@example.com">

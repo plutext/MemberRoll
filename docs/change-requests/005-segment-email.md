@@ -458,3 +458,43 @@ recipient count ("Send 1 email"). 12/12 behaviours passed (a lazily-requested
 ## Follow-ups / amendments
 
 (dated additions after field feedback)
+
+### Amendment 2026-08-11 — inter-message pacing (`sendDelayMs`)
+
+**Why.** The society's first real renewal batch (~75 emails) goes through one
+Exchange Online mailbox (`smtp.office365.com`). Office 365 rate-limits
+authenticated SMTP client submission to **~30 messages/minute**; over that it
+returns temporary `4.x.x` rejections. The CR-005 sender uses
+`Transport.send` (a fresh connect+STARTTLS+AUTH per message) with **no pacing**,
+so a 75-send goes back-to-back at ~40–75/min — right into the limit. Each
+rejection is a FAILED recipient, and **5 consecutive** flip the send to ABORTED.
+It self-heals (Resume re-enqueues PENDING+FAILED, SENT never re-sent), but the
+society would rather **stay under the limit than provoke it**.
+
+**What.** An optional `sendDelayMs` the SEGMENT sender leaves **between**
+messages. It is a **PAGE-only** key in the CR-014 `smtp_settings` blob (like
+CR-021's `redirectTo`): absent/0 → no pause, so the ENV path and every existing
+send stay **byte-for-byte** as before (dev/Mailpit/matrix never pace). Resolved
+per send via `Mail.sendDelayMs()` (read once at send start, so a change applies
+on the next send / on Resume), clamped `[0, 60000]`. `EmailStore.process`
+sleeps it before every message **except the first** — placed past the
+PENDING-fetch so a completed send never sleeps a trailing interval; an interrupt
+mid-sleep leaves rows PENDING and stops cleanly for Resume. Pacing is
+deliberately **only** on the segment sender — one-off receipts, cards and
+notices are never delayed. `AdminMailSettingsResource` GET returns `sendDelayMs`
+and PUT persists/validates it; `admin/mail-settings.html` adds the field with a
+hint recommending **2500** (≈24/min) for Office 365.
+
+**Recommended prod setting:** `2500` ms on the Mail settings page. At that rate
+75 emails take ~3 minutes and never approach the 30/min ceiling. (This does not
+touch the separate basic-SMTP-AUTH sunset — see the ops notes.)
+
+**Verification.** Matrix rows **CR5A-01..04** (config round-trip + validation,
+self-cleaning to ENV): PUT `sendDelayMs=2500` → GET echoes it, source PAGE;
+absent → 0; out-of-range/negative → 400 writing nothing; DELETE → ENV, 0.
+Timing behaviour (a matrix can't assert wall-clock cleanly) via a standalone
+check (`tmp/cr005-pacing/`, gitignored): a PAGE relay with `sendDelayMs=700` and
+a 3-recipient dedicated-period segment → COMPLETE, 3 SENT, **elapsed 1721 ms**
+(≥ 2 × 700 of pure pacing). Full matrix **1001/1** (the 1 = the pre-existing
+CR4-01c calendar flake); every existing mail row stays green under the unchanged
+ENV path (delay 0), proving the no-pause path is untouched.
