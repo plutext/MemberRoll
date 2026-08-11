@@ -184,6 +184,7 @@ public class StripeWebhookResource {
         }
 
         sendReceipt(session, paymentId);
+        sendCards(paymentId, membershipId);
         return ok("recorded");
     }
 
@@ -206,6 +207,35 @@ public class StripeWebhookResource {
         } catch (Exception e) {
             // the payment is recorded; the receipt is best-effort
             LOG.log(Level.WARNING, "receipt email failed for payment #" + paymentId, e);
+        }
+    }
+
+    /**
+     * CR-030: after the commit, email each current MEMBER their CR-017 card in a
+     * separate message. Runs only on a fresh record (a redelivery returned at the
+     * 23505 catch above, before this), and best-effort like the receipt — a mail
+     * failure never fails the webhook. {@link Cards#compose} is the gate: it (and
+     * {@link Cards#memberPersonIds}) yield nothing unless the membership is now
+     * ACTIVE, so a partial payment sends no card. Each card goes to that person's
+     * OWN register address ({@link Cards#primaryEmail}), NOT the Stripe checkout
+     * email the receipt used — a household where one person pays for the couple
+     * still cards both members at their own addresses; a member with no register
+     * email is simply skipped.
+     */
+    private void sendCards(long paymentId, long membershipId) {
+        try {
+            jdbi.useHandle(handle -> {
+                for (long personId : Cards.memberPersonIds(handle, membershipId)) {
+                    Cards.Card card = Cards.compose(handle, membershipId, personId).orElse(null);
+                    if (card == null) continue;
+                    String to = Cards.primaryEmail(handle, personId).orElse(null);
+                    if (to == null) continue;
+                    Mail.sendAsync(to, Cards.subject(card), Cards.emailBody(card), Cards.attachment(card));
+                }
+            });
+        } catch (Exception e) {
+            // the payment is recorded; the card email is best-effort
+            LOG.log(Level.WARNING, "card email failed for payment #" + paymentId, e);
         }
     }
 

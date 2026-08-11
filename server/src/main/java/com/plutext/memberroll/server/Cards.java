@@ -33,6 +33,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.logging.Level;
@@ -138,6 +139,25 @@ final class Cards {
                             rs.getDate("end_date").toLocalDate());
                 })
                 .findOne();
+    }
+
+    /**
+     * The current MEMBER-relationship people of an ACTIVE membership's
+     * household — the person ids that {@link #compose} will return a card for.
+     * Mirrors compose's live-{@code household_person} join (not the
+     * membership_person snapshot, the CR-017 rule) and its ACTIVE gate, so it
+     * returns empty for a still-unpaid membership. Used by the CR-030 auto-send
+     * to card every MEMBER after an online payment; a partial payment leaves the
+     * membership non-ACTIVE and this list empty, so nothing is sent.
+     */
+    static List<Long> memberPersonIds(Handle handle, long membershipId) {
+        return handle.createQuery(
+                "SELECT hp.person_id FROM membership m"
+                + " JOIN household_person hp ON hp.household_id = m.household_id"
+                + "   AND hp.left_household_date IS NULL AND hp.relationship_type = 'MEMBER'"
+                + " WHERE m.membership_id = :mid AND m.status = 'ACTIVE'"
+                + " ORDER BY hp.person_id")
+                .bind("mid", membershipId).mapTo(Long.class).list();
     }
 
     /**

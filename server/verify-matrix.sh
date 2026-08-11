@@ -501,6 +501,39 @@ mailpit_text() { # to-address → text body of the newest matching message (poll
   [ -n "$id" ] && curl -s "$MAILPIT/api/v1/message/$id" | jsq "j['Text']"
 }
 
+mailpit_text_matching() { # to-address needle → body of the newest message to that
+  # address whose Text contains needle. Unlike mailpit_text (newest wins), this
+  # scans ALL matches — needed since CR-030 a MEMBER whose register email equals
+  # the Stripe checkout email receives BOTH a receipt and a (newer) card at the
+  # same address, so messages[0] is no longer necessarily the receipt.
+  local ids="" body=""
+  for _ in 1 2 3 4 5 6; do
+    ids=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$1%22" | jsq "' '.join(m['ID'] for m in j['messages'])")
+    [ -n "$ids" ] && break
+    sleep 0.5
+  done
+  for id in $ids; do
+    body=$(curl -s "$MAILPIT/api/v1/message/$id" | jsq "j['Text']")
+    case "$body" in *"$2"*) echo "$body"; return;; esac
+  done
+}
+
+mailpit_count() { # to-address → number of messages currently to that address
+  curl -s "$MAILPIT/api/v1/search?query=to:%22$1%22" | jsq "len(j['messages'])"
+}
+
+mailpit_attach_ct() { # to-address needle → #attachments on the newest message to
+  # that address whose Text contains needle (empty if none match)
+  local ids id msg
+  ids=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$1%22" | jsq "' '.join(m['ID'] for m in j['messages'])")
+  for id in $ids; do
+    msg=$(curl -s "$MAILPIT/api/v1/message/$id")
+    case "$(echo "$msg" | jsq "j['Text']")" in
+      *"$2"*) echo "$msg" | jsq "len(j.get('Attachments',[]))"; return;;
+    esac
+  done
+}
+
 if [ "$PSQL_OK" = 1 ]; then
   PY="Pay$$"
   # fixtures: three households in the seeded (current) period
@@ -618,10 +651,44 @@ if [ "$PSQL_OK" = 1 ]; then
     # a refunded journal (negative correction) makes the add-on purchasable again
     check "CR4-18e journal refund 201"   "201" "$(JPOST $API/admin/payments "{\"receivedDate\":\"2026-07-18\",\"amountCents\":-1000,\"method\":\"STRIPE\",\"notes\":\"journal refund\",\"allocations\":[{\"type\":\"JOURNAL\",\"membershipId\":$MP2,\"amountCents\":-1000}]}")"
     check "CR4-18f journal offered again" "1000" "$(curl -s "$API/pay/$TK3" | jsq "j['journalPriceCents']")"
-    # receipt email (best-effort, but the dev stack has Mailpit)
+    # receipt email (best-effort, but the dev stack has Mailpit). Peta's register
+    # email equals this checkout email, so since CR-030 a membership card also
+    # lands here — pick the receipt by content, not "newest" (see CR30-05b below).
     if curl -s -m 2 -o /dev/null "$MAILPIT/api/v1/messages"; then
-      RECEIPT=$(mailpit_text "receipt.$$@example.com")
+      RECEIPT=$(mailpit_text_matching "receipt.$$@example.com" "financial for the 12 months from")
       check "CR4-19 receipt in Mailpit"  "true" "$(python3 -c "import sys;print(str('financial for the 12 months from' in sys.argv[1]).lower())" "${RECEIPT:-none}")"
+      # CR-030: the same online payment also emailed Peta (a MEMBER) her card at
+      # her register address — assert it arrived, with the card marker, and note
+      # it co-lands with the receipt (the one-payment-two-mails guarantee).
+      CARD=$(mailpit_text_matching "receipt.$$@example.com" "membership card is attached")
+      check "CR30-03 card co-lands w/ receipt (shared addr)" "true" "$(python3 -c "import sys;print(str('membership card is attached' in sys.argv[1]).lower())" "${CARD:-none}")"
+
+      # CR-030 dedicated fixture: a DISTINCT member email (no receipt-address
+      # collision) so the card assertions are clean. Vera is her household's sole
+      # MEMBER, so a full payment cards exactly her, at her register address.
+      JPOST $API/admin/people "{\"givenName\":\"Vera\",\"familyName\":\"$PY\",\"emails\":[{\"email\":\"card.v.$$@example.com\",\"isPrimary\":true}]}" >/dev/null; PPV=$(body | jsq "j['id']")
+      JPOST $API/admin/households "{\"householdName\":\"$PY V\",\"primaryContactPersonId\":$PPV}" >/dev/null; VHH=$(body | jsq "j['id']")
+      JPOST $API/admin/memberships "{\"householdId\":$VHH,\"membershipPeriodId\":$P2526,\"membershipTypeId\":$T_SINGLE}" >/dev/null; MV=$(body | jsq "j['id']")
+      # partial payment (4400 < 4500 due): membership stays non-ACTIVE, so NO card.
+      # (the receipt still goes to the checkout email vpart.$$, never to card.v.$$)
+      VPART="{\"id\":\"cs_cr30vp$$\",\"payment_status\":\"paid\",\"payment_intent\":\"pi_cr30vp$$\",\"amount_total\":4400,\"customer_details\":{\"email\":\"vpart.$$@example.com\"},\"metadata\":{\"membershipId\":\"$MV\",\"membershipCents\":\"4400\",\"journalCents\":\"0\",\"donationCents\":\"0\"}}"
+      VPE=$(whevent "$VPART")
+      check "CR30-04 partial webhook 200"       "200" "$(whpost "$VPE" "$(whsign "$VPE")")"
+      check "CR30-04b not ACTIVE after partial"  "f"  "$(psqlq "SELECT (status='ACTIVE') FROM membership WHERE membership_id=$MV")"
+      sleep 2  # let any (erroneous) async card send land before asserting absence
+      check "CR30-04c no card to member on partial" "0" "$(mailpit_count "card.v.$$@example.com")"
+      # full payment: membership ACTIVE -> exactly one card to Vera's register email
+      VFULL="{\"id\":\"cs_cr30vf$$\",\"payment_status\":\"paid\",\"payment_intent\":\"pi_cr30vf$$\",\"amount_total\":4500,\"customer_details\":{\"email\":\"vfull.$$@example.com\"},\"metadata\":{\"membershipId\":\"$MV\",\"membershipCents\":\"4500\",\"journalCents\":\"0\",\"donationCents\":\"0\"}}"
+      VFE=$(whevent "$VFULL")
+      check "CR30-01 full webhook 200"          "200" "$(whpost "$VFE" "$(whsign "$VFE")")"
+      check "CR30-01b ACTIVE after full"         "t"  "$(psqlq "SELECT (status='ACTIVE') FROM membership WHERE membership_id=$MV")"
+      VCARD=$(mailpit_text_matching "card.v.$$@example.com" "membership card is attached")  # polls for arrival
+      check "CR30-02 card to member register email" "true" "$(python3 -c "import sys;print(str('membership card is attached' in sys.argv[1]).lower())" "${VCARD:-none}")"
+      check "CR30-02b card has one PNG attachment" "1" "$(mailpit_attach_ct "card.v.$$@example.com" "membership card is attached")"
+      # redelivery (same payment_intent) is a 200 no-op -> NO second card
+      check "CR30-05 redelivery 200 no-op"      "200" "$(whpost "$VFE" "$(whsign "$VFE")")"
+      sleep 2
+      check "CR30-05b no duplicate card"         "1"  "$(mailpit_count "card.v.$$@example.com")"
     else
       echo "SKIP CR4-19 receipt row (Mailpit not reachable at $MAILPIT)"
     fi
