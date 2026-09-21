@@ -359,14 +359,15 @@ Renewals page — see [Exports](#exports) above. The treasurer's
 **reconciliation export** (categorised payments for a window, plus the Xero
 clearing-account journal and the mark-reconciled step) is on this Reports
 page too, below the reports. The Xero journal file is Xero's own
-manual-journal import template: one debit line for the window's Stripe
-total against the clearing account, then one credit line **per payment and
-per part** (membership, journal, donation, other), each described
-`#<receipt no> <date> <payer> (<household>) — <part>`, so the income
-accounts in Xero list each member's payment. A refund shows as a positive
-line marked `refund`. Import it in Xero via Accounting → Manual journals →
-Import; Xero accepts at most 300 lines per file, so a very large window
-arrives as several `(part k of n)` journals in the one file, each balanced.
+manual-journal import template, with **one journal per Stripe payment**:
+narrated `#<receipt no> <date> <payer> (<household>)` — the text Xero shows
+in an account's transaction list — dated on the day the payment was
+received, holding a debit to the clearing account for the gross and a
+credit line per part (Membership, Journal, Donation, Other). A refund is a
+journal the other way round, its line marked `refund`. Import it in Xero
+via Accounting → Manual journals → Import. Xero accepts at most 300 lines
+per file, so a very large window is refused with a message asking you to
+narrow the dates (a month always fits; a whole year usually does).
 
 ## System
 

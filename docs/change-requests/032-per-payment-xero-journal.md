@@ -224,6 +224,77 @@ No browser walkthrough: the UI is untouched (same button, same URL,
 `admin.js:1670`); the real-Xero import of a production export is the
 treasurer's step and is still to be done.
 
+## Amendment 2026-09-21 — one journal per payment (field feedback)
+
+The treasurer imported the first export into the society's Xero. It
+imported, with two findings:
+
+1. **Mojibake**: the em dash in each description arrived as `â€”` —
+   Xero/Excel read the UTF-8 file as Windows-1252. Fix: the journal is
+   **ASCII only**. Descriptions use plain words, and `describePayment`
+   passes names through `ascii()` (NFD-decompose, strip combining marks,
+   `?` for whatever remains — `Zoë` → `Zoe`, asserted in CR32-12e). A
+   UTF-8 BOM was rejected: it fixes Excel but Xero's importer would see
+   `\ufeff*Narration` as a mismatched heading.
+2. **Wrong column for the member text.** In Xero's account transaction
+   list a manual-journal line shows the journal's **Narration**; the
+   line Description is only visible inside the journal. So the
+   per-payment text has to be the Narration — and Narration is
+   journal-level (lines sharing Narration+Date fold into one journal;
+   distinct narrations are distinct journals, each of which must
+   balance). The design is therefore now **one journal per payment**:
+
+   ```
+   *Narration,*Date,Description,*AccountCode,*TaxRate,*Amount,TrackingName1,TrackingOption1,TrackingName2,TrackingOption2
+   "#21 2099-03-20 Rec2926639 HH household",2099-03-20,Stripe payment (gross),640,BAS Excluded,60.00,,,,
+   "#21 2099-03-20 Rec2926639 HH household",2099-03-20,Membership,244.8,BAS Excluded,-45.00,,,,
+   "#21 2099-03-20 Rec2926639 HH household",2099-03-20,Journal,242.4,BAS Excluded,-10.00,,,,
+   "#21 2099-03-20 Rec2926639 HH household",2099-03-20,Donation,244.14,BAS Excluded,-5.00,,,,
+   "#24 2099-03-20 Rec2926639 HH household",2099-03-20,Stripe payment (gross),640,BAS Excluded,-30.00,,,,
+   "#24 2099-03-20 Rec2926639 HH household",2099-03-20,Membership refund,244.8,BAS Excluded,30.00,,,,
+   ```
+
+   - Narration = `#<payment id> <received date> <payer> (<household>)`
+     (fallbacks as before); Date = the payment's **received date** (a
+     bonus: the P&L lands in the right month, where the aggregate
+     journal put a whole window on its last date); Description = the
+     line's part (`Stripe payment (gross)`, `Membership`, `Donation`,
+     `… refund`), which is what Xero shows inside the journal.
+   - The clearing debit is now **per payment** — §2's "one debit"
+     rejection is withdrawn, since a per-payment journal needs its own
+     debit to balance, and the clearing account listing each Stripe
+     transaction individually matches Stripe's own balance list (a
+     benefit for tracing a payout that spans a window).
+   - §3's in-file "(part k of n)" split is **gone** — there is no
+     balanced way to split a per-payment journal set inside one file
+     that Xero would read differently, and the parts exist to satisfy
+     one journal's balance, which each payment now does alone. Xero's
+     300-line cap is enforced instead as a **400** naming the count
+     (`this window needs 302 journal lines; Xero imports at most 300 per
+     file — narrow the date range`), and `admin.js`'s `downloadFrom`
+     now surfaces a JSON `{error}` body in the failure banner (it used
+     to show only the status code) so the treasurer reads the remedy.
+     The earlier "a 400 from a download button is a dead end" objection
+     is met by the message; ~75 renewals a year is 150–225 lines, so a
+     financial-year window fits and a month always does.
+   - Line count per payment = clearing (when gross ≠ 0) + one per
+     non-zero type. Lines per file ≤ 300 checked before writing.
+
+**Verification (amendment):** matrix rows rewritten — CR15-06f now
+"file balances", 06h "clearing debits = gross" (a sum), 06k "one journal
+per payment" (3 narrations for 3 payments); CR32-01 eight lines (4+2+2),
+CR32-02 PB's four Descriptions in order, CR32-02b/c the narration
+shapes, CR32-02d journal dated on the receipt date, CR32-05b PB's
+clearing +60.00, CR32-06 PE's refund journal (`Stripe payment (gross)=
+-30.00,Membership refund=30.00`), CR32-07 every journal sums to 0,
+CR32-08 the whole file is ASCII bytes, CR32-11 journal order, CR32-12
+302 lines → 400 with the exact message, 12c/d 298 lines = 149 journals
+export, 12e `Zoë` → `Zoe`. Full matrix **1029/16** (the same 16
+calendar failures). Sample above is live dev output.
+Still to confirm in Xero: the re-import of a real window with the new
+shape (expected: one journal per payment, narration visible in the
+account lists, no `â€”`).
+
 ## Follow-ups
 
 - Matrix period staleness (above).

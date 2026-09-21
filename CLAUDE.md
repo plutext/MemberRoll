@@ -661,28 +661,37 @@ address, a CR-007-approved one its postal, and the admin's preferred flag
 is the control. **No migration** (the table already existed). Matrix +20
 CR28-\* rows (self-cleaning), Playwright 13/0.
 
-CR-032 (2026-09-21) made the CR-015 Xero journal **per-payment**: the
-export still debits the clearing account once for the window's gross and
-still balances by construction, but the income side is now one credit
-line per `ReconciliationStore.Row` × non-zero allocation type, each with
-a Description (`#<payment id> <date> <payer> (<household>) — <type>`,
-`… refund` when the allocation is negative; payer falls back to
-household, then method) so Xero's account transaction lists read like
-the reconciliation CSV. The header is Xero's ten-column manual-journal
-template verbatim (`*Narration,*Date,Description,*AccountCode,*TaxRate,
-*Amount,TrackingName1..TrackingOption2`, tracking cells empty — a
-mismatched heading fails Xero's import). Xero caps an import file at 300
-lines, so `AdminPaymentsResource.chunkForXero` splits by payment into
-`(part k of n)` journals each with its own clearing debit (a payment's
-lines never straddle parts; one part = no suffix). No store/schema/UI/
-endpoint change; the aggregate form was replaced, not kept behind a
-flag. Matrix: CR15-06\* rewritten for the new columns (`jrows` helper),
-+19 CR32-\* rows incl. a self-deleting 305-payment chunking fixture.
-The matrix's 16 standing calendar failures (CR4-01c/20/22, CR6-06/08,
-CR7-25, CR21-03..07) started 2026-09-01: the V2 seed's only yearly period
-`2025-2026` ended 2026-08-31, so every "current membership" window
-(`current_date <= per.end_date`) is empty on dev — a fixture-staleness
-follow-up, not a code fault.
+CR-032 (2026-09-21) made the CR-015 Xero journal **one journal per
+payment** (same-day amendment after the treasurer's first real import):
+`exportXeroJournal` iterates `ReconciliationStore.Row`s, and for each
+emits Narration `#<payment id> <received date> <payer> (<household>)`
+(payer falls back to household, then method), Date = the received date,
+a clearing debit for the gross plus one credit line per non-zero
+allocation type with Description `Membership`/`Journal`/`Donation`/
+`Other` (`… refund` when negative). Two Xero facts drive the shape:
+an account's transaction list shows a manual-journal line's
+**Narration**, not its Description (so the member text must be the
+narration), and Narration is journal-level (lines sharing
+Narration+Date fold into one journal; distinct narrations are distinct
+journals, each of which must balance — a payment's does by the store's
+fold invariant). The header is Xero's ten-column template verbatim
+(`*Narration,*Date,Description,*AccountCode,*TaxRate,*Amount,
+TrackingName1..TrackingOption2`, tracking cells empty — a mismatched
+heading fails the import). The file is **ASCII only** (`ascii()`
+NFD-strips accents, `?` for the rest): Xero/Excel read it as
+Windows-1252 and a UTF-8 dash arrived as `â€”` — no BOM either (Xero
+would see it as a bad heading). Xero's 300-line/file cap is a **400
+naming the count** ("narrow the date range"; a month always fits), and
+`admin.js` `downloadFrom` now shows a JSON `{error}` body in its failure
+banner. No store/schema/endpoint change; the aggregate form was
+replaced, not kept behind a flag. Matrix: CR15-06\* rewritten for the
+new shape (`jrows` helper), +25 CR32-\* rows incl. a self-deleting
+151-payment fixture (302 lines → 400, 298 → export) and a `Zoë`→`Zoe`
+row. The matrix's 16 standing calendar failures (CR4-01c/20/22,
+CR6-06/08, CR7-25, CR21-03..07) started 2026-09-01: the V2 seed's only
+yearly period `2025-2026` ended 2026-08-31, so every "current
+membership" window (`current_date <= per.end_date`) is empty on dev —
+a fixture-staleness follow-up, not a code fault.
 
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):

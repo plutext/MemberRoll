@@ -1695,7 +1695,12 @@ async function markReconciled() {
 async function downloadFrom(path, filename) {
     const response = await Auth.api(path);
     if (!response) return;
-    if (!response.ok) return say(`Download failed (HTTP ${response.status}).`, true);
+    if (!response.ok) {
+        // a JSON {error} body (e.g. the CR-032 300-line refusal) is the message the admin needs
+        let detail = "";
+        try { detail = (await response.json()).error || ""; } catch (e) { /* not JSON */ }
+        return say(`Download failed (HTTP ${response.status})${detail ? ": " + detail : "."}`, true);
+    }
     const url = URL.createObjectURL(await response.blob());
     const a = document.createElement("a");
     a.href = url;
