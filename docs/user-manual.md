@@ -360,8 +360,9 @@ Renewals page — see [Exports](#exports) above. The treasurer's
 clearing-account journal and the mark-reconciled step) is on this Reports
 page too, below the reports. The Xero journal file is Xero's own
 manual-journal import template, with **one journal per Stripe payment**:
-narrated `#<receipt no> <date> <payer> (<household>)` — the text Xero shows
-in an account's transaction list — dated on the day the payment was
+narrated `#<receipt no> <date> <payer> (<household>) - MemberRoll Stripe
+reconciliation <from>..<to>` — the text Xero shows in an account's
+transaction list, unique per payment — dated on the day the payment was
 received, holding a debit to the clearing account for the gross and a
 credit line per part (Membership, Journal, Donation, Other). A refund is a
 journal the other way round, its line marked `refund`. Import it in Xero

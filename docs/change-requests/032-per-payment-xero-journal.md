@@ -246,16 +246,20 @@ imported, with two findings:
 
    ```
    *Narration,*Date,Description,*AccountCode,*TaxRate,*Amount,TrackingName1,TrackingOption1,TrackingName2,TrackingOption2
-   "#21 2099-03-20 Rec2926639 HH household",2099-03-20,Stripe payment (gross),640,BAS Excluded,60.00,,,,
-   "#21 2099-03-20 Rec2926639 HH household",2099-03-20,Membership,244.8,BAS Excluded,-45.00,,,,
-   "#21 2099-03-20 Rec2926639 HH household",2099-03-20,Journal,242.4,BAS Excluded,-10.00,,,,
-   "#21 2099-03-20 Rec2926639 HH household",2099-03-20,Donation,244.14,BAS Excluded,-5.00,,,,
-   "#24 2099-03-20 Rec2926639 HH household",2099-03-20,Stripe payment (gross),640,BAS Excluded,-30.00,,,,
-   "#24 2099-03-20 Rec2926639 HH household",2099-03-20,Membership refund,244.8,BAS Excluded,30.00,,,,
+   "#21 2099-03-20 Rec2926639 HH household - MemberRoll Stripe reconciliation 2099-03-01..2099-03-31",2099-03-20,Stripe payment (gross),640,BAS Excluded,60.00,,,,
+   "#21 2099-03-20 Rec2926639 HH household - MemberRoll Stripe reconciliation 2099-03-01..2099-03-31",2099-03-20,Membership,244.8,BAS Excluded,-45.00,,,,
+   "#21 2099-03-20 Rec2926639 HH household - MemberRoll Stripe reconciliation 2099-03-01..2099-03-31",2099-03-20,Journal,242.4,BAS Excluded,-10.00,,,,
+   "#21 2099-03-20 Rec2926639 HH household - MemberRoll Stripe reconciliation 2099-03-01..2099-03-31",2099-03-20,Donation,244.14,BAS Excluded,-5.00,,,,
+   "#24 2099-03-20 Rec2926639 HH household - MemberRoll Stripe reconciliation 2099-03-01..2099-03-31",2099-03-20,Stripe payment (gross),640,BAS Excluded,-30.00,,,,
+   "#24 2099-03-20 Rec2926639 HH household - MemberRoll Stripe reconciliation 2099-03-01..2099-03-31",2099-03-20,Membership refund,244.8,BAS Excluded,30.00,,,,
    ```
 
-   - Narration = `#<payment id> <received date> <payer> (<household>)`
-     (fallbacks as before); Date = the payment's **received date** (a
+   - Narration = `#<payment id> <received date> <payer> (<household>) -
+     MemberRoll Stripe reconciliation <from>..<to>` (fallbacks as
+     before; the member text leads because it is what the account list
+     shows first, the window suffix says where the journal came from —
+     the treasurer's second-round wording, 2026-09-21; an open bound is
+     blank, `..2026-09-16`); Date = the payment's **received date** (a
      bonus: the P&L lands in the right month, where the aggregate
      journal put a whole window on its last date); Description = the
      line's part (`Stripe payment (gross)`, `Membership`, `Donation`,
@@ -289,8 +293,10 @@ clearing +60.00, CR32-06 PE's refund journal (`Stripe payment (gross)=
 -30.00,Membership refund=30.00`), CR32-07 every journal sums to 0,
 CR32-08 the whole file is ASCII bytes, CR32-11 journal order, CR32-12
 302 lines → 400 with the exact message, 12c/d 298 lines = 149 journals
-export, 12e `Zoë` → `Zoe`. Full matrix **1029/16** (the same 16
-calendar failures). Sample above is live dev output.
+export, 12e `Zoë` → `Zoe`; the second round added CR32-02e (open-bound
+label `2099-03-01..`) and CR32-02f (narrations unique per payment).
+Full matrix **1031/16** (the same 16 calendar failures). Sample above is
+live dev output.
 Still to confirm in Xero: the re-import of a real window with the new
 shape (expected: one journal per payment, narration visible in the
 account lists, no `â€”`).

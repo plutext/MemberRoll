@@ -664,8 +664,11 @@ CR28-\* rows (self-cleaning), Playwright 13/0.
 CR-032 (2026-09-21) made the CR-015 Xero journal **one journal per
 payment** (same-day amendment after the treasurer's first real import):
 `exportXeroJournal` iterates `ReconciliationStore.Row`s, and for each
-emits Narration `#<payment id> <received date> <payer> (<household>)`
-(payer falls back to household, then method), Date = the received date,
+emits Narration `#<payment id> <received date> <payer> (<household>) -
+MemberRoll Stripe reconciliation <from>..<to>` (member text first —
+it's what the account list shows; payer falls back to household, then
+method; `#id` makes every journal's narration unique), Date = the
+received date,
 a clearing debit for the gross plus one credit line per non-zero
 allocation type with Description `Membership`/`Journal`/`Donation`/
 `Other` (`… refund` when negative). Two Xero facts drive the shape:

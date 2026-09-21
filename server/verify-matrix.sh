@@ -1761,8 +1761,10 @@ if [ "$PSQL_OK" = 1 ]; then
   # journals of 4 + 2 + 2 = 8 lines, narrated "#id date payer (household)".
   check "CR32-01 eight lines"            "8" "$(echo "$JCSV" | jrows "print(len(rows))" 2>/dev/null)"
   check "CR32-02 PB journal descriptions" "Stripe payment (gross),Membership,Journal,Donation" "$(echo "$JCSV" | jrows "print(','.join(r[2] for r in rows if r[0].startswith('#$PB ')))" 2>/dev/null)"
-  check "CR32-02b PB narration payer+household" "#$PB 2099-03-20 Reece Rec$$ (Rec$$ HH household)" "$(echo "$JCSV" | jrows "print(next(r[0] for r in rows if r[0].startswith('#$PB ')))" 2>/dev/null)"
-  check "CR32-02c PD household-only fallback" "#$PD 2099-03-20 Rec$$ HH household" "$(echo "$JCSV" | jrows "print(next(r[0] for r in rows if r[0].startswith('#$PD ')))" 2>/dev/null)"
+  check "CR32-02b PB narration payer+household+window" "#$PB 2099-03-20 Reece Rec$$ (Rec$$ HH household) - MemberRoll Stripe reconciliation 2099-03-01..2099-03-31" "$(echo "$JCSV" | jrows "print(next(r[0] for r in rows if r[0].startswith('#$PB ')))" 2>/dev/null)"
+  check "CR32-02c PD household-only fallback" "#$PD 2099-03-20 Rec$$ HH household - MemberRoll Stripe reconciliation 2099-03-01..2099-03-31" "$(echo "$JCSV" | jrows "print(next(r[0] for r in rows if r[0].startswith('#$PD ')))" 2>/dev/null)"
+  check "CR32-02e open-bound window label" "yes" "$(curl -s "$RXJ?from=2099-03-01&unreconciledOnly=true" -H "Authorization: Bearer $ADMIN" | jrows "print('yes' if rows and all(r[0].endswith(' - MemberRoll Stripe reconciliation 2099-03-01..') for r in rows) else rows[0][0] if rows else 'empty')" 2>/dev/null)"
+  check "CR32-02f narrations unique per payment" "yes" "$(echo "$JCSV" | jrows "ids=[r[0].split(' ')[0] for r in rows]; print('yes' if len(set(r[0] for r in rows))==len(set(ids)) else 'no')" 2>/dev/null)"
   check "CR32-02d PB dated on receipt"   "2099-03-20" "$(echo "$JCSV" | jrows "print(next(r[1] for r in rows if r[0].startswith('#$PB ')))" 2>/dev/null)"
   check "CR32-03 PB membership -45.00"   "-45.00" "$(echo "$JCSV" | jrows "print(next(r[5] for r in rows if r[0].startswith('#$PB ') and r[3]=='4000'))" 2>/dev/null)"
   check "CR32-04 PB journal -10.00"      "-10.00" "$(echo "$JCSV" | jrows "print(next(r[5] for r in rows if r[0].startswith('#$PB ') and r[3]=='4010'))" 2>/dev/null)"

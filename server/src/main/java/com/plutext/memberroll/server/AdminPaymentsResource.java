@@ -297,7 +297,8 @@ public class AdminPaymentsResource {
     /**
      * The importable Xero manual journal for the window's STRIPE payments
      * (CR-015 §3; per-payment journals since CR-032): ONE JOURNAL PER PAYMENT,
-     * narrated "#id date payer (household)" and dated on the payment's
+     * narrated "#id date payer (household) - MemberRoll Stripe reconciliation
+     * <window>" and dated on the payment's
      * received date, holding the clearing-account debit for the payment's
      * gross plus one credit line per non-zero allocation type. Narration is
      * the text Xero shows in an account's transaction list (a line's
@@ -344,8 +345,12 @@ public class AdminPaymentsResource {
         try (CSVPrinter csv = new CSVPrinter(sw, CSVFormat.DEFAULT)) {
             csv.printRecord("*Narration", "*Date", "Description", "*AccountCode", "*TaxRate", "*Amount",
                     "TrackingName1", "TrackingOption1", "TrackingName2", "TrackingOption2");
+            // "#412 2026-08-03 Jane Smith (Smith household) - MemberRoll Stripe reconciliation 2026-08-01..2026-08-31":
+            // the member text leads (it is what the account list shows first), the
+            // window suffix says where the journal came from; #id keeps it unique.
+            String suffix = " - MemberRoll Stripe reconciliation" + windowLabel(filter);
             for (ReconciliationStore.Row r : export.rows()) {
-                String narration = describePayment(r);
+                String narration = describePayment(r) + suffix;
                 LocalDate date = r.receivedDate();
                 journalLine(csv, narration, date, "Stripe payment (gross)", m.clearingCode(), m.taxRate(), r.grossCents());
                 journalLine(csv, narration, date, typeWord("Membership", r.membershipCents()),
@@ -387,6 +392,12 @@ public class AdminPaymentsResource {
         if (hasHousehold) sb.append(hasPayer ? " (" : " ").append(r.household()).append(hasPayer ? " household)" : " household");
         if (!hasPayer && !hasHousehold) sb.append(' ').append(r.method());
         return ascii(sb.toString());
+    }
+
+    /** " 2026-08-01..2026-08-31" — an open bound is blank ("..2026-08-31"), keeping the label ASCII. */
+    private static String windowLabel(ReconciliationStore.Filter f) {
+        if (f.from() == null && f.to() == null) return "";
+        return " " + (f.from() == null ? "" : f.from()) + ".." + (f.to() == null ? "" : f.to());
     }
 
     private static String typeWord(String type, int allocationCents) {
