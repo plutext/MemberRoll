@@ -36,7 +36,7 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 
 /**
- * CR-019: the four cross-cutting report exports, admin-only, in the existing
+ * CR-019: the cross-cutting report exports (four, plus CR-033's new households), in the existing
  * CSV idiom (Commons CSV, Content-Disposition attachment) — deliberately no
  * report builder, no stored reports, no PDF. The period-scoped exports (AGM,
  * mailing labels, financial) stay on AdminPeriodsResource and the
@@ -158,6 +158,36 @@ public class AdminReportsResource {
             throw new IllegalStateException(e);
         }
         return csvResponse(sw.toString(), "donations.csv");
+    }
+
+    /** Report E (CR-033) — households by joining date (earliest membership start), newest first. */
+    @GET
+    @Path("new-households.csv")
+    @Produces("text/csv")
+    public Response newHouseholds(@QueryParam("from") String fromParam, @QueryParam("to") String toParam) {
+        LocalDate from;
+        LocalDate to;
+        try {
+            from = fromParam == null || fromParam.isBlank() ? null : LocalDate.parse(fromParam);
+            to = toParam == null || toParam.isBlank() ? null : LocalDate.parse(toParam);
+        } catch (DateTimeParseException e) {
+            return badRequest("dates must be YYYY-MM-DD");
+        }
+        if (from != null && to != null && from.isAfter(to)) {
+            return badRequest("'from' must not be after 'to'");
+        }
+        StringWriter sw = new StringWriter();
+        try (CSVPrinter csv = new CSVPrinter(sw, CSVFormat.DEFAULT)) {
+            csv.printRecord("Household", "Primary contact", "Email", "Phone", "Joined", "Type",
+                    "Period", "Status");
+            for (ReportStore.NewHouseholdRow r : reports.newHouseholds(from, to)) {
+                csv.printRecord(r.household(), blank(r.primaryContact()), blank(r.email()),
+                        blank(r.phone()), r.joined(), r.type(), r.period(), r.status());
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+        return csvResponse(sw.toString(), "new-households.csv");
     }
 
     // ---- helpers ------------------------------------------------------------

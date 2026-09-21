@@ -2172,6 +2172,50 @@ print('match' if round(float(total) * 100) == cents else f'{total} != {cents}')"
   check "CR19-11 reversal row -5.00"     "-5.00" "$(donq $RPD2 4)"
   check "CR19-12 out-of-range absent"    "MISSING" "$(donq $RPD3 0)"
   check "CR19-12b membership-only payment absent" "0" "$(echo "$DON" | grep -c ",2094-09-15," | head -1)"
+
+  # --- CR-033: new households (report E) — joined = earliest membership start ---
+  NH=$API/admin/export/new-households.csv
+  check "CR33-01 guest 403"              "403" "$(code "$NH")"
+  check "CR33-01b member 403"            "403" "$(code "$NH" -H "Authorization: Bearer $USER")"
+  check "CR33-01c noaud 401"             "401" "$(code "$NH" -H "Authorization: Bearer $NOAUD")"
+  check "CR33-01d manager 200"           "200" "$(code "$NH" -H "Authorization: Bearer $MANAGER")"
+  check "CR33-01e admin 200"             "200" "$(JADMIN "$NH")"
+  check "CR33-02 bad date 400"           "400" "$(JADMIN "$NH?from=yesterday")"
+  check "CR33-02b from>to 400"           "400" "$(JADMIN "$NH?from=2095-03-31&to=2095-03-01")"
+  # N1: mid-period joiner in A (startDate override = the wizard's "today" stamp),
+  # then a rollover-style B membership at the period start; N2: period-start only;
+  # N3: a household with no membership at all
+  JPOST $API/admin/people "{\"givenName\":\"Nova\",\"familyName\":\"$RP\",\"emails\":[{\"email\":\"nova.$$@rep.test\",\"isPrimary\":true}],\"phones\":[{\"number\":\"0400 033 001\",\"type\":\"MOBILE\",\"isPrimary\":true}]}" >/dev/null; RP_NOVA=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RP N1 hh\",\"primaryContactPersonId\":$RP_NOVA}" >/dev/null; RP_N1=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$RP_N1,\"membershipPeriodId\":$RPA,\"membershipTypeId\":$T_SINGLE,\"startDate\":\"2095-03-15\"}" >/dev/null
+  JPOST $API/admin/memberships "{\"householdId\":$RP_N1,\"membershipPeriodId\":$RPB,\"membershipTypeId\":$T_SINGLE,\"startDate\":\"2095-09-01\"}" >/dev/null
+  JPOST $API/admin/people "{\"givenName\":\"Nell\",\"familyName\":\"$RP\"}" >/dev/null; RP_NELL=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RP N2 hh\",\"primaryContactPersonId\":$RP_NELL}" >/dev/null; RP_N2=$(body | jsq "j['id']")
+  JPOST $API/admin/memberships "{\"householdId\":$RP_N2,\"membershipPeriodId\":$RPA,\"membershipTypeId\":$T_SINGLE,\"startDate\":\"2094-09-01\"}" >/dev/null
+  JPOST $API/admin/people "{\"givenName\":\"Nico\",\"familyName\":\"$RP\"}" >/dev/null; RP_NICO=$(body | jsq "j['id']")
+  JPOST $API/admin/households "{\"householdName\":\"$RP N3 hh\",\"primaryContactPersonId\":$RP_NICO}" >/dev/null
+  NHM=$(curl -s "$NH?from=2095-03-01&to=2095-03-31" -H "Authorization: Bearer $ADMIN")
+  nhq() { echo "$1" | python3 -c "
+import sys, csv
+rows = {r[0]: r for r in csv.reader(sys.stdin) if r}
+r = rows.get('$RP $2 hh')
+print('MISSING' if r is None else r[$3])"; }
+  check "CR33-06 header exact"           "Household,Primary contact,Email,Phone,Joined,Type,Period,Status" "$(echo "$NHM" | head -1 | tr -d '\r')"
+  check "CR33-03 N1 joined 2095-03-15"   "2095-03-15" "$(nhq "$NHM" N1 4)"
+  check "CR33-03b N1 type SINGLE"        "SINGLE" "$(nhq "$NHM" N1 5)"
+  check "CR33-03c N1 period A"           "$RP A" "$(nhq "$NHM" N1 6)"
+  check "CR33-03d N1 status pending"     "PENDING_PAYMENT" "$(nhq "$NHM" N1 7)"
+  check "CR33-07 N1 contact email+phone" "Nova $RP|nova.$$@rep.test|0400 033 001" "$(echo "$NHM" | python3 -c "
+import sys, csv
+r = next(r for r in csv.reader(sys.stdin) if r and r[0] == '$RP N1 hh'); print('|'.join(r[1:4]))")"
+  check "CR33-04 N1 one row despite B"   "1" "$(echo "$NHM" | grep -c "^$RP N1 hh,")"
+  check "CR33-05 N2 absent from March"   "MISSING" "$(nhq "$NHM" N2 4)"
+  check "CR33-05b N2 present at period start" "2094-09-01" "$(nhq "$(curl -s "$NH?from=2094-09-01&to=2094-09-01" -H "Authorization: Bearer $ADMIN")" N2 4)"
+  NHO=$(curl -s "$NH?from=2094-09-01&to=2095-08-31" -H "Authorization: Bearer $ADMIN")
+  check "CR33-08 newest first"           "N1,N2" "$(echo "$NHO" | python3 -c "
+import sys, csv
+print(','.join(r[0].split(' ')[1] for r in csv.reader(sys.stdin) if r and r[0] in ('$RP N1 hh','$RP N2 hh')))")"
+  check "CR33-09 no-membership household absent" "0" "$(curl -s "$NH" -H "Authorization: Bearer $ADMIN" | grep -c "^$RP N3 hh,")"
 else
   echo "note: psql not found — skipping CR-019 data rows (address/deceased fixtures need psql)"
 fi

@@ -3016,6 +3016,22 @@ function wireReports() {
     on("repUnrenewed", () => downloadReport("/admin/export/unrenewed.csv?fromPeriodId="
         + document.getElementById("repUnrenewedFrom").value + "&toPeriodId="
         + document.getElementById("repUnrenewedTo").value, "unrenewed.csv"));
+    // CR-033: new households — From prefilled 90 days back (the "recent" question)
+    const newFrom = document.getElementById("repNewFrom");
+    if (newFrom && !newFrom.value) {
+        const d = new Date();
+        d.setDate(d.getDate() - 90);
+        newFrom.value = d.toLocaleDateString("sv"); // local-date ISO, not toISOString's UTC
+    }
+    on("repNewHouseholds", () => {
+        const params = new URLSearchParams();
+        const from = document.getElementById("repNewFrom").value;
+        const to = document.getElementById("repNewTo").value;
+        if (from) params.set("from", from);
+        if (to) params.set("to", to);
+        const qs = params.toString();
+        downloadReport("/admin/export/new-households.csv" + (qs ? "?" + qs : ""), "new-households.csv");
+    });
     on("repDonations", () => {
         const params = new URLSearchParams();
         const from = document.getElementById("repDonFrom").value;

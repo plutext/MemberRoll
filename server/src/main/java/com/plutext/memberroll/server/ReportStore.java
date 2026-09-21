@@ -226,6 +226,51 @@ class ReportStore {
                 .list());
     }
 
+    // ---- Report E: new households (CR-033) ----------------------------------
+
+    record NewHouseholdRow(String household, String primaryContact, String email, String phone,
+                           LocalDate joined, String type, String period, String status) {}
+
+    /**
+     * Households whose joining date — the earliest {@code membership.start_date}
+     * over ALL their memberships, any status — falls in the window (null bounds
+     * are open ends). The CR-019 "date became a member" derivation lifted to
+     * the household: a mid-period creation (wizard, CR-007 approval) is stamped
+     * with its day, a rollover with the period start, so the MIN is the join
+     * day and a later rollover row never wins it. Type/Period/Status describe
+     * that joining membership (ties: lowest membership id). Newest first.
+     */
+    List<NewHouseholdRow> newHouseholds(LocalDate from, LocalDate to) {
+        return jdbi.withHandle(handle -> handle.createQuery(
+                "SELECT COALESCE(NULLIF(trim(h.household_name), ''),"
+                + "          trim(pc.given_name || ' ' || pc.family_name)) AS household,"
+                + " trim(pc.given_name || ' ' || pc.family_name) AS primary_contact,"
+                + " e.email, ph.number AS phone, j.joined, mt.name AS type, per.name AS period, j.status"
+                + " FROM household h"
+                + " JOIN LATERAL ("
+                + "   SELECT m.start_date AS joined, m.membership_type_id, m.membership_period_id, m.status"
+                + "   FROM membership m WHERE m.household_id = h.household_id"
+                + "   ORDER BY m.start_date, m.membership_id LIMIT 1) j ON true"
+                + " JOIN membership_type mt ON mt.membership_type_id = j.membership_type_id"
+                + " JOIN membership_period per ON per.membership_period_id = j.membership_period_id"
+                + " LEFT JOIN person pc ON pc.person_id = h.primary_contact_person_id"
+                + " LEFT JOIN LATERAL ("
+                + "   SELECT ea.email FROM email_address ea WHERE ea.person_id = pc.person_id"
+                + "   ORDER BY ea.is_primary DESC, ea.email_id LIMIT 1) e ON true"
+                + " LEFT JOIN LATERAL ("
+                + "   SELECT pn.number FROM phone_number pn WHERE pn.person_id = pc.person_id"
+                + "   ORDER BY pn.is_primary DESC, pn.phone_number_id LIMIT 1) ph ON true"
+                + " WHERE (CAST(:from AS date) IS NULL OR j.joined >= :from)"
+                + "   AND (CAST(:to AS date) IS NULL OR j.joined <= :to)"
+                + " ORDER BY j.joined DESC, household, h.household_id")
+                .bind("from", from).bind("to", to)
+                .map((rs, ctx) -> new NewHouseholdRow(rs.getString("household"),
+                        rs.getString("primary_contact"), rs.getString("email"), rs.getString("phone"),
+                        rs.getDate("joined").toLocalDate(), rs.getString("type"),
+                        rs.getString("period"), rs.getString("status")))
+                .list());
+    }
+
     // ---- helpers ------------------------------------------------------------
 
     private static String joinAddress(String line1, String line2, String locality,

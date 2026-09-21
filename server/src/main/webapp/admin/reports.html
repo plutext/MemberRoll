@@ -51,6 +51,18 @@
     <label>To <select id="repUnrenewedTo"></select></label>
     <button id="repUnrenewed">Download CSV</button>
 
+    <h3>New households</h3>
+    <p class="muted">Households by the date they joined — the start of their
+        earliest membership (a wizard or application join is dated the day it
+        was recorded; a household brought in by the spreadsheet import is dated
+        the start of its earliest imported year). Newest first, with the primary
+        contact's email and phone and the joining membership's type, year and
+        payment status. From is prefilled to 90 days ago; clear both dates for
+        all time.</p>
+    <label>From <input id="repNewFrom" type="date"></label>
+    <label>To <input id="repNewTo" type="date"></label>
+    <button id="repNewHouseholds">Download CSV</button>
+
     <h3>Donations</h3>
     <p class="muted">Payments carrying a donation part, by received date
         (leave the dates blank for all time), with a trailing total. Reversals

@@ -696,6 +696,21 @@ yearly period `2025-2026` ended 2026-08-31, so every "current
 membership" window (`current_date <= per.end_date`) is empty on dev —
 a fixture-staleness follow-up, not a code fault.
 
+CR-033 (2026-09-21) added the fifth report, **New households**
+(`GET /api/admin/export/new-households.csv?from=&to=`, `{"admin",
+"manager"}` like the other reports; `ReportStore.newHouseholds`).
+"Joined" = the household's earliest `membership.start_date` over ALL its
+memberships, any status — the CR-019 "date became a member" derivation
+lifted to the household, correct because `createForHousehold` stamps a
+mid-period creation (wizard, CR-007 approval) with today and only a
+rollover/period-start creation with the period start, so a later rollover
+row never wins the MIN; an imported household is dated its earliest
+imported year's start (the CR-019 limitation, which the 90-day default
+window sidesteps). Type/Period/Status are the joining membership's.
+Open date bounds, 400 on a bad date or from>to (the donations contract);
+the Reports page prefills From to today−90 via `toLocaleDateString("sv")`.
+No schema change. Matrix +18 CR33-\* rows (1049/16), Playwright 9/0.
+
 **Voting rights are MEMBER-only** (corrected 2026-07-18 — the earlier
 "both adults vote" note had no recorded rationale and was wrong):
 `MembershipStore.insertMembershipPerson` sets

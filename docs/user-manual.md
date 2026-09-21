@@ -350,6 +350,12 @@ work. Each downloads a CSV to open in a spreadsheet.
   all). The ring-around chase list, with the primary contact's email and
   phone. For chasing by *email*, the Email page's segments are the tool;
   this report is for the phone tree and the committee meeting.
+- **New households** — households by the date they joined (the start of
+  their earliest membership: a wizard or application join is dated the day
+  it was recorded; an imported household the start of its earliest imported
+  year), newest first, with the primary contact's email and phone and the
+  joining membership's type, year and payment status. From is prefilled to
+  90 days ago; clear both dates for all time. The welcome-letter list.
 - **Donations** — payments carrying a donation part, over a received-date
   range (blank dates = all time), with a trailing total. Reversals appear
   as negative rows, so the total always matches the ledger.

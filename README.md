@@ -45,7 +45,8 @@ and the running cost is little more than hosting.
   recorded AGM to AGM, with multi-term history.
 - **Reports** — the statutory register of members (with join and cease
   dates), who fell through the cracks at rollover, unrenewed households
-  for the ring-around, and a date-ranged donations listing — all as CSV.
+  for the ring-around, recently joined households, and a date-ranged
+  donations listing — all as CSV.
 - **Xero-ready bookkeeping** — a reconciliation export that splits every
   payment into membership / donation / other, plus an importable Xero
   journal that balances against a Stripe clearing account, with one
