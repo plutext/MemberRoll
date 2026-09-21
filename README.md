@@ -48,7 +48,8 @@ and the running cost is little more than hosting.
   for the ring-around, and a date-ranged donations listing — all as CSV.
 - **Xero-ready bookkeeping** — a reconciliation export that splits every
   payment into membership / donation / other, plus an importable Xero
-  journal that balances against a Stripe clearing account.
+  journal that balances against a Stripe clearing account, with one
+  described line per member's payment so Xero shows who paid what.
 - **Mail settings in the admin panel** — the SMTP relay (with a one-click
   Microsoft 365 preset) is configured from the browser and takes effect
   immediately, with a "send test email" button — and a testing sandbox

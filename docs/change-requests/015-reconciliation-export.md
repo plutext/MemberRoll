@@ -97,6 +97,8 @@ All admin-only (`@RolesAllowed("admin")`), on `AdminPaymentsResource`
 - **`GET /api/admin/payments/export/xero-journal.csv`** — the same
   filters, emitting Xero's **manual-journal import format** (one line
   per journal row: Narration, Date, AccountCode, TaxRate, Amount —
+  *superseded by CR-032 (2026-09-21): one described credit line per
+  payment × type, Xero's full ten-column template header* —
   positive = debit, negative = credit; a shared Narration + Date
   groups the lines into one journal on import). The journal it writes
   is §3's: debit the clearing account for the gross Stripe total,

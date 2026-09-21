@@ -295,11 +295,20 @@ public class AdminPaymentsResource {
     }
 
     /**
-     * The importable Xero manual journal for the window's STRIPE payments (§3):
-     * debit the clearing account for the gross Stripe total, credit each income
-     * account its net type total. One shared Narration+Date groups the lines
-     * into one journal on import; a positive Amount is a debit, negative a
-     * credit (so a refund-heavy window flips a line's sign naturally). Forces
+     * The importable Xero manual journal for the window's STRIPE payments
+     * (CR-015 §3, per-payment since CR-032): debit the clearing account for
+     * the gross Stripe total, then credit the income accounts ONE LINE PER
+     * PAYMENT × ALLOCATION TYPE, each described "#id date payer (household)
+     * — type" so the income accounts' transaction lists in Xero read like the
+     * reconciliation CSV. The header is Xero's manual-journal template
+     * verbatim (a mismatched heading fails the import); Description is the
+     * template's per-line free text, the tracking columns ride empty. One
+     * shared Narration+Date groups the lines into one journal on import; a
+     * positive Amount is a debit, negative a credit (a refund's negative
+     * allocation therefore lands on the debit side naturally). Xero imports
+     * at most {@value #XERO_MAX_JOURNAL_LINES} lines per file, so a bigger
+     * window is chunked by payment into "(part k of n)" journals, each with
+     * its own clearing debit — every part balances on its own. Forces
      * {@code method=STRIPE} — the clearing pattern is a payout pattern. 409
      * until the account mapping is saved (never a guessed code).
      */
@@ -320,26 +329,89 @@ public class AdminPaymentsResource {
         }
         XeroAccounts.Mapping m = mapping.get();
         ReconciliationStore.Export export = reconciliation.export(filter);
-        ReconciliationStore.Totals t = export.totals();
         // journal date: the window's last received date, else the 'to' bound, else today
         LocalDate date = export.rows().isEmpty()
                 ? (filter.to() != null ? filter.to() : LocalDate.now())
                 : export.rows().get(export.rows().size() - 1).receivedDate();
         String narration = "MemberRoll Stripe reconciliation" + windowLabel(filter);
+        List<List<ReconciliationStore.Row>> parts = chunkForXero(export.rows());
         StringWriter sw = new StringWriter();
         try (CSVPrinter csv = new CSVPrinter(sw, CSVFormat.DEFAULT)) {
-            csv.printRecord("Narration", "Date", "AccountCode", "TaxRate", "Amount");
-            // clearing debit (+gross); income credits (-type net). Zero lines skipped;
-            // the balance holds because gross = sum of the type totals.
-            journalLine(csv, narration, date, m.clearingCode(), m.taxRate(), t.grossCents());
-            journalLine(csv, narration, date, m.membershipCode(), m.taxRate(), -t.membershipCents());
-            journalLine(csv, narration, date, m.journalCode(), m.taxRate(), -t.journalCents());
-            journalLine(csv, narration, date, m.donationCode(), m.taxRate(), -t.donationCents());
-            journalLine(csv, narration, date, m.otherCode(), m.taxRate(), -t.otherCents());
+            csv.printRecord("*Narration", "*Date", "Description", "*AccountCode", "*TaxRate", "*Amount",
+                    "TrackingName1", "TrackingOption1", "TrackingName2", "TrackingOption2");
+            for (int i = 0; i < parts.size(); i++) {
+                List<ReconciliationStore.Row> part = parts.get(i);
+                String partNarration = parts.size() == 1 ? narration
+                        : narration + " (part " + (i + 1) + " of " + parts.size() + ")";
+                long gross = 0;
+                for (ReconciliationStore.Row r : part) gross += r.grossCents();
+                // clearing debit (+gross of this part); the balance holds because each
+                // payment's type columns sum to its gross (the store's fold invariant).
+                journalLine(csv, partNarration, date,
+                        "Stripe payments" + windowLabel(filter) + " (" + part.size() + " payments)",
+                        m.clearingCode(), m.taxRate(), gross);
+                for (ReconciliationStore.Row r : part) {
+                    String who = describePayment(r);
+                    journalLine(csv, partNarration, date, who + " — " + typeWord("membership", r.membershipCents()),
+                            m.membershipCode(), m.taxRate(), -r.membershipCents());
+                    journalLine(csv, partNarration, date, who + " — " + typeWord("journal", r.journalCents()),
+                            m.journalCode(), m.taxRate(), -r.journalCents());
+                    journalLine(csv, partNarration, date, who + " — " + typeWord("donation", r.donationCents()),
+                            m.donationCode(), m.taxRate(), -r.donationCents());
+                    journalLine(csv, partNarration, date, who + " — " + typeWord("other", r.otherCents()),
+                            m.otherCode(), m.taxRate(), -r.otherCents());
+                }
+            }
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }
         return csvResponse(sw.toString(), "xero-journal.csv");
+    }
+
+    /** Xero's per-file import ceiling for manual journals (spreadsheet-editor path, per Xero Central). */
+    static final int XERO_MAX_JOURNAL_LINES = 300;
+
+    /**
+     * Split the export's payments into runs whose journal (1 clearing line +
+     * the payment lines) fits Xero's per-file cap; a payment's lines never
+     * straddle two parts. The common case is one part.
+     */
+    static List<List<ReconciliationStore.Row>> chunkForXero(List<ReconciliationStore.Row> rows) {
+        List<List<ReconciliationStore.Row>> parts = new ArrayList<>();
+        List<ReconciliationStore.Row> current = new ArrayList<>();
+        int lines = 1; // this part's clearing debit
+        for (ReconciliationStore.Row r : rows) {
+            int n = journalLines(r);
+            if (!current.isEmpty() && lines + n > XERO_MAX_JOURNAL_LINES) {
+                parts.add(current);
+                current = new ArrayList<>();
+                lines = 1;
+            }
+            current.add(r);
+            lines += n;
+        }
+        parts.add(current); // an empty window still emits (an empty, zero-line) single part
+        return parts;
+    }
+
+    private static int journalLines(ReconciliationStore.Row r) {
+        return (r.membershipCents() != 0 ? 1 : 0) + (r.journalCents() != 0 ? 1 : 0)
+                + (r.donationCents() != 0 ? 1 : 0) + (r.otherCents() != 0 ? 1 : 0);
+    }
+
+    /** "#412 2026-08-03 Jane Smith (Smith household)" — payer, else household, else the method. */
+    private static String describePayment(ReconciliationStore.Row r) {
+        StringBuilder sb = new StringBuilder("#").append(r.paymentId()).append(' ').append(r.receivedDate());
+        boolean hasPayer = r.payer() != null && !r.payer().isBlank();
+        boolean hasHousehold = r.household() != null && !r.household().isBlank();
+        if (hasPayer) sb.append(' ').append(r.payer());
+        if (hasHousehold) sb.append(hasPayer ? " (" : " ").append(r.household()).append(hasPayer ? " household)" : " household");
+        if (!hasPayer && !hasHousehold) sb.append(' ').append(r.method());
+        return sb.toString();
+    }
+
+    private static String typeWord(String type, int allocationCents) {
+        return allocationCents < 0 ? type + " refund" : type;
     }
 
     /** GET/PUT the Xero account mapping (CR-014's app_setting-blob pattern; codes are opaque). */
@@ -439,10 +511,10 @@ public class AdminPaymentsResource {
         }
     }
 
-    private static void journalLine(CSVPrinter csv, String narration, LocalDate date, String code,
-                                    String taxRate, long amountCents) throws IOException {
+    private static void journalLine(CSVPrinter csv, String narration, LocalDate date, String description,
+                                    String code, String taxRate, long amountCents) throws IOException {
         if (amountCents == 0) return; // no zero-amount journal lines; the balance still holds
-        csv.printRecord(narration, date, code, taxRate, money(amountCents));
+        csv.printRecord(narration, date, description, code, taxRate, money(amountCents), "", "", "", "");
     }
 
     private static String windowLabel(ReconciliationStore.Filter f) {

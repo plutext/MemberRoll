@@ -1684,6 +1684,7 @@ if [ "$PSQL_OK" = 1 ]; then
   PA=$(pay '2099-03-05' 4500 'BANK_TRANSFER' "'CR15BANK-$$'" 'NULL')
   psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, membership_id, amount_cents) VALUES ($PA,'MEMBERSHIP',$MREC,4500)" >/dev/null
   PB=$(pay '2099-03-20' 6000 'STRIPE' 'NULL' "'cr15txn-$$'")
+  psqlq "UPDATE payment SET payer_person_id=$PREC WHERE payment_id=$PB" >/dev/null   # CR-032: PB carries a payer, PD/PE don't
   psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, membership_id, amount_cents) VALUES ($PB,'MEMBERSHIP',$MREC,4500),($PB,'JOURNAL',NULL,1000),($PB,'DONATION',NULL,500)" >/dev/null
   PC=$(pay '2099-03-05' 500 'CASH' 'NULL' 'NULL')
   psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, amount_cents) VALUES ($PC,'OTHER',500)" >/dev/null
@@ -1729,26 +1730,61 @@ if [ "$PSQL_OK" = 1 ]; then
   check "CR15-05c STRIPE excludes bank"  "False" "$(echo "$RS" | jsq "str('BANK_TRANSFER' in j['totals']['byMethod'])")"
   check "CR15-05d combined count 3"      "3" "$(curl -s "$REX?from=2099-03-20&to=2099-03-31&method=STRIPE&unreconciledOnly=true" -H "Authorization: Bearer $ADMIN" | jsq "j['count']")"
 
-  # row 6: Xero journal — 409 until mapped, then a balanced importable journal
+  # row 6: Xero journal — 409 until mapped, then a balanced importable journal.
+  # Since CR-032 the file is Xero's ten-column template (Description at col 2,
+  # AccountCode col 3, Amount col 5) with one credit line per payment x type.
   check "CR15-06 journal 409 no mapping" "409" "$(code "$RXJ?$MAR" -H "Authorization: Bearer $ADMIN")"
   check "CR15-06b mapping missing code 400" "400" "$(JPUT $RMAP "{\"membershipCode\":\"4000\",\"journalCode\":\"4010\",\"donationCode\":\"4020\",\"otherCode\":\"4090\"}")"
   check "CR15-06c PUT mapping 200"       "200" "$(JPUT $RMAP "{\"membershipCode\":\"4000\",\"journalCode\":\"4010\",\"donationCode\":\"4020\",\"otherCode\":\"4090\",\"clearingCode\":\"1200\",\"taxRate\":\"BAS Excluded\"}")"
   check "CR15-06d GET echoes clearing"   "1200" "$(curl -s $RMAP -H "Authorization: Bearer $ADMIN" | jsq "j['clearingCode']")"
   check "CR15-06e GET configured true"   "True" "$(curl -s $RMAP -H "Authorization: Bearer $ADMIN" | jsq "j['configured']")"
   JCSV=$(curl -s "$RXJ?$MAR" -H "Authorization: Bearer $ADMIN")
-  check "CR15-06f journal balances"      "0.00" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print('%.2f' % sum(float(r[4]) for r in rows[1:] if len(r)>=5))" 2>/dev/null)"
-  check "CR15-06g journal 4 lines"       "4" "$(echo "$JCSV" | python3 -c "import sys; print(sum(1 for i,l in enumerate(sys.stdin) if i>0 and l.strip()))" 2>/dev/null)"
-  check "CR15-06h clearing debit gross"  "60.00" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='1200'))" 2>/dev/null)"
-  check "CR15-06i membership credit"     "-45.00" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='4000'))" 2>/dev/null)"
-  check "CR15-06j tax rate every line"   "yes" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print('yes' if all(r[3]=='BAS Excluded' for r in rows[1:] if len(r)>=5) else 'no')" 2>/dev/null)"
-  check "CR15-06k one shared narration"  "1" "$(echo "$JCSV" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(len(set(r[0] for r in rows[1:] if len(r)>=5)))" 2>/dev/null)"
+  # jrows: parse the journal CSV (header dropped) — the helper every assertion below shares
+  jrows() { python3 -c "import sys,csv; rows=[r for r in csv.reader(sys.stdin)][1:]; rows=[r for r in rows if len(r)>=6]; $1"; }
+  check "CR15-06f journal balances"      "0.00" "$(echo "$JCSV" | jrows "print('%.2f' % sum(float(r[5]) for r in rows))" 2>/dev/null)"
+  check "CR15-06g Xero template header"  "*Narration,*Date,Description,*AccountCode,*TaxRate,*Amount,TrackingName1,TrackingOption1,TrackingName2,TrackingOption2" "$(echo "$JCSV" | head -1 | tr -d '\r')"
+  check "CR15-06h clearing debit gross"  "60.00" "$(echo "$JCSV" | jrows "print(next(r[5] for r in rows if r[3]=='1200'))" 2>/dev/null)"
+  check "CR15-06i membership net -45.00" "-45.00" "$(echo "$JCSV" | jrows "print('%.2f' % sum(float(r[5]) for r in rows if r[3]=='4000'))" 2>/dev/null)"
+  check "CR15-06j tax rate every line"   "yes" "$(echo "$JCSV" | jrows "print('yes' if all(r[4]=='BAS Excluded' for r in rows) else 'no')" 2>/dev/null)"
+  check "CR15-06k one shared narration"  "1" "$(echo "$JCSV" | jrows "print(len(set(r[0] for r in rows)))" 2>/dev/null)"
   # STRIPE forced even when method=BANK_TRANSFER is passed (bank line 4500 absent)
-  check "CR15-06l STRIPE forced"         "60.00" "$(curl -s "$RXJ?$MAR&method=BANK_TRANSFER" -H "Authorization: Bearer $ADMIN" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='1200'))" 2>/dev/null)"
+  check "CR15-06l STRIPE forced"         "60.00" "$(curl -s "$RXJ?$MAR&method=BANK_TRANSFER" -H "Authorization: Bearer $ADMIN" | jrows "print(next(r[5] for r in rows if r[3]=='1200'))" 2>/dev/null)"
   # refund-dominated April window flips the membership line to the debit side
   JFLIP=$(curl -s "$RXJ?from=2099-04-01&to=2099-04-30&unreconciledOnly=true" -H "Authorization: Bearer $ADMIN")
-  check "CR15-06m flip membership debit" "20.00" "$(echo "$JFLIP" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='4000'))" 2>/dev/null)"
-  check "CR15-06n flip clearing credit"  "-20.00" "$(echo "$JFLIP" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print(next(r[4] for r in rows[1:] if r[2]=='1200'))" 2>/dev/null)"
-  check "CR15-06o flip balances"         "0.00" "$(echo "$JFLIP" | python3 -c "import sys,csv; rows=list(csv.reader(sys.stdin)); print('%.2f' % sum(float(r[4]) for r in rows[1:] if len(r)>=5))" 2>/dev/null)"
+  check "CR15-06m flip membership debit" "20.00" "$(echo "$JFLIP" | jrows "print(next(r[5] for r in rows if r[3]=='4000'))" 2>/dev/null)"
+  check "CR15-06n flip clearing credit"  "-20.00" "$(echo "$JFLIP" | jrows "print(next(r[5] for r in rows if r[3]=='1200'))" 2>/dev/null)"
+  check "CR15-06o flip balances"         "0.00" "$(echo "$JFLIP" | jrows "print('%.2f' % sum(float(r[5]) for r in rows))" 2>/dev/null)"
+
+  # CR-032: per-payment lines. March window = PB (45+10+5), PD (30), PE (-30):
+  # 1 clearing + 3 + 1 + 1 = 6 lines, each described "#id date payer (household) — type".
+  check "CR32-01 six lines"              "6" "$(echo "$JCSV" | jrows "print(len(rows))" 2>/dev/null)"
+  check "CR32-02 PB three typed lines"   "membership,journal,donation" "$(echo "$JCSV" | jrows "print(','.join(r[2].split(' — ')[1] for r in rows if r[2].startswith('#$PB ')))" 2>/dev/null)"
+  check "CR32-02b PB names payer+household" "#$PB 2099-03-20 Reece Rec$$ (Rec$$ HH household)" "$(echo "$JCSV" | jrows "print(next(r[2] for r in rows if r[2].startswith('#$PB ')).split(' — ')[0])" 2>/dev/null)"
+  check "CR32-02c PD household-only fallback" "#$PD 2099-03-20 Rec$$ HH household" "$(echo "$JCSV" | jrows "print(next(r[2] for r in rows if r[2].startswith('#$PD ')).split(' — ')[0])" 2>/dev/null)"
+  check "CR32-03 PB membership -45.00"   "-45.00" "$(echo "$JCSV" | jrows "print(next(r[5] for r in rows if r[2].startswith('#$PB ') and r[3]=='4000'))" 2>/dev/null)"
+  check "CR32-04 PB journal -10.00"      "-10.00" "$(echo "$JCSV" | jrows "print(next(r[5] for r in rows if r[2].startswith('#$PB ') and r[3]=='4010'))" 2>/dev/null)"
+  check "CR32-05 PB donation -5.00"      "-5.00" "$(echo "$JCSV" | jrows "print(next(r[5] for r in rows if r[2].startswith('#$PB ') and r[3]=='4020'))" 2>/dev/null)"
+  check "CR32-06 PE refund line +30.00"  "membership refund=30.00" "$(echo "$JCSV" | jrows "r=next(r for r in rows if r[2].startswith('#$PE ')); print(r[2].split(' — ')[1]+'='+r[5])" 2>/dev/null)"
+  check "CR32-07 clearing names count"   "Stripe payments 2099-03-01..2099-03-31 (3 payments)" "$(echo "$JCSV" | jrows "print(next(r[2] for r in rows if r[3]=='1200'))" 2>/dev/null)"
+  check "CR32-08 no part suffix"         "0" "$(echo "$JCSV" | jrows "print(sum(1 for r in rows if '(part ' in r[0]))" 2>/dev/null)"
+  check "CR32-09 description every line" "yes" "$(echo "$JCSV" | jrows "print('yes' if all(r[2] for r in rows) else 'no')" 2>/dev/null)"
+  check "CR32-10 tracking cells empty"   "yes" "$(echo "$JCSV" | jrows "print('yes' if all(len(r)==10 and not any(r[6:]) for r in rows) else 'no')" 2>/dev/null)"
+  # the payment lines follow the export's order (received date, then id): PB before PD before PE
+  check "CR32-11 payment order"          "$PB,$PB,$PB,$PD,$PE" "$(echo "$JCSV" | jrows "print(','.join(r[2].split(' ')[0][1:] for r in rows if r[2].startswith('#')))" 2>/dev/null)"
+  # CR32-12: Xero's 300-line cap — 305 one-line payments in a 2098 window need
+  # two journals (1 clearing + 299 = 300, then 1 + 6); each part balances on
+  # its own and carries the "(part k of n)" narration. Fixture deleted after.
+  psqlq "INSERT INTO payment (received_date, amount_cents, payment_method, external_transaction_id, recorded_by) SELECT DATE '2098-01-01' + (g % 28), 1000, 'STRIPE', 'cr32big-$$-' || g, 'cr32' FROM generate_series(1,305) g" >/dev/null
+  psqlq "INSERT INTO payment_allocation (payment_id, allocation_type, membership_id, amount_cents) SELECT payment_id, 'MEMBERSHIP', $MREC, 1000 FROM payment WHERE recorded_by='cr32' AND external_transaction_id LIKE 'cr32big-$$-%'" >/dev/null
+  JBIG=$(curl -s "$RXJ?from=2098-01-01&to=2098-01-31&unreconciledOnly=true" -H "Authorization: Bearer $ADMIN")
+  check "CR32-12 307 lines"              "307" "$(echo "$JBIG" | jrows "print(len(rows))" 2>/dev/null)"
+  check "CR32-12b two parts"             "MemberRoll Stripe reconciliation 2098-01-01..2098-01-31 (part 1 of 2)|MemberRoll Stripe reconciliation 2098-01-01..2098-01-31 (part 2 of 2)" "$(echo "$JBIG" | jrows "print('|'.join(sorted(set(r[0] for r in rows))))" 2>/dev/null)"
+  check "CR32-12c part sizes 300+7"      "300,7" "$(echo "$JBIG" | jrows "import collections; c=collections.Counter(r[0] for r in rows); print(','.join(str(c[k]) for k in sorted(c)))" 2>/dev/null)"
+  check "CR32-12d each part balances"    "0.00,0.00" "$(echo "$JBIG" | jrows "import collections; t=collections.defaultdict(float); [t.__setitem__(r[0], t[r[0]]+float(r[5])) for r in rows]; print(','.join('%.2f' % t[k] for k in sorted(t)))" 2>/dev/null)"
+  check "CR32-12e part clearing debits"  "2990.00,60.00" "$(echo "$JBIG" | jrows "print(','.join(r[5] for r in rows if r[3]=='1200'))" 2>/dev/null)"
+  psqlq "DELETE FROM payment_allocation WHERE payment_id IN (SELECT payment_id FROM payment WHERE external_transaction_id LIKE 'cr32big-$$-%')" >/dev/null
+  psqlq "DELETE FROM payment WHERE external_transaction_id LIKE 'cr32big-$$-%'" >/dev/null
+  check "CR32-12f fixture gone"          "0" "$(psqlq "SELECT count(*) FROM payment WHERE external_transaction_id LIKE 'cr32big-$$-%'")"
 
   # row 7: reconcile — the bounded, idempotent mark; a straggler survives
   PG=$(pay '2099-03-25' 100 'CASH' 'NULL' 'NULL')   # recorded AFTER the preview
